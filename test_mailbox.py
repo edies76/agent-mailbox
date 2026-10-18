@@ -173,6 +173,11 @@ class MailboxTests(unittest.TestCase):
                      {"to_agent_id": self.b_id, "attachments": [{
                          "filename": "run.exe", "media_type": "application/octet-stream",
                          "data_base64": base64.b64encode(b"x").decode()}]}, 415)
+        over_limit = base64.b64encode(b"x" * (10 * 1024 * 1024 + 1)).decode("ascii")
+        self.request("POST", "/messages", self.a_token,
+                     {"to_agent_id": self.b_id, "attachments": [{
+                         "filename": "large.dat", "media_type": "application/octet-stream",
+                         "data_base64": over_limit}]}, 413)
 
     def test_identity_and_mailbox_isolation(self):
         message = self.send()
