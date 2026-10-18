@@ -140,7 +140,8 @@ def filter_new_messages(config, config_path, session_id, messages, reset=False):
 
 
 def hook_response(host, event, payload, messages, config):
-    if not messages:
+    identity_boundary = event in ("SessionStart", "UserPromptSubmit") and config.get("bound_config_path")
+    if not messages and not identity_boundary:
         return None
     context = format_context(messages, config)
     if event in ("SessionStart", "UserPromptSubmit"):

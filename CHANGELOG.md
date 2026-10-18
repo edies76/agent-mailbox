@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.6 — 2026-10-18
+
+- Inject the native chat's private identity and client instructions at session/prompt boundaries even when its inbox is empty. This prevents a newly enrolled chat from using another instance's globally configured MCP identity for its first outgoing message.
+- Add regression coverage for empty-inbox identity delivery and token exclusion.
+
 ## 0.2.5 — 2026-10-18
 
 - Add content-bound idempotent retries, tombstones for deleted deliveries, optional private inbox event waits, MCP wait and a capabilities endpoint. Keep 15-second polling as the default.

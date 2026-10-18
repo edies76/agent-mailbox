@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 import test_mailbox as http_tests
-from adapters.mailbox_hook import bind_session, format_context
+from adapters.mailbox_hook import bind_session, format_context, hook_response
 
 
 class CollaborationTests(unittest.TestCase):
@@ -44,6 +44,17 @@ class CollaborationTests(unittest.TestCase):
         self.assertEqual(answer["reply"]["id"], again["reply"]["id"])
         self.request("DELETE", f"/messages/{first['id']}", self.a_token)
         self.request("POST", "/messages", self.a_token, body, 410)
+
+    def test_empty_native_chat_still_receives_its_private_identity(self):
+        config = {"agent_id": "native-chat-A", "bound_config_path": "private-instance.json",
+                  "client_script": "mailbox_client.py", "token": "DO-NOT-INJECT"}
+        for event in ("SessionStart", "UserPromptSubmit"):
+            result = hook_response("zcode", event, {}, [], config)
+            context = result["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("native-chat-A", context)
+            self.assertIn("private-instance.json", context)
+            self.assertNotIn("DO-NOT-INJECT", context)
+        self.assertIsNone(hook_response("zcode", "Stop", {}, [], config))
 
     def test_private_wait_wakes_on_own_message_without_acknowledging(self):
         import time
