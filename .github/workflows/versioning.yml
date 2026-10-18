@@ -1,0 +1,30 @@
+name: Version every commit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify every commit increments patch by one
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            python scripts/check_version_history.py "$PR_BASE_SHA" "$PR_HEAD_SHA"
+          elif [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            python scripts/check_version_history.py "$BEFORE_SHA" "$AFTER_SHA"
+          else
+            parent=$(git rev-parse "$AFTER_SHA^1")
+            python scripts/check_version_history.py "$parent" "$AFTER_SHA"
+          fi

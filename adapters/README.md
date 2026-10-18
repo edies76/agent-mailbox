@@ -20,6 +20,29 @@ These adapters follow the documented interfaces: [ZCode hooks](https://zcode.z.a
 [Grok Build headless sessions](https://docs.x.ai/build/cli/headless-scripting), and
 [ClineCore session send](https://docs.cline.bot/sdk/clinecore).
 
+## More agent hosts
+
+The mailbox listener is reusable; connection and wake behavior still depend on each host's official
+extension points. These are starting points for the copy/paste setup prompt in
+[`../docs/CONNECT-AGENT-PROMPT.md`](../docs/CONNECT-AGENT-PROMPT.md), not prebuilt adapters:
+
+| Host / surface | Documented extension point | What to expect |
+| --- | --- | --- |
+| Gemini CLI | MCP servers and lifecycle hooks, including `BeforeAgent` and `AfterAgent` ([hooks reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md)) | Configure MCP for mailbox tools. Have the host inspect the hook contract before trying to inject a message or react to child completion; lifecycle observation alone does not prove an idle session can be resumed. |
+| Google Antigravity | Plugins can bundle MCP servers, hooks and subagent definitions ([plugins](https://antigravity.google/docs/plugins), [hooks](https://antigravity.google/docs/hooks), [subagents](https://antigravity.google/docs/subagents/)) | A host-specific plugin/hook can connect the listener. Confirm which events can actually pass context to the parent and which only observe execution. |
+| GitHub Copilot CLI | MCP, lifecycle hooks and `subagentStop` ([hooks](https://docs.github.com/en/copilot/reference/hooks-reference)) | The child-completion hook can run a command before returning results to the parent. Use Copilot's own parent-session behavior for delivery; the hook does not make a closed process wake. |
+| GitHub Copilot cloud agent | Repository MCP configuration and a subset of hooks ([cloud MCP](https://docs.github.com/en/copilot/concepts/agents/cloud-agent/mcp-and-cloud-agent), [hooks](https://docs.github.com/en/copilot/reference/hooks-reference)) | Each job runs in an ephemeral cloud environment. A PC listener cannot inject into another job or keep that agent online. |
+| Cursor IDE / CLI | Local or remote MCP; CLI can resume a conversation ([MCP](https://docs.cursor.com/context/model-context-protocol), [CLI](https://docs.cursor.com/en/cli/using)) | MCP gives the session mailbox tools. For unattended delivery, the prompt must verify a supported session resume/event API in the installed version; otherwise messages wait for the next turn. |
+| Windsurf Cascade | Cascade hooks and MCP integration ([hooks](https://docs.windsurf.com/windsurf/cascade/hooks), [MCP](https://docs.windsurf.com/windsurf/cascade/mcp)) | Hooks can run commands at supported workflow points. Verify whether the installed surface can enqueue into an idle Cascade session before calling it a wake adapter. |
+| Roo Code | MCP and its Orchestrator / `new_task` delegation ([MCP](https://github.com/RooCodeInc/Roo-Code-Docs/blob/main/docs/features/mcp/overview.md), [modes](https://github.com/RooCodeInc/Roo-Code/blob/main/apps/docs/docs/basic-usage/using-modes.md)) | The internal orchestrator can delegate work, but that alone is not an external wake API. Configure a native callback only if the installed host exposes one. |
+| Cline VS Code extension | MCP in the extension; separate from ClineCore ([ClineCore SDK](https://docs.cline.bot/sdk/clinecore)) | The included sender targets ClineCore-managed sessions. It does not attach to the VS Code extension's private chat runtime. |
+| Codex web, Jules, Manus, other hosted agents | Provider-specific cloud session interfaces | Use remote MCP when available and while a turn is active. The local listener cannot wake a cloud job; that needs a supported provider webhook/session API. |
+
+The prompt requests the installed product and version before changing configuration. Keep the report
+honest: distinguish **MCP connection** (the agent can call mailbox tools during a turn), **listener**
+(a process polls the mailbox), **notification** (the host learns a message arrived), and **wake**
+(the host starts/resumes a model turn). These are four separate capabilities.
+
 No host exposes a single shared “wake me with arbitrary text” API. In particular, a subagent-finished
 event is local to that host: ZCode does not currently expose one, and a hook that observes a child
 finishing does not necessarily let it inject a prompt into the parent. The adapters use the session

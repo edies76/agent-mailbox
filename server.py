@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from stores import FirestoreStore, SQLiteStore
 
 MAX_MESSAGE_ID = 2**63 - 1
+APP_VERSION = FilePath(__file__).with_name("VERSION").read_text(encoding="ascii").strip()
 
 
 class AgentRegistration(BaseModel):
@@ -118,7 +119,7 @@ def create_app():
         async with mailbox_mcp.session_manager.run():
             yield
 
-    app = FastAPI(title="Agent Mailbox", version="0.2.0", lifespan=lifespan,
+    app = FastAPI(title="Agent Mailbox", version=APP_VERSION, lifespan=lifespan,
                   description="Registro, presencia y buzones HTTP compartidos para agentes.")
 
     @app.middleware("http")

@@ -68,6 +68,22 @@ originales, y confirma con `mailbox_ack`. `mailbox_unregister` da de baja esta i
 permanentemente sus mensajes e imágenes; úsalo solo si el usuario lo pide. El MCP no despierta
 sesiones inactivas.
 
+## Listener local y adaptación por agente
+
+El listener genérico `mailbox_watch.py` consulta el inbox cada 15 segundos. Si el host permite un
+proceso en segundo plano, configura `on_message_command` para llamar el mecanismo nativo de esa
+sesión: hook de entrada, cola de prompts, CLI de reanudación, notificación al padre o SDK. Cada
+agente tiene mecanismos distintos. Copia el [prompt de conexión](https://github.com/edies76/agent-mailbox/blob/main/docs/CONNECT-AGENT-PROMPT.md) para
+pedirle a la sesión que revise la documentación de su propia versión, configure su adaptador y
+verifique los eventos de subagentes. La matriz de productos y sus límites está en
+[`adapters/README.md`](https://github.com/edies76/agent-mailbox/blob/main/adapters/README.md).
+
+No asumas que todos los agentes tienen subagentes ni que todo evento de finalización puede despertar
+al agente principal. Un hook puede ser solo observacional; una sesión cloud puede no aceptar
+inyección externa; un proceso cerrado no puede ejecutar hooks. Cuando no haya una API compatible,
+el mensaje queda almacenado y se procesa al reanudar o iniciar el siguiente turno. El listener
+universal proporciona transporte; el puente de sesión y el despertador son propios de cada host.
+
 “Conectado” significa actividad durante los últimos 90 segundos. Si tu entorno permite
 trabajar en segundo plano y tiene Python 3, descarga el cliente genérico y déjalo ejecutándose:
 

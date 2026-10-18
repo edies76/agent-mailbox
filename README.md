@@ -1,5 +1,7 @@
 # Agent Mailbox
 
+**Versión actual: `0.2.1`** — consulta [`VERSION`](VERSION) y el historial de cambios en Git.
+
 Un servidor compartido: cada agente tiene identificador, presencia y buzón.
 Los agentes envían y reciben JSON mediante HTTP. No llama a modelos ni controla sus aplicaciones.
 El servidor almacena los mensajes aunque el destinatario esté desconectado.
@@ -72,6 +74,49 @@ cuando retome su siguiente turno.
 Para instalar los adaptadores locales de ZCode, Codex, Claude Code, Grok Build y ClineCore, consulta
 [`adapters/README.md`](adapters/README.md). Cada host usa su propio mecanismo; los adaptadores de
 ejecución automática están desactivados hasta que configures y habilites una sesión concreta.
+
+¿Quieres conectarlo sin estudiar primero los detalles de tu aplicación? Copia el
+[prompt de configuración para agentes](docs/CONNECT-AGENT-PROMPT.md) en la sesión que deseas
+conectar. El agente revisa su versión y sus mecanismos nativos, configura MCP más el listener y
+elige un callback específico del host cuando existe. La guía también pide comprobar si hay un evento
+real de finalización de subagente y explicar cuándo puede avisar al agente padre. No hay un
+despertador universal: el listener es común; cada host debe proporcionar la integración de sesión.
+
+### Compatibilidad de agentes
+
+| Agente / superficie | Buzón | Aviso o reanudación | Detalle |
+| --- | --- | --- | --- |
+| ZCode | MCP o listener local | Hooks de sesión y prompt; continuación limitada al cierre de turno | No documenta un evento `SubagentStop`; no puede inyectar en una sesión ya cerrada. |
+| Codex CLI | MCP local/remoto | `codex queue` a un hilo local identificado | El adaptador publicado requiere hilo; Codex web necesita interfaz del proveedor. |
+| Claude Code | MCP y hooks | Hooks en turnos activos o `claude --resume/--continue` | No puede ejecutar un hook cuando el proceso terminó. |
+| Grok Build | MCP y listener | CLI headless para reanudar; los hooks de subagente pueden ser solo observacionales | La guía verifica el contrato de hook antes de llamarlo despertador. |
+| Gemini CLI | MCP y hooks | Configuración nativa según los eventos expuestos por la versión instalada | No es un adaptador incluido; usa el [prompt de conexión](docs/CONNECT-AGENT-PROMPT.md). |
+| Antigravity | MCP, plugins, hooks y subagentes | Hook/plugin específico del host | Comprueba si el evento puede pasar datos al padre o solo observarlo. |
+| GitHub Copilot CLI | MCP y hooks | Incluye `subagentStop` en superficies compatibles | El evento permite ejecutar código al terminar un hijo; la sesión padre debe aceptar ese resultado. |
+| Cursor | MCP; CLI puede reanudar conversación | Depende del modo y versión instalados | No se afirma soporte de hook de subagente universal. |
+| Windsurf Cascade | MCP y hooks Cascade | Solo eventos documentados por la versión/superficie actual | Valida si un hook puede encolar o reanudar una sesión inactiva. |
+| Roo Code | MCP y modo Orchestrator | Delegación interna vía `new_task` | El orquestador no implica una API externa de despertar. |
+| Cline | MCP en extensión; ClineCore tiene SDK | Adaptador incluido solo para sesiones ClineCore | La extensión VS Code mantiene un runtime distinto. |
+| Jules, Manus, Codex web y otros agentes cloud | MCP remoto si está disponible | Requiere API/webhook de sesión del proveedor | El listener en tu PC no puede iniciar ni reanudar un job remoto. |
+
+La conexión MCP deja que el agente use el buzón cuando está ejecutando un turno. El listener consulta
+mensajes aunque el modelo esté inactivo. Una notificación informa que llegó correo. Un despertador
+además necesita que el host pueda iniciar o reanudar la sesión. No confundas esos cuatro niveles.
+Los detalles por host y las referencias oficiales están en [`adapters/README.md`](adapters/README.md).
+
+### Versiones y commits
+
+La versión vive en `VERSION` y sigue `MAJOR.MINOR.PATCH`. Cada commit incrementa el parche
+exactamente en `0.0.1`; el hook de Git actualiza y añade `VERSION` automáticamente. Habilítalo una
+vez por checkout:
+
+```sh
+python scripts/install_git_hooks.py
+```
+
+El workflow de GitHub revisa cada commit en pushes a `main` y pull requests. Si alguien omite el hook,
+la validación falla hasta que cada commit lleve su incremento. El servidor, Docker y `deploy.ps1`
+leen la misma versión desde `VERSION`.
 
 Para un agente que corre en esta PC, `mailbox_mcp.py` publica herramientas MCP de buzón y de
 lectura/búsqueda de archivos de texto bajo las carpetas que declares en `allowed_roots` del JSON
