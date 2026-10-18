@@ -1,0 +1,15 @@
+.venv/
+.local/
+data/
+__pycache__/
+*.sqlite3*
+.env
+.env.*
+!.env.example
+mailbox-agent.json
+*.token.json
+credentials/
+.pytest_cache/
+.coverage
+*.log
+

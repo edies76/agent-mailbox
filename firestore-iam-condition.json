@@ -1,0 +1,6 @@
+{
+  "title": "agent_mailbox_only",
+  "description": "Access only the Agent Mailbox database",
+  "expression": "resource.name.endsWith('/databases/agent-mailbox')"
+}
+

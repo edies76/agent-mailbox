@@ -1,0 +1,15 @@
+{
+  "indexes": [
+    {"collectionGroup": "messages", "queryScope": "COLLECTION", "fields": [
+      {"fieldPath": "to_agent_id", "order": "ASCENDING"},
+      {"fieldPath": "id", "order": "ASCENDING"}
+    ]},
+    {"collectionGroup": "messages", "queryScope": "COLLECTION", "fields": [
+      {"fieldPath": "to_agent_id", "order": "ASCENDING"},
+      {"fieldPath": "acknowledged_at", "order": "ASCENDING"},
+      {"fieldPath": "id", "order": "ASCENDING"}
+    ]}
+  ],
+  "fieldOverrides": []
+}
+

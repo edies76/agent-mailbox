@@ -1,0 +1,14 @@
+.gcloudignore
+.git
+.venv
+.local
+data
+__pycache__
+*.sqlite3*
+.env
+.env.*
+mailbox-agent.json
+*.token.json
+credentials
+*.log
+
