@@ -34,20 +34,30 @@ def build_command(wake, message):
     session_id = str(wake.get("session_id", "")).strip()
     if not wake.get("enabled", False):
         raise ValueError("wake.enabled must be true to run a model")
-    if not session_id:
-        raise ValueError("wake.session_id is required")
     binary = wake.get("binary") or {"codex": "codex", "claude": "claude", "grok": "grok"}.get(provider)
     if not binary:
         raise ValueError("provider must be codex, claude, or grok")
     prompt = build_prompt(message)
     if provider == "codex":
+        if not session_id:
+            raise ValueError("Codex queue requires wake.session_id (thread UUID or exact session name)")
         # Queues to the existing Codex thread and lets its current sandbox/approvals apply.
         return [binary, "queue", "--thread", session_id, "--message", prompt]
     if provider == "claude":
-        command = [binary, "--resume", session_id, "--print", prompt, "--output-format", "json"]
+        if session_id:
+            command = [binary, "--resume", session_id, "--print", prompt, "--output-format", "json"]
+        elif wake.get("cwd"):
+            command = [binary, "--continue", "--print", prompt, "--output-format", "json"]
+        else:
+            raise ValueError("Claude needs wake.session_id or wake.cwd for --continue")
     elif provider == "grok":
-        command = [binary, "--no-auto-update", "--resume", session_id,
-                   "-p", prompt, "--output-format", "json"]
+        if session_id:
+            command = [binary, "--no-auto-update", "--resume", session_id,
+                       "-p", prompt, "--output-format", "json"]
+        elif wake.get("cwd"):
+            command = [binary, "--no-auto-update", "-c", "-p", prompt, "--output-format", "json"]
+        else:
+            raise ValueError("Grok Build needs wake.session_id or wake.cwd for --continue")
         if wake.get("cwd"):
             command.extend(["--cwd", str(Path(wake["cwd"]).expanduser())])
     else:
@@ -97,4 +107,5 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

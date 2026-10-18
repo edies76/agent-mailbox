@@ -87,12 +87,15 @@ python .\mailbox_watch.py C:\private\agent-mailbox-agent.json --state C:\private
 ```
 
 Set `wake.enabled` to `true` only after verifying the host command, session ID, workspace, and
-approval policy. The adapters never pass “always approve” or skip-permission flags. `codex` uses
+approval policy. `claude` and `grok` can use an explicit `session_id`, or `cwd` to continue the
+most recent session in that workspace; use an explicit ID when more than one session shares the
+folder. Codex requires a thread UUID or exact session name. The adapters never pass “always approve” or skip-permission flags. `codex` uses
 `codex queue --thread`; `claude` resumes a Claude Code CLI session; `grok` resumes a Grok Build
 headless session. Connect the mailbox MCP server to those sessions if they should send replies and
 acknowledge messages themselves. The listener does not acknowledge on behalf of the model.
 
 Each CLI wake can use model time and may execute tools within that session's configured permissions.
+Avoid driving the same session simultaneously from its interactive UI and the callback adapter.
 The runner processes mailbox messages sequentially and leaves a message unacknowledged if a run
 fails or times out, so inspect the agent before retrying a failed item.
 
@@ -120,4 +123,5 @@ control.
 A listener on this PC cannot inject into Codex web, Jules, Manus, or another cloud-hosted agent by
 watching the local inbox. Those require a supported provider-side session API or webhook and that
 provider's session credentials. Do not expose local session tokens to the public mailbox server.
+
 

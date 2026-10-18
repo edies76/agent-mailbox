@@ -38,6 +38,12 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn("--dangerously-skip-permissions", claude)
         self.assertNotIn("--always-approve", grok)
 
+    def test_claude_and_grok_can_resume_the_latest_session_in_a_workspace(self):
+        claude = build_command({"enabled": True, "provider": "claude", "cwd": "C:/work"}, self.message)
+        grok = build_command({"enabled": True, "provider": "grok", "cwd": "C:/work"}, self.message)
+        self.assertIn("--continue", claude)
+        self.assertIn("-c", grok)
+
     def test_wake_requires_explicit_opt_in_and_a_session(self):
         with self.assertRaises(ValueError):
             build_command({"provider": "codex", "session_id": "thread-abc"}, self.message)
@@ -68,4 +74,5 @@ class AdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
