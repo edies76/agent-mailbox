@@ -299,6 +299,21 @@ def create_app():
         return PlainTextResponse((FilePath(__file__).parent / "AGENT_PROTOCOL.md").read_text(encoding="utf-8"),
                                  headers={"Cache-Control": "no-store"})
 
+    @app.get("/adapters.md", response_class=PlainTextResponse, include_in_schema=False)
+    def adapter_instructions():
+        path = FilePath(__file__).parent / "adapters" / "README.md"
+        return PlainTextResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
+    @app.get("/connect-agent-prompt.md", response_class=PlainTextResponse, include_in_schema=False)
+    def connect_agent_prompt():
+        path = FilePath(__file__).parent / "docs" / "CONNECT-AGENT-PROMPT.md"
+        return PlainTextResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
+    @app.get("/skill.md", response_class=PlainTextResponse, include_in_schema=False)
+    def agent_mailbox_skill():
+        path = FilePath(__file__).parent / "skills" / "agent-mailbox" / "SKILL.md"
+        return PlainTextResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
     @app.get("/mailbox-watch.py", include_in_schema=False)
     def mailbox_watcher():
         return FileResponse(FilePath(__file__).parent / "mailbox_watch.py",

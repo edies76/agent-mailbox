@@ -3,6 +3,7 @@
 const byId = (id) => document.getElementById(id);
 let accessText = '';
 let registeredId = '';
+if (byId('mcp-url')) byId('mcp-url').textContent = `${location.origin}/mcp`;
 
 async function copyText(text, output) {
   try {

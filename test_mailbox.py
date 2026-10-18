@@ -297,13 +297,21 @@ class MailboxTests(unittest.TestCase):
         self.request("DELETE", f"/agents/{self.b_id}", self.admin, expected=404)
 
     def test_url_discovery_and_shared_key_self_registration(self):
-        for path in ("/", "/connect.md", "/connect.js"):
+        for path in ("/", "/connect.md", "/connect.js", "/adapters.md",
+                     "/connect-agent-prompt.md", "/skill.md"):
             with urlopen(self.url + path, timeout=10) as response:
                 text = response.read().decode()
                 self.assertNotIn(self.admin, text)
                 self.assertNotIn(self.join_key, text)
-                if path != "/connect.js":
+                if path == "/connect.md":
                     self.assertIn("/join", text)
+                if path == "/":
+                    self.assertIn("/adapters.md", text)
+                    self.assertIn("/connect-agent-prompt.md", text)
+                if path == "/connect-agent-prompt.md":
+                    self.assertIn("subagente", text.lower())
+                if path == "/skill.md":
+                    self.assertIn("mailbox_broadcast", text)
         self.request("POST", "/join", body={"name": "self"}, expected=401)
         self.request("POST", "/join", "wrong-key", {"name": "self"}, 401)
         self.request("POST", "/join", self.admin, {"name": "self"}, 401)
