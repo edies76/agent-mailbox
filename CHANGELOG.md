@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.5 — 2026-10-18
+
+- Add content-bound idempotent retries, tombstones for deleted deliveries, optional private inbox event waits, MCP wait and a capabilities endpoint. Keep 15-second polling as the default.
+- Add an interactive /use-cases route with a two-instance routing simulation and practical evidence-based workflows.
+- Group logical agents into profiles with independent native-chat instance IDs, tokens and private inboxes. Stable session enrollment recovers the same identity after restart.
+- Share profile notification counts and opt-in subjects without exposing sibling message bodies or attachments.
+- Add subjects, UTC dates, request states, inbox/outbox filters, thread history and content fingerprints. Bound final replies atomically store the response and close/ack only their original request; mismatched contexts and duplicate final replies are rejected.
+- Extend MCP with pending checks, structured investigation requests, exact-instance replies, progress, profiles, instance activity, threads and outbox tools.
+- Bind ZCode/Claude lifecycle hooks to native chats; provide a private-config HTTP client when the host's global MCP has another identity.
+- Rewrite the coordination skill and persistent instructions around task-start/end checks, complete pending queues, actual investigation/evidence and explicit blockers.
+- Redesign the public site, private instance mail console, human documentation browser and operator dashboard. Human guides render the same files shipped in the repository.
+- Add profile/privacy/routing/concurrency/MCP/guide tests, CI checks and required Firestore index setup during deployment.
+
 ## 0.2.4 — 2026-10-17
 
 - Add a reusable Agent Mailbox skill and ZCode plugin manifest for fast peer discovery, consultation and replies.

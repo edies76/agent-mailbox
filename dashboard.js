@@ -4,8 +4,16 @@
   let adminKey = sessionStorage.getItem(keyName) || '';
   let timer;
 
+  function confirmAction(description) {
+    return new Promise(resolve => {
+      const dialog=byId('admin-confirm'); byId('confirm-description').textContent=description;
+      byId('confirm-yes').onclick=()=>{dialog.close();resolve(true);};
+      byId('confirm-no').onclick=()=>{dialog.close();resolve(false);};
+      dialog.oncancel=()=>resolve(false); dialog.showModal();
+    });
+  }
   function fmtTime(value) {
-    return new Date(value * 1000).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return new Date(value * 1000).toLocaleString('es-CO', { day:'2-digit', month:'short', hour: '2-digit', minute: '2-digit' });
   }
   function setText(id, value) { byId(id).textContent = String(value); }
   async function load() {
@@ -48,7 +56,7 @@
     }
   }
   async function unregisterAgent(agent) {
-    const confirmed = window.confirm(`Dar de baja a ${agent.name}? Esto revoca su token y borra permanentemente todos sus mensajes y archivos adjuntos.`);
+    const confirmed = await confirmAction(`Dar de baja a ${agent.name}. Esto revoca su token y borra permanentemente todos sus mensajes y archivos adjuntos.`);
     if (!confirmed) return;
     try {
       const response = await fetch(`/agents/${encodeURIComponent(agent.id)}`, {
@@ -57,7 +65,7 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       await load();
     } catch (error) {
-      window.alert(`No se pudo dar de baja a ${agent.name}: ${error.message}`);
+      byId('admin-error').textContent = `No se pudo dar de baja a ${agent.name}: ${error.message}`;
     }
   }
   function renderMessages(messages, agents) {
@@ -103,8 +111,8 @@
       const content = document.createElement('div'); content.className = 'event-text';
       const attachmentCount = (message.attachments || []).length;
       content.textContent = [message.text, attachmentCount ? `📎 ${attachmentCount} archivo${attachmentCount === 1 ? '' : 's'} adjunto${attachmentCount === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
-      const state = document.createElement('div'); state.className = 'event-state'; state.textContent = message.acknowledged_at ? `RECIBIDO · mensaje ${message.id}` : `PENDIENTE · mensaje ${message.id}`;
-      main.append(route, content, state);
+      const state = document.createElement('div'); state.className = 'event-state'; state.textContent = message.acknowledged_at ? `${message.status} · hilo ${message.thread_id} · mensaje ${message.id}` : `${message.status} · pendiente · hilo ${message.thread_id} · mensaje ${message.id}`;
+      const subject=document.createElement('div'); subject.className='event-subject'; subject.textContent=message.subject || 'Sin asunto'; main.append(route, subject, content, state);
       const remove = document.createElement('button'); remove.className = 'remove-message'; remove.type = 'button';
       remove.textContent = 'Eliminar'; remove.setAttribute('aria-label', `Eliminar mensaje ${message.id}`);
       remove.addEventListener('click', () => deleteMessage(message));
@@ -112,7 +120,7 @@
     }
   }
   async function deleteMessage(message) {
-    if (!window.confirm(`Eliminar el mensaje ${message.id} para ambos agentes y borrar sus archivos adjuntos?`)) return;
+    if (!await confirmAction(`Eliminar el mensaje ${message.id} para ambos agentes y borrar sus archivos adjuntos.`)) return;
     try {
       const response = await fetch(`/messages/${encodeURIComponent(message.id)}`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${adminKey}` }, cache: 'no-store'
@@ -120,7 +128,7 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       await load();
     } catch (error) {
-      window.alert(`No se pudo eliminar el mensaje ${message.id}: ${error.message}`);
+      byId('admin-error').textContent = `No se pudo eliminar el mensaje ${message.id}: ${error.message}`;
     }
   }
   byId('login-form').addEventListener('submit', async event => {

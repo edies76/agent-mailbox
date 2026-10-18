@@ -35,12 +35,13 @@ class MailboxTests(unittest.TestCase):
             port = sock.getsockname()[1]
         cls.url = f"http://127.0.0.1:{port}"
         env = dict(os.environ, MAILBOX_ADMIN_KEY=cls.admin, MAILBOX_JOIN_KEY=cls.join_key, MAILBOX_DB=cls.db_path,
-                   MAILBOX_ONLINE_SECONDS="90")
+                   MAILBOX_ONLINE_SECONDS="90", MAILBOX_STORAGE="sqlite")
         cls.process = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "server:create_app", "--factory",
              "--host", "127.0.0.1", "--port", str(port)],
             cwd=Path(__file__).parent, env=env, stdout=cls.log, stderr=cls.log)
-        for _ in range(200):
+        startup_deadline = time.monotonic() + 90
+        while time.monotonic() < startup_deadline:
             try:
                 with urlopen(cls.url + "/health", timeout=.3) as response:
                     if response.status == 200:
@@ -48,7 +49,7 @@ class MailboxTests(unittest.TestCase):
             except (URLError, OSError):
                 if cls.process.poll() is not None:
                     break
-                time.sleep(.05)
+                time.sleep(.1)
         cls.stop_server()
         cls.log.seek(0)
         raise RuntimeError("Server failed to start: " + cls.log.read())

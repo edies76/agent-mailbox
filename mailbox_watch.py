@@ -12,14 +12,14 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-def request_json(url, token, method="GET", payload=None):
+def request_json(url, token, method="GET", payload=None, timeout=12):
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     request = Request(url, data=data, method=method, headers={
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         **({"Content-Type": "application/json; charset=utf-8"} if data is not None else {}),
     })
-    with urlopen(request, timeout=12) as response:
+    with urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -50,6 +50,7 @@ def main():
     parser.add_argument("config", help="JSON privado con url, agent_id y token")
     parser.add_argument("--interval", type=int, default=15, help="segundos entre consultas (por defecto: 15)")
     parser.add_argument("--state", help="archivo privado para recordar el último mensaje procesado")
+    parser.add_argument("--transport", choices=("poll", "wait"), help="poll por defecto; wait activa conexión de eventos")
     args = parser.parse_args()
     if not 5 <= args.interval <= 300:
         parser.error("--interval debe estar entre 5 y 300 segundos")
@@ -73,20 +74,30 @@ def main():
             save_cursor(state_path, cursor)
 
     token = config["token"].strip()
+    transport = args.transport or config.get("transport", "poll")
+    if transport not in ("poll", "wait"):
+        parser.error("transport debe ser poll o wait")
     base_url = config["url"].rstrip("/")
     print(json.dumps({"type": "mailbox_listener_started", "agent_id": config["agent_id"],
-                      "interval_seconds": args.interval}), flush=True)
+                      "interval_seconds": args.interval, "transport": transport}), flush=True)
 
     try:
         while True:
             started = time.monotonic()
             after_id = cursor
+            failed = False
             try:
                 while True:
                     query = urlencode({"unread_only": "true", "after_id": after_id, "limit": 200})
                     page = request_json(f"{base_url}/inbox?{query}", token)
                     messages = page.get("messages", [])
                     if not messages:
+                        next_cursor = int(page.get("next_after_id", after_id))
+                        if page.get("has_more") and next_cursor > after_id:
+                            cursor = after_id = next_cursor
+                            if state_path:
+                                save_cursor(state_path, cursor)
+                            continue
                         break
                     for message in messages:
                         process_message(message, token, config)
@@ -96,8 +107,28 @@ def main():
                     if not page.get("has_more"):
                         break
             except (HTTPError, URLError, TimeoutError, OSError, ValueError, RuntimeError, KeyError) as error:
+                failed = True
                 print(json.dumps({"type": "mailbox_listener_error", "error": str(error)}, ensure_ascii=False),
                       file=sys.stderr, flush=True)
+                if isinstance(error, HTTPError) and error.code in (401, 403):
+                    error.close()
+                    return 2
+            if transport == "wait" and not failed:
+                try:
+                    query = urlencode({"after_id": cursor, "timeout": 25})
+                    request_json(f"{base_url}/inbox/wait?{query}", token, timeout=35)
+                    continue
+                except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
+                    print(json.dumps({"type": "mailbox_wait_error", "error": str(error)}), file=sys.stderr, flush=True)
+                    if isinstance(error, HTTPError):
+                        code = error.code
+                        error.close()
+                        if code in (401, 403):
+                            return 2
+                        if code in (404, 405):
+                            transport = "poll"
+                    time.sleep(args.interval)
+                    continue
             remaining = args.interval - (time.monotonic() - started)
             if remaining > 0:
                 time.sleep(remaining)
@@ -106,5 +137,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
 

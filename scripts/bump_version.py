@@ -39,7 +39,7 @@ def main():
     args = parser.parse_args()
     major, minor, patch = current_committed_version(args.base)
     next_version = f"{major}.{minor}.{patch + 1}\n"
-    VERSION_FILE.write_text(next_version, encoding="ascii")
+    VERSION_FILE.write_text(next_version, encoding="ascii", newline="\n")
     subprocess.run(["git", "add", "VERSION"], cwd=ROOT, check=True)
     print(f"Version for this commit: {next_version.strip()}")
 

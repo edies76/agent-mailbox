@@ -29,7 +29,7 @@ def main():
         raise RuntimeError("Set GOOGLE_CLOUD_PROJECT before running the live Firestore test")
     database = os.environ.get("MAILBOX_FIRESTORE_DATABASE", "agent-mailbox")
     store = FirestoreStore(project, database, credentials=Credentials(token))
-    agents, agent_tokens = [], []
+    agents, agent_tokens, profiles = [], [], []
     try:
         store.initialize()
         for name in ("Live test A", "Live test B"):
@@ -92,7 +92,43 @@ def main():
         assert first_page["deleted_count"] == 3 and first_page["has_more"]
         remaining = store.delete_inbox(b, first_page["next_after_id"], sent_cutoff, 10)
         assert remaining["deleted_count"] == 5 and not remaining["has_more"]
-        print("PASS: Firestore registration, auth, send/reply, ack, attachment chunks, inbox paging, concurrent writes, single/bulk delete and reply unlinking")
+        profile, enrollment_token = store.create_profile(a, "Temporary live profile", "test", "deployment-verification")
+        profiles.append(profile["id"])
+        now = time.time()
+        child = dict(id=str(uuid4()), name="Live test child", kind="test", project="deployment-verification",
+                     token_hash=hashlib.sha256(secrets.token_bytes(32)).hexdigest(), created_at=now, last_seen=now)
+        assert store.enroll_profile_instance(profile["id"], child)
+        agents.append(child)
+        assert not store.enroll_profile_instance(profile["id"], child)
+        store.send(b, Message(to_agent_id=a, subject="Private live subject", text="private-live-body"))
+        activity = store.profile_activity(child["id"], profile["id"])
+        assert len(activity["instances"]) == 2 and "private-live-body" not in str(activity)
+        assert "Private live subject" not in str(activity)
+        task = store.send(child["id"], Message(to_agent_id=b, subject="Bound live request", text="Inspect exact component"))
+        answer = Message(to_agent_id=child["id"], text="Observed facts", in_reply_to=task["id"])
+        final = store.send(b, answer, finalize={"status": "completed"})
+        assert final["thread_id"] == task["thread_id"] and final["message_type"] == "reply"
+        assert store.get_message(b, task["id"])["acknowledged_at"] is not None
+        try:
+            store.send(b, answer, finalize={"status": "completed"})
+            raise AssertionError("Duplicate final reply was accepted")
+        except HTTPException as error:
+            assert error.status_code == 409
+        assert len(store.thread_messages(b, task["id"])["messages"]) == 2
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            wait = pool.submit(store.wait_for_mail, child['id'], final['id'], 10)
+            time.sleep(.4)
+            retry = Message(to_agent_id=child['id'], text="Private event", idempotency_key="live-retry")
+            event = store.send(a, retry)
+            assert wait.result(timeout=20)['message_id'] == event['id']
+        assert store.send(a, retry)['id'] == event['id']
+        store.delete_message(a, event['id'])
+        try:
+            store.send(a, retry)
+            raise AssertionError("Deleted idempotent message resurrected")
+        except HTTPException as error:
+            assert error.status_code == 410
+        print("PASS: Firestore persistence, profiles/enrollment, metadata privacy, threads, atomic final replies, duplicate rejection, attachments and deletion")
     finally:
         for agent in agents:
             query = store.where(store.messages, "to_agent_id", "==", agent["id"])
@@ -103,7 +139,9 @@ def main():
                         key = f"{message['id']:020d}_{attachment_index:04d}_{chunk_index:04d}"
                         store.attachment_chunks.document(key).delete(timeout=15)
                 document.reference.delete(timeout=15)
-            store.agents.document(agent["id"]).delete(timeout=15)
+            store.unregister(agent["id"])
+        for profile_id in profiles:
+            store.delete_empty_profile(profile_id)
         store.client.close()
 
 

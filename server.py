@@ -5,18 +5,20 @@ import base64
 import binascii
 import os
 import re
+import hmac
+import threading
 import secrets
 import time
 from contextvars import Token
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
-from typing import Annotated
-from uuid import uuid4
+from typing import Annotated, Literal
+from uuid import uuid4, uuid5, UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, Response, HTMLResponse, RedirectResponse
+from pydantic import BaseModel, ConfigDict, Field, AliasChoices, ValidationError
 
 from stores import FirestoreStore, SQLiteStore
 
@@ -40,8 +42,13 @@ class Attachment(BaseModel):
 
 class Message(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    to_agent_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    to_agent_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$",
+                             validation_alias=AliasChoices("to_instance_id", "to_agent_id"))
     text: str = Field(default="", max_length=32768)
+    subject: str = Field(default="", max_length=180)
+    share_subject: bool = False
+    message_type: Literal["request", "note"] = "request"
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
     in_reply_to: int | None = Field(default=None, gt=0, le=MAX_MESSAGE_ID)
     attachments: list[Attachment] = Field(default_factory=list, max_length=3)
 
@@ -51,6 +58,37 @@ class Broadcast(BaseModel):
     text: str = Field(min_length=1, max_length=32768)
     online_only: bool = False
     kinds: list[str] = Field(default_factory=list, max_length=20)
+
+
+class InstanceRegistration(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    instance_name: str = Field(min_length=1, max_length=100)
+    project: str = Field(default="", max_length=300)
+    session_key: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class RequestStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["queued", "in_progress", "completed", "blocked", "cancelled"]
+    note: str = Field(default="", max_length=2000)
+
+
+class Reply(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(default="", max_length=32768)
+    attachments: list[Attachment] = Field(default_factory=list, max_length=3)
+    status: Literal["completed", "blocked", "in_progress"] = "completed"
+    request_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class MailQuery(BaseModel):
+    after_id: int = Field(default=0, ge=0, le=MAX_MESSAGE_ID)
+    limit: int = Field(default=50, ge=1, le=200)
+    unread_only: bool = False
+    status: Literal["queued", "in_progress", "completed", "blocked", "cancelled"] | None = None
+    thread_id: int | None = Field(default=None, gt=0, le=MAX_MESSAGE_ID)
+    has_attachments: bool | None = None
 
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
@@ -81,7 +119,7 @@ def prepare_attachments(items):
         signature = signatures.get(media_type)
         if signature and not signature(data):
             raise HTTPException(422, "Attachment bytes do not match their declared media type")
-        filename = item.filename.replace("\\", "/").split("/")[-1].strip() or "file"
+        filename = re.sub(r"[\x00-\x1f\x7f]", "_", item.filename.replace("\\", "/").split("/")[-1]).strip() or "file"
         if FilePath(filename).suffix.lower() in BLOCKED_ATTACHMENT_SUFFIXES:
             raise HTTPException(415, "Executable and installer attachments are not supported")
         total += len(data)
@@ -121,6 +159,46 @@ def create_app():
 
     app = FastAPI(title="Agent Mailbox", version=APP_VERSION, lifespan=lifespan,
                   description="Registro, presencia y buzones HTTP compartidos para agentes.")
+    wait_slots = threading.BoundedSemaphore(12)
+
+    def wait_mail(identifier, after_id, timeout):
+        if not 0 <= after_id <= MAX_MESSAGE_ID or not 1 <= timeout <= 25:
+            raise HTTPException(422, "Invalid event cursor or timeout")
+        if not wait_slots.acquire(blocking=False):
+            raise HTTPException(429, "Event slots are busy; retry or use inbox polling", headers={"Retry-After": "5"})
+        try:
+            return store.wait_for_mail(identifier, after_id, timeout)
+        finally:
+            wait_slots.release()
+
+    def public_file(filename, media_type):
+        def serve():
+            return FileResponse(FilePath(__file__).parent / filename, media_type=media_type,
+                                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                                         "Referrer-Policy": "no-referrer",
+                                         "Content-Security-Policy": "default-src 'self'; img-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
+        return serve
+
+    for url, filename, mime in [
+        ("/app.css", "app.css", "text/css"), ("/workspace.js", "workspace.js", "application/javascript"),
+        ("/workspace", "workspace.html", "text/html"), ("/guide.js", "guide.js", "application/javascript"),
+        ("/favicon.svg", "favicon.svg", "image/svg+xml"),
+        ("/use-cases", "use-cases.html", "text/html"), ("/use-cases.js", "use-cases.js", "application/javascript"),
+        ("/mailbox-client.py", "mailbox_client.py", "text/x-python"),
+        ("/agent-instructions.md", "docs/AGENT-INSTRUCTIONS.md", "text/plain"),
+    ]:
+        app.add_api_route(url, public_file(filename, mime), methods=["GET"], include_in_schema=False)
+
+    @app.get("/guide", include_in_schema=False)
+    def guides_home():
+        return RedirectResponse("/guide/operations")
+
+    @app.get("/guide/{slug}", response_class=HTMLResponse, include_in_schema=False)
+    def guide_page(slug: str):
+        from web_pages import render_guide
+        return HTMLResponse(render_guide(slug), headers={"Cache-Control": "no-store",
+                            "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+                            "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"})
 
     @app.middleware("http")
     async def authenticate_mcp(request, call_next):
@@ -142,19 +220,42 @@ def create_app():
                                      headers={"WWW-Authenticate": "Bearer"})
 
         def mcp_api(path, method, payload, query):
+            query = query or {}
+            if path == "/inbox/wait" and method == "GET":
+                return wait_mail(identifier, int(query.get("after_id", 0)), int(query.get("timeout", 25)))
+            if path == "/workflow" and method == "GET":
+                return workflow_bundle()
+            if path == "/inbox/summary" and method == "GET":
+                return inbox_summary_for(identifier)
+            if path == "/outbox" and method == "GET":
+                return page_mail(identifier, "outbox", query)
+            if path == "/profiles" and method == "GET":
+                return profiles_directory()
+            if path == "/profiles" and method == "POST":
+                return new_profile(identifier, AgentRegistration(**payload))
+            if path.startswith("/profiles/") and path.endswith("/activity"):
+                return store.profile_activity(identifier, path.split("/")[2])
+            if path.startswith("/profiles/") and path.endswith("/instances"):
+                return profile_instances(path.split("/")[2])
+            if path.startswith("/threads/") and method == "GET":
+                args = MailQuery(**query)
+                return store.thread_messages(identifier, int(path.split("/")[2]), args.after_id, args.limit)
+            if path.startswith("/messages/") and path.endswith("/reply") and method == "POST":
+                return reply_to(identifier, int(path.split("/")[2]), Reply(**payload))
+            if path.startswith("/messages/") and path.endswith("/status") and method == "PATCH":
+                state = RequestStatus(**payload)
+                return store.update_status(identifier, int(path.split("/")[2]), state.status, state.note)
             if path == "/agents" and method == "GET":
                 now = time.time()
                 agents = [public_agent(row, now) for row in store.all_agents()]
-                if query and query.get("online") == "true":
-                    agents = [row for row in agents if row["online"]]
-                return {"agents": agents[:100], "total": len(agents), "limit": 100, "offset": 0}
+                if query.get("online") in ("true", "false"):
+                    agents = [row for row in agents if row["online"] == (query["online"] == "true")]
+                limit, offset = int(query.get("limit", 100)), int(query.get("offset", 0))
+                if not 1 <= limit <= 200 or offset < 0:
+                    raise HTTPException(422, "Invalid directory page")
+                return {"agents": agents[offset:offset + limit], "total": len(agents), "limit": limit, "offset": offset}
             if path == "/inbox" and method == "GET":
-                after_id, limit = int(query.get("after_id", 0)), int(query.get("limit", 50))
-                unread_only = query.get("unread_only", "true") == "true"
-                rows = store.inbox(identifier, unread_only, after_id, limit + 1)
-                messages = rows[:limit]
-                return {"messages": messages, "has_more": len(rows) > limit,
-                        "next_after_id": messages[-1]["id"] if messages else after_id}
+                return page_mail(identifier, "inbox", {"unread_only": True, **query})
             if path == "/messages" and method == "POST":
                 message = Message(**payload)
                 attachments = prepare_attachments(message.attachments)
@@ -231,6 +332,8 @@ def create_app():
 
     def public_agent(row, now):
         result = {key: row[key] for key in ("id", "name", "kind", "project", "created_at", "last_seen")}
+        result.update(instance_id=row["id"], profile_id=row.get("profile_id"),
+                      instance_name=row.get("instance_name") or row["name"])
         result["online"] = row["last_seen"] >= now - online_seconds
         return result
 
@@ -240,6 +343,64 @@ def create_app():
                    token_hash=hashlib.sha256(token.encode()).hexdigest(), created_at=now, last_seen=now)
         store.register(row)
         return {"agent": public_agent(row, now), "token": token}
+
+    def public_profile(row):
+        return {key: row[key] for key in ("id", "name", "kind", "project", "created_at")}
+
+    def profiles_directory():
+        agents = store.all_agents()
+        return {"profiles": [{**public_profile(row),
+                              "instances_count": sum(a.get("profile_id") == row["id"] for a in agents)}
+                             for row in store.profiles_all()]}
+
+    def profile_instances(profile_id):
+        if not store.profile_get(profile_id):
+            raise HTTPException(404, "Profile not found")
+        return {"profile_id": profile_id, "instances": [public_agent(row, time.time())
+                for row in store.all_agents() if row.get("profile_id") == profile_id]}
+
+    def new_profile(identifier, body):
+        profile, token = store.create_profile(identifier, body.name, body.kind, body.project)
+        return {"profile": public_profile(profile), "enrollment_token": token,
+                "instance": public_agent(store.get_agent(identifier), time.time()),
+                "token_scope": "enroll and retire instances; cannot read inboxes"}
+
+    def page_mail(identifier, box, query):
+        try:
+            params = MailQuery(**query)
+        except ValidationError:
+            raise HTTPException(422, "Invalid mailbox filters, cursor or limit")
+        return store.mail_page(identifier, box, **params.model_dump())
+
+    def inbox_summary_for(identifier):
+        result = store.inbox_count(identifier)
+        page = page_mail(identifier, "inbox", {"unread_only": True, "limit": 20})
+        preview = [{key: row[key] for key in ("id", "subject", "thread_id", "status", "from_agent_id",
+                   "created_at_iso", "message_type", "attachment_count", "has_images", "has_files")} for row in page["messages"]]
+        return {**result, "instance": public_agent(store.get_agent(identifier), time.time()),
+                "preview": preview, "has_more": page["has_more"], "checked_at": time.time()}
+
+    def workflow_bundle():
+        root = FilePath(__file__).parent
+        return {"version": APP_VERSION, "skill": (root / "skills/agent-mailbox/SKILL.md").read_text(encoding="utf-8"),
+                "persistent_instructions": (root / "docs/AGENT-INSTRUCTIONS.md").read_text(encoding="utf-8"),
+                "guide_url": "/guide/operations", "scope": "task boundaries while the host has a model turn"}
+
+    def reply_to(identifier, message_id, body):
+        original = store.get_message(identifier, message_id)
+        if original["to_agent_id"] != identifier:
+            raise HTTPException(403, "Only the addressed instance can answer this request")
+        if not secrets.compare_digest(body.request_fingerprint, original["request_fingerprint"]):
+            raise HTTPException(409, "Reply context does not match this request; read it again by ID")
+        message = Message(to_agent_id=original["from_agent_id"], in_reply_to=message_id, text=body.text,
+                          subject=original["subject"], attachments=body.attachments, idempotency_key=body.idempotency_key)
+        attachments = prepare_attachments(message.attachments)
+        if not message.text.strip() and not attachments:
+            raise HTTPException(422, "Reply needs text or an attachment")
+        sent = store.send(identifier, message, attachments, finalize={"status": body.status})
+        request = store.get_message(identifier, message_id)
+        acknowledged = body.status == "completed"
+        return {"reply": sent, "request": request, "acknowledged": acknowledged}
 
     def send_broadcast(sender, body):
         if not body.text.strip():
@@ -314,6 +475,10 @@ def create_app():
         path = FilePath(__file__).parent / "skills" / "agent-mailbox" / "SKILL.md"
         return PlainTextResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
 
+    @app.get("/workflow")
+    def get_workflow_bundle():
+        return JSONResponse(workflow_bundle(), headers={"Cache-Control": "no-store"})
+
     @app.get("/mailbox-watch.py", include_in_schema=False)
     def mailbox_watcher():
         return FileResponse(FilePath(__file__).parent / "mailbox_watch.py",
@@ -343,6 +508,16 @@ def create_app():
         store.ping()
         return {"ok": True, "storage": backend, "version": app.version}
 
+    @app.get("/capabilities")
+    def capabilities():
+        return {"version": APP_VERSION, "profiles": True, "private_instance_inboxes": True,
+                "bound_replies": True, "transactional_final_reply": True, "idempotent_delivery": True,
+                "inbox_wait": {"enabled": True, "max_timeout_seconds": 25, "slots_per_process": 12,
+                               "scope": "new unread messages for the authenticated instance only",
+                               "mode": "opt-in; an open request can keep hosted compute active"},
+                "attachments": {"max_count": 3, "total_bytes": MAX_ATTACHMENT_BYTES},
+                "model_wake": "host-specific; event delivery does not itself start a model turn"}
+
     @app.post("/agents", status_code=201)
     def register(body: AgentRegistration, identity: Identity):
         if not identity["admin"]:
@@ -352,6 +527,55 @@ def create_app():
     @app.get("/stats")
     def stats(identity: Identity):
         return {**store.stats(time.time() - online_seconds), "online_window_seconds": online_seconds}
+
+    @app.get("/profiles")
+    def list_profiles(identity: Identity):
+        return profiles_directory()
+
+    @app.post("/profiles", status_code=201)
+    def create_profile(body: AgentRegistration, identity: Identity):
+        return JSONResponse(new_profile(agent_id(identity), body), status_code=201,
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/profiles/{profile_id}/instances")
+    def get_instances(profile_id: str, identity: Identity):
+        return profile_instances(profile_id)
+
+    @app.delete("/profiles/{profile_id}")
+    def delete_profile(profile_id: str, credentials: Credential):
+        store.authorize_profile(profile_id, credentials.credentials if credentials else "")
+        store.delete_empty_profile(profile_id)
+        return {"profile_id": profile_id, "deleted": True}
+
+    @app.get("/profiles/{profile_id}/activity")
+    def get_profile_activity(profile_id: str, identity: Identity):
+        return store.profile_activity(identity.get("id"), profile_id, identity["admin"])
+
+    @app.post("/profiles/{profile_id}/instances", status_code=201)
+    def enroll_instance(profile_id: str, body: InstanceRegistration, credentials: Credential):
+        profile = store.authorize_profile(profile_id, credentials.credentials if credentials else "")
+        if body.session_key:
+            identifier = str(uuid5(UUID(profile_id), body.session_key))
+            token = hmac.new(credentials.credentials.encode(), identifier.encode(), hashlib.sha256).hexdigest()
+        else:
+            identifier, token = str(uuid4()), secrets.token_urlsafe(32)
+        now = time.time()
+        row = dict(id=identifier, name=body.instance_name, kind=profile["kind"],
+                   project=body.project or profile["project"], created_at=now, last_seen=now,
+                   token_hash=hashlib.sha256(token.encode()).hexdigest())
+        created = store.enroll_profile_instance(profile_id, row)
+        return JSONResponse({"agent": public_agent(store.get_agent(identifier), time.time()),
+                             "token": token, "resumed": not created}, status_code=201,
+                            headers={"Cache-Control": "no-store"})
+
+    @app.delete("/profiles/{profile_id}/instances/{instance_id}")
+    def retire_instance(profile_id: str, instance_id: str, credentials: Credential):
+        store.authorize_profile(profile_id, credentials.credentials if credentials else "")
+        instance = store.get_agent(instance_id)
+        if not instance or instance.get("profile_id") != profile_id:
+            raise HTTPException(404, "Instance not found in profile")
+        store.unregister(instance_id)
+        return {"instance_id": instance_id, "deleted": True}
 
     @app.get("/agents")
     def list_agents(identity: Identity, online: bool | None = None,
@@ -401,6 +625,27 @@ def create_app():
     def get_message(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)], identity: Identity):
         return store.get_message(agent_id(identity), message_id)
 
+    @app.post("/messages/{message_id}/reply", status_code=201)
+    def reply_message(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)], body: Reply, identity: Identity):
+        return reply_to(agent_id(identity), message_id, body)
+
+    @app.patch("/messages/{message_id}/status")
+    def set_message_status(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)], body: RequestStatus,
+                           identity: Identity):
+        return store.update_status(agent_id(identity), message_id, body.status, body.note)
+
+    @app.get("/threads/{message_id}")
+    def get_thread(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)], identity: Identity,
+                   after_id: int = Query(0, ge=0, le=MAX_MESSAGE_ID), limit: int = Query(100, ge=1, le=200)):
+        return store.thread_messages(agent_id(identity), message_id, after_id, limit)
+
+    @app.get("/outbox")
+    def get_outbox(identity: Identity, after_id: int = Query(0, ge=0, le=MAX_MESSAGE_ID),
+                   limit: int = Query(50, ge=1, le=200), status: str | None = None,
+                   thread_id: int | None = Query(None, gt=0), has_attachments: bool | None = None):
+        return page_mail(agent_id(identity), "outbox", dict(after_id=after_id, limit=limit, status=status,
+                         thread_id=thread_id, has_attachments=has_attachments))
+
     @app.delete("/messages/{message_id}")
     def delete_message(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)], identity: Identity):
         return store.delete_message(identity.get("id", ""), message_id, admin=identity["admin"])
@@ -424,21 +669,32 @@ def create_app():
         from urllib.parse import quote
         attachment = store.get_attachment(agent_id(identity), message_id, attachment_index)
         filename = attachment["filename"].replace("\\", "_").replace('"', "_")
+        ascii_filename = filename.encode("ascii", errors="ignore").decode() or "attachment"
         return Response(content=attachment["data"], media_type=attachment["media_type"],
                         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
-                                 "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"})
+                                 "Content-Disposition": f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{quote(filename, safe='')}"})
 
     @app.get("/inbox/count")
     def inbox_count(identity: Identity):
         return store.inbox_count(agent_id(identity))
 
+    @app.get("/inbox/summary")
+    def get_inbox_summary(identity: Identity):
+        return inbox_summary_for(agent_id(identity))
+
+    @app.get("/inbox/wait")
+    def wait_inbox(identity: Identity, after_id: int = Query(0, ge=0, le=MAX_MESSAGE_ID),
+                   timeout: int = Query(25, ge=1, le=25)):
+        return wait_mail(agent_id(identity), after_id, timeout)
+
     @app.get("/inbox")
     def inbox(identity: Identity, unread_only: bool = True,
-              after_id: int = Query(0, ge=0, le=MAX_MESSAGE_ID), limit: int = Query(50, ge=1, le=200)):
-        rows = store.inbox(agent_id(identity), unread_only, after_id, limit + 1)
-        messages = rows[:limit]
-        return {"messages": messages, "has_more": len(rows) > limit,
-                "next_after_id": messages[-1]["id"] if messages else after_id}
+              after_id: int = Query(0, ge=0, le=MAX_MESSAGE_ID), limit: int = Query(50, ge=1, le=200),
+              status: str | None = None, thread_id: int | None = Query(None, gt=0),
+              has_attachments: bool | None = None):
+        return page_mail(agent_id(identity), "inbox", dict(after_id=after_id, limit=limit,
+                         unread_only=unread_only, status=status, thread_id=thread_id,
+                         has_attachments=has_attachments))
 
     @app.delete("/inbox")
     def delete_inbox(identity: Identity, after_id: int = Query(0, ge=0, le=MAX_MESSAGE_ID),

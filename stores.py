@@ -7,6 +7,8 @@ import time
 import json
 
 from fastapi import HTTPException
+from collaboration import CollaborationStore, message_view, message_fields
+from delivery import delivery_identity
 
 
 def check_reply(original, sender, recipient):
@@ -14,7 +16,7 @@ def check_reply(original, sender, recipient):
         raise HTTPException(404, "Original message not found in this conversation")
 
 
-class SQLiteStore:
+class SQLiteStore(CollaborationStore):
     def __init__(self, path):
         self.path = Path(path).resolve()
 
@@ -61,12 +63,13 @@ class SQLiteStore:
                 size_bytes INTEGER NOT NULL, data BLOB NOT NULL,
                 PRIMARY KEY(message_id, attachment_index)
             )""")
+        self.initialize_collaboration()
 
     @staticmethod
     def message_output(row):
         result = dict(row)
         result["attachments"] = json.loads(result.pop("attachments_json", "[]"))
-        return result
+        return message_view(result)
 
     def ping(self):
         with self.database() as db:
@@ -82,7 +85,7 @@ class SQLiteStore:
 
     def register(self, row):
         with self.database() as db:
-            db.execute("INSERT INTO agents VALUES (?, ?, ?, ?, ?, ?, ?)",
+            db.execute("INSERT INTO agents (id, name, kind, project, token_hash, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)",
                        tuple(row[k] for k in ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen")))
 
     def all_agents(self):
@@ -102,6 +105,7 @@ class SQLiteStore:
             db.execute("DELETE FROM messages WHERE from_agent_id = ? OR to_agent_id = ?",
                        (identifier, identifier))
             db.execute("DELETE FROM agents WHERE id = ?", (identifier,))
+            db.execute("DELETE FROM delivery_keys WHERE sender_id = ?", (identifier,))
         return True
 
     def stats(self, cutoff):
@@ -110,22 +114,49 @@ class SQLiteStore:
             messages = db.execute("SELECT COUNT(*), COALESCE(SUM(acknowledged_at IS NULL), 0) FROM messages").fetchone()
         return dict(agents_total=agents[0], agents_online=agents[1], messages_total=messages[0], messages_pending=messages[1])
 
-    def send(self, sender, body, attachments=None):
+    def send(self, sender, body, attachments=None, finalize=None):
         attachments = attachments or []
+        key_hash, payload_hash = delivery_identity(sender, body, attachments, finalize)
         metadata = [{key: item[key] for key in ("filename", "media_type", "size_bytes")} | {"index": i}
                     for i, item in enumerate(attachments)]
         with self.database() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if key_hash:
+                cached = db.execute("SELECT * FROM delivery_keys WHERE key_hash = ?", (key_hash,)).fetchone()
+                if cached:
+                    if cached["payload_hash"] != payload_hash:
+                        raise HTTPException(409, "Idempotency key was used for different content")
+                    previous = db.execute("SELECT * FROM messages WHERE id = ?", (cached["message_id"],)).fetchone()
+                    if previous is None:
+                        raise HTTPException(410, "This delivery was deleted; do not retry it with this key")
+                    return {**self.message_output(previous), "delivery_replayed": True}
             if db.execute("SELECT 1 FROM agents WHERE id = ?", (body.to_agent_id,)).fetchone() is None:
                 raise HTTPException(404, "Recipient not found")
+            original = None
             if body.in_reply_to is not None:
                 original = db.execute("SELECT * FROM messages WHERE id = ?", (body.in_reply_to,)).fetchone()
                 check_reply(original, sender, body.to_agent_id)
+                original = self.message_output(original)
+                if finalize and original["status"] in ("completed", "cancelled"):
+                    raise HTTPException(409, "Request is already closed")
+            fields = message_fields(body, None, original)
             cursor = db.execute("""INSERT INTO messages
-                (from_agent_id, to_agent_id, text, in_reply_to, created_at, attachments_json)
-                VALUES (?, ?, ?, ?, ?, ?)""",
+                (from_agent_id, to_agent_id, text, in_reply_to, created_at, attachments_json,
+                 subject, thread_id, status, status_note, updated_at, share_subject, message_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (sender, body.to_agent_id, body.text, body.in_reply_to, time.time(),
-                 json.dumps(metadata, ensure_ascii=False)))
+                 json.dumps(metadata, ensure_ascii=False), fields["subject"], fields["thread_id"],
+                 fields["status"], fields["status_note"], fields["updated_at"], int(fields["share_subject"]), fields["message_type"]))
             message_id = cursor.lastrowid
+            if key_hash:
+                db.execute("INSERT INTO delivery_keys VALUES (?, ?, ?, ?, ?)",
+                           (key_hash, sender, payload_hash, message_id, time.time()))
+            if fields["thread_id"] is None:
+                db.execute("UPDATE messages SET thread_id = ? WHERE id = ?", (message_id, message_id))
+            if finalize:
+                db.execute("UPDATE messages SET status = ?, status_note = '', updated_at = ?, acknowledged_at = "
+                           "CASE WHEN ? = 'completed' THEN COALESCE(acknowledged_at, ?) ELSE acknowledged_at END "
+                           "WHERE id = ?", (finalize["status"], time.time(), finalize["status"], time.time(), body.in_reply_to))
             for index, item in enumerate(attachments):
                 db.execute("""INSERT INTO attachments
                     (message_id, attachment_index, filename, media_type, size_bytes, data)
@@ -211,7 +242,7 @@ class SQLiteStore:
                 raise HTTPException(404, "Message not found in your inbox")
 
 
-class FirestoreStore:
+class FirestoreStore(CollaborationStore):
     def __init__(self, project, database, credentials=None):
         from google.cloud import firestore
         from google.cloud.firestore_v1.base_query import FieldFilter
@@ -262,6 +293,7 @@ class FirestoreStore:
             message_ids.update(int(doc.id) for doc in query.stream(timeout=30))
         # Firestore batches are limited; delete attachment chunks before messages.
         refs = []
+        refs.extend(doc.reference for doc in self.where(self.client.collection("delivery_keys"), "sender_id", "==", identifier).stream(timeout=30))
         for message_id in message_ids:
             chunks = self.where(self.attachment_chunks, "message_id", "==", message_id)
             refs.extend(doc.reference for doc in chunks.stream(timeout=30))
@@ -289,16 +321,30 @@ class FirestoreStore:
     def message_reference(self, identifier):
         return self.messages.document(f"{identifier:020d}")
 
-    def send(self, sender, body, attachments=None):
+    def send(self, sender, body, attachments=None, finalize=None):
         attachments = attachments or []
+        key_hash, payload_hash = delivery_identity(sender, body, attachments, finalize)
         @self.firestore.transactional
         def insert(transaction):
+            key_ref = self.client.collection("delivery_keys").document(key_hash) if key_hash else None
+            if key_ref:
+                cached = key_ref.get(transaction=transaction).to_dict()
+                if cached:
+                    if cached["payload_hash"] != payload_hash:
+                        raise HTTPException(409, "Idempotency key was used for different content")
+                    previous = self.message_reference(cached["message_id"]).get(transaction=transaction).to_dict()
+                    if previous is None:
+                        raise HTTPException(410, "This delivery was deleted; do not retry it with this key")
+                    return {**message_view(previous), "delivery_replayed": True}
             recipient = self.agents.document(body.to_agent_id).get(transaction=transaction)
             if not recipient.exists:
                 raise HTTPException(404, "Recipient not found")
+            original = None
             if body.in_reply_to is not None:
                 original = self.message_reference(body.in_reply_to).get(transaction=transaction).to_dict()
                 check_reply(original, sender, body.to_agent_id)
+                if finalize and original.get("status", "queued") in ("completed", "cancelled"):
+                    raise HTTPException(409, "Request is already closed")
             sequence = self.sequence.get(transaction=transaction).to_dict() or {}
             identifier = sequence.get("value", 0) + 1
             metadata = []
@@ -309,9 +355,17 @@ class FirestoreStore:
                                 {"index": index, "chunks": chunks})
             row = dict(id=identifier, from_agent_id=sender, to_agent_id=body.to_agent_id,
                        text=body.text, in_reply_to=body.in_reply_to, created_at=time.time(), acknowledged_at=None,
-                       attachments=metadata)
+                       attachments=metadata, **message_fields(body, identifier, original))
             transaction.set(self.sequence, {"value": identifier})
             transaction.create(self.message_reference(identifier), row)
+            if key_ref:
+                transaction.create(key_ref, {"sender_id": sender, "payload_hash": payload_hash,
+                                             "message_id": identifier, "created_at": time.time()})
+            if finalize:
+                fields = {"status": finalize["status"], "status_note": "", "updated_at": time.time()}
+                if finalize["status"] == "completed":
+                    fields["acknowledged_at"] = original.get("acknowledged_at") or time.time()
+                transaction.update(self.message_reference(body.in_reply_to), fields)
             for index, item in enumerate(attachments):
                 chunk_size = 512 * 1024
                 for chunk_index, offset in enumerate(range(0, len(item["data"]), chunk_size)):
@@ -320,7 +374,7 @@ class FirestoreStore:
                         "message_id": identifier, "attachment_index": index, "chunk_index": chunk_index,
                         "data": item["data"][offset:offset + chunk_size],
                     })
-            return row
+            return message_view(row)
         return insert(self.client.transaction(max_attempts=10))
 
     def inbox_count(self, identifier):
@@ -332,13 +386,13 @@ class FirestoreStore:
         query = self.where(query, "id", ">", after_id)
         if unread_only:
             query = self.where(query, "acknowledged_at", "==", None)
-        return [doc.to_dict() for doc in query.order_by("id").limit(limit).stream(timeout=15)]
+        return [message_view(doc.to_dict()) for doc in query.order_by("id").limit(limit).stream(timeout=15)]
 
     def get_message(self, identifier, message_id):
         row = self.message_reference(message_id).get(timeout=15).to_dict()
         if row is None or identifier not in (row["from_agent_id"], row["to_agent_id"]):
             raise HTTPException(404, "Message not found in your conversations")
-        return row
+        return message_view(row)
 
     def _delete_message_ids(self, message_ids):
         if not message_ids:
@@ -388,7 +442,7 @@ class FirestoreStore:
                 "has_more": len(rows) > limit, "next_after_id": selected[-1] if selected else after_id}
 
     def recent_messages(self, limit=15):
-        return [doc.to_dict() for doc in self.messages.order_by(
+        return [message_view(doc.to_dict()) for doc in self.messages.order_by(
             "id", direction=self.firestore.Query.DESCENDING).limit(limit).stream(timeout=15)]
 
     def get_attachment(self, identifier, message_id, attachment_index):

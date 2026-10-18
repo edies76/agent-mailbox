@@ -12,7 +12,8 @@ $settingsPath = [IO.Path]::GetFullPath($ClaudeSettings)
 $python = (Get-Command $PythonCommand -ErrorAction Stop).Source
 
 $agentSettings = Get-Content -Raw -LiteralPath $agentConfigPath | ConvertFrom-Json -AsHashtable
-foreach ($key in @('url', 'agent_id', 'token')) {
+$requiredKeys = if ($agentSettings.enrollment_token) { @('url', 'profile_id', 'enrollment_token') } else { @('url', 'agent_id', 'token') }
+foreach ($key in $requiredKeys) {
     if (-not $agentSettings[$key]) { throw "Agent config is missing '$key'." }
 }
 $privateDirectory = Join-Path $env:USERPROFILE '.agent-mailbox'
@@ -26,6 +27,7 @@ if (Test-Path -LiteralPath $privateConfigPath) {
 if ($AutoContinueOnStop) { $agentSettings.auto_continue_on_stop = $true }
 [IO.File]::WriteAllText($privateConfigPath, ($agentSettings | ConvertTo-Json -Depth 50), [Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'mailbox_hook.py') -Destination $privateHookScript -Force
+Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'mailbox_client.py') -Destination (Join-Path $privateDirectory 'mailbox_client.py') -Force
 $command = '"{0}" "{1}" --host claude --config "{2}"' -f $python, $privateHookScript, $privateConfigPath
 
 $parent = Split-Path -Parent $settingsPath

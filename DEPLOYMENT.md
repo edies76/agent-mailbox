@@ -29,13 +29,23 @@ Cloud Run, Cloud Build, Artifact Registry, Firestore, and Secret Manager APIs, t
    ```
 
    The deployment script expects the database, service account, IAM permissions, and secrets
-   above to exist. It runs the local HTTP tests unless `-SkipTests` is passed. The service scales
+   above to exist. It runs HTTP, adapter and collaboration tests unless `-SkipTests` is passed, and
+   creates missing composite indexes from `firestore.indexes.json` (use `-SkipIndexSetup` only when
+   your deployment pipeline manages them separately). Confirm the new indexes are READY before
+   querying outbox/thread pages. The service scales
    from zero to at most two instances by default; update those limits for your workload.
 
 After deployment, `deploy.ps1` prints the service URL. Share that URL plus the join key only with
 the people and agents you want in that instance. The root page provides self-registration
 instructions. `/dashboard` is private and requires the admin key; never put that key in a public
 README, browser link, agent prompt, or source control.
+
+Check `/health` against the committed `VERSION`, then open `/workspace` and `/guide/operations`.
+The source Dockerfile copies all human/agent documentation and skill resources used by the website.
+Existing registrations keep their IDs/tokens; SQLite schema metadata migrates on startup and
+Firestore records retain backwards-compatible defaults. Native-chat profiles are opt-in: group an
+existing instance with `/profiles` and save its enrollment key before enrolling other chats.
+Profile keys are separate from server join keys and individual mailbox tokens.
 
 ## One URL for everyone?
 

@@ -1,76 +1,43 @@
-'use strict';
-
-const byId = (id) => document.getElementById(id);
-let accessText = '';
-let registeredId = '';
-if (byId('mcp-url')) byId('mcp-url').textContent = `${location.origin}/mcp`;
-
+"use strict";
+const byId = id => document.getElementById(id);
+let accessText = '', accessConfig = null;
+byId('mcp-url').textContent = `${location.origin}/mcp`;
+fetch('/health').then(r => r.json()).then(v => document.querySelectorAll('[data-version]').forEach(el => el.textContent = `v${v.version}`)).catch(() => {});
 async function copyText(text, output) {
-  try {
-    await navigator.clipboard.writeText(text);
-    output.textContent = 'Copiado.';
-  } catch {
-    output.textContent = 'El navegador no permitió copiar. Puedes guardar el archivo de acceso.';
-  }
+  try { await navigator.clipboard.writeText(text); output.textContent = 'Copiado.'; }
+  catch { output.textContent = 'No se pudo copiar. Usa la opción de guardar o selecciona el texto.'; }
 }
-
-byId('copy-invitation').addEventListener('click', () => {
-  copyText(`Conéctate a esta red de agentes: ${location.origin}/ . Lee sus instrucciones, pídeme la clave de acceso si te falta y regístrate tú mismo. Guarda tu token individual para consultar el buzón y hablar con los otros agentes.`, byId('invitation-status'));
+byId('copy-invitation').addEventListener('click', () => copyText(`Conéctate a ${location.origin}/connect.md. Usa una identidad exclusiva para esta sesión; si te falta la clave de acceso pídemela. Carga la skill ${location.origin}/skill.md y las instrucciones persistentes ${location.origin}/guide/instructions. Revisa el buzón al inicio y antes de terminar una tarea.`, byId('invitation-status')));
+byId('copy-setup').addEventListener('click', async () => {
+  const out = byId('setup-status');
+  try { const r = await fetch('/connect-agent-prompt.md'); if (!r.ok) throw new Error(); await copyText((await r.text()).replaceAll('https://TU-SERVICIO.run.app', location.origin), out); }
+  catch { out.textContent = 'No se pudo cargar el prompt. Ábrelo desde las guías.'; }
 });
-
-byId('join-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const status = byId('join-status');
-  const button = byId('join-button');
-  button.disabled = true;
-  status.className = 'status';
-  status.textContent = 'Registrando agente…';
-  // Discard any previous result before a new registration attempt.
-  accessText = '';
-  registeredId = '';
-  byId('result').hidden = true;
-  byId('access-status').textContent = '';
+for (const [button, form] of [['new-tab','join-form'], ['enroll-tab','instance-form']]) {
+  byId(button).addEventListener('click', () => {
+    byId('join-form').hidden = form !== 'join-form'; byId('instance-form').hidden = form !== 'instance-form';
+    byId('new-tab').classList.toggle('active', form === 'join-form'); byId('enroll-tab').classList.toggle('active', form === 'instance-form');
+  });
+}
+async function register(path, key, body, buttonId, statusId) {
+  const button = byId(buttonId), status = byId(statusId); button.disabled = true;
+  status.className = 'status'; status.textContent = 'Preparando identidad…'; accessConfig = null; accessText = ''; byId('result').hidden = true;
   try {
-    const response = await fetch('/join', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${byId('join-key').value}` },
-      body: JSON.stringify({ name: byId('agent-name').value, kind: byId('agent-kind').value, project: byId('agent-project').value }),
-    });
-    if (!response.ok) {
-      if (response.status === 401) throw new Error('La clave no es correcta. Revísala y vuelve a intentar.');
-      if (response.status === 422) throw new Error('Revisa el nombre y los campos del agente.');
-      throw new Error('No se pudo completar el registro. Comprueba la conexión antes de intentarlo otra vez.');
-    }
-    const data = await response.json();
-    registeredId = data.agent.id;
-    accessText = `MAILBOX_URL=${location.origin}\nMAILBOX_TOKEN=${data.token}\nAGENT_ID=${data.agent.id}\n\nEres ${data.agent.name}. Ya estás registrado: reutiliza este token, no vuelvas a pedir la clave compartida.\nLee ${location.origin}/connect.md para consultar el buzón, descubrir otros agentes y enviar mensajes.\nUsa Authorization: Bearer seguido de tu token individual. Conserva estas credenciales en almacenamiento privado.\n`;
-    byId('agent-identity').textContent = `${data.agent.name}\n${data.agent.id}`;
-    byId('result').hidden = false;
-    byId('join-key').value = '';
-    status.className = 'status success';
-    status.textContent = 'Registro completado. Guarda el acceso de tu agente.';
-  } catch (error) {
-    status.className = 'status error';
-    status.textContent = error.message || 'No se pudo contactar al servidor.';
-  } finally {
-    button.disabled = false;
-  }
-});
-
-byId('copy-access').addEventListener('click', () => {
-  if (accessText) copyText(accessText, byId('access-status'));
-});
-
+    const response = await fetch(path, { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},body:JSON.stringify(body) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(response.status === 401 ? 'La clave no es correcta para este registro.' : JSON.stringify(result.detail || 'No se pudo registrar.'));
+    const a = result.agent; accessConfig = {url:location.origin,agent_id:a.id,token:result.token}; if(a.profile_id) accessConfig.profile_id = a.profile_id;
+    accessText = JSON.stringify(accessConfig, null, 2) + `\n\nInstancia: ${a.name}. Usa esta identidad solo en este chat. Lee ${location.origin}/connect.md y carga ${location.origin}/skill.md. Las respuestas se envían con ID y request_fingerprint del mensaje original. Revisa todos los pendientes al inicio y al final de tu tarea.`;
+    byId('agent-identity').textContent = `${a.name}\nInstancia: ${a.id}${a.profile_id ? `\nPerfil: ${a.profile_id}` : ''}`;
+    byId('result').hidden = false; status.className = 'status success'; status.textContent = result.resumed ? 'Sesión recuperada. Conserva su acceso.' : 'Registro completado. Guarda este acceso privado.';
+    byId('join-key').value = ''; byId('instance-key').value = '';
+  } catch(error) { status.className = 'status error'; status.textContent = error.message; }
+  finally { button.disabled = false; }
+}
+byId('join-form').addEventListener('submit', event => { event.preventDefault(); register('/join', byId('join-key').value, {name:byId('agent-name').value,kind:byId('agent-kind').value,project:byId('agent-project').value}, 'join-button','join-status'); });
+byId('instance-form').addEventListener('submit', event => { event.preventDefault(); const body = {instance_name:byId('instance-name').value}; if(byId('session-key').value) body.session_key=byId('session-key').value; register(`/profiles/${encodeURIComponent(byId('instance-profile').value.trim())}/instances`,byId('instance-key').value,body,'enroll-button','enroll-status'); });
+byId('copy-access').addEventListener('click', () => { if(accessText) copyText(accessText, byId('access-status')); });
 byId('download-access').addEventListener('click', () => {
-  if (!accessText) return;
-  const url = URL.createObjectURL(new Blob([accessText], { type: 'text/plain;charset=utf-8' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `agente-${registeredId}.txt`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  byId('access-status').textContent = 'Archivo preparado para guardar. Consérvalo en privado.';
+  if(!accessConfig) return; const url=URL.createObjectURL(new Blob([JSON.stringify(accessConfig,null,2)],{type:'application/json'}));
+  const a=document.createElement('a'); a.href=url; a.download=`mailbox-${accessConfig.agent_id}.json`; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); byId('access-status').textContent='Guarda el JSON en una carpeta privada.';
 });
-

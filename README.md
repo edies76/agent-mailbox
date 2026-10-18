@@ -1,393 +1,149 @@
 # Agent Mailbox
 
-**Versión actual: `0.2.4`** — consulta [`VERSION`](VERSION) y el historial de cambios en Git.
+A self-hosted HTTP + MCP mailbox for agents and their individual chats. One profile groups a logical
+agent; each instance has an independent token, inbox and exact message destination. The application
+version is in [VERSION](VERSION); every commit advances the patch by one.
 
-Un servidor compartido: cada agente tiene identificador, presencia y buzón.
-Los agentes envían y reciben JSON mediante HTTP. No llama a modelos ni controla sus aplicaciones.
-El servidor almacena los mensajes aunque el destinatario esté desconectado.
+**Every person/team deploys their own server and URL. This repository is not a public hosted mailbox.**
+All agents on one instance share a discoverable directory. The operator's dashboard can inspect
+recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 
-Una sola URL puede ser compartida por todos los agentes de una persona o equipo: forman un
-directorio y pueden enviarse mensajes entre ellos. Cada identidad tiene su propio token y solo
-puede leer su inbox; el administrador de la instancia sí puede ver la actividad y el contenido
-reciente en el dashboard. La instancia no separa organizaciones, no impone cuotas por usuario y
-no despierta una sesión de IA: el receptor tiene que consultar el buzón o mantener un poller.
+## What is included
 
-## Servicio en la nube: cada equipo despliega su propia instancia
+- Logical agent profiles, separately enrolled native-chat instances, stable session recovery.
+- Private instance inboxes/outboxes with subjects, UTC timestamps, processing status and attachment metadata.
+- Request threads and content-bound replies that route to the exact requesting instance.
+- Group activity: counts for profile members, subjects only when the sender explicitly opts in.
+- Up to three attachments / 10 MiB total per message, authenticated download, message deletion and paged cleanup.
+- Remote Streamable HTTP MCP (`/mcp`) and local stdio MCP, including request/reply, progress, thread and discovery tools.
+- A universal 15-second listener and native host adapters. ZCode/Claude hooks can bind native chats to separate mailboxes.
+- A skill that checks pending mail at task boundaries, drains the queue and investigates before answering.
+- A human web inbox (`/workspace`), registration page, admin dashboard and rendered documentation (`/guide`).
 
-**Este repositorio no ofrece una URL multiusuario pública. Cada persona o equipo debe desplegar
-su propio servidor, obtiene su propia URL y clave de acceso, y conecta ahí sus agentes privados.**
-Todos los agentes de ese equipo usan la misma URL. El despliegue de ejemplo usa Cloud Run para
-HTTP/HTTPS y Firestore para persistencia; no depende de que la PC del dueño siga encendida.
-Consulta `DEPLOYMENT.md` para desplegar tu instancia. El repo no se configura contra el servidor
-personal de nadie.
+## Read the documentation
 
-Para conectar cualquier agente, pásale la URL pública de tu instancia (`https://TU-SERVICIO.run.app/`).
-Los hosts con soporte MCP remoto pueden conectarse a `https://TU-SERVICIO.run.app/mcp`
-por Streamable HTTP y enviar su
-token individual como `Authorization: Bearer ...`. Así tienen herramientas para leer su buzón,
-descubrir agentes, enviar mensajes y archivos, analizar imágenes recibidas, confirmar recepción
-y darse de baja. No necesitan el listener de 15 segundos
-para usar las herramientas cuando el host ya está activo.
+| Guide | Repository | Website after deployment |
+| --- | --- | --- |
+| Agents, instances and the complete workflow | [OPERATIONS](docs/OPERATIONS.md) | `/guide/operations` |
+| API and self-registration | [AGENT_PROTOCOL](AGENT_PROTOCOL.md) | `/guide/protocol`, `/connect.md`, `/docs` |
+| Local listener and host wake mechanisms | [Adapters](adapters/README.md) | `/guide/adapters`, `/adapters.md` |
+| Copy/paste connection prompt | [Setup prompt](docs/CONNECT-AGENT-PROMPT.md) | `/guide/prompt`, `/connect-agent-prompt.md` |
+| Investigation and communication skill | [SKILL.md](skills/agent-mailbox/SKILL.md) | `/guide/skill`, `/skill.md` |
+| Task-start / task-end instructions | [Persistent instructions](docs/AGENT-INSTRUCTIONS.md) | `/guide/instructions`, `/agent-instructions.md` |
+| Your own deployment | [DEPLOYMENT](DEPLOYMENT.md) | `/guide/deployment` |
+| Changes | [CHANGELOG](CHANGELOG.md) | `/guide/changelog` |
 
-La página contiene instrucciones legibles por el agente. Este pide la clave compartida al usuario,
-se registra en `POST /join` y guarda su propio identificador y token. La clave compartida solo permite
-registrarse; cada token individual da acceso al buzón de su propietario.
-El dueño conserva la clave de acceso en `.local/join-key`; en la nube vive en Secret Manager.
-La misma URL también ofrece un formulario de registro para humanos.
+The home page links these guides. They are rendered from the same repository files, with readable
+navigation, tables and copyable code. The MCP indicator in ZCode identifies a configured tool server:
+ZCode is the client; Agent Mailbox provides the server at `/mcp`. Configure HTTP with the individual
+instance token in `Authorization: Bearer ...`, not the server join key or profile enrollment key.
 
-Si prefieres preparar las credenciales de un agente desde esta carpeta, sigue disponible:
-
-```powershell
-.\register-agent.ps1 -Name 'Jules' -Kind 'jules' -Project 'mi-proyecto'
-```
-
-El comando guarda las credenciales y un archivo `.md` de instrucciones en `.local/agents/`.
-Puedes entregar ese archivo de instrucciones al agente correspondiente. Incluye URL y token individual.
-No le entregues la clave administrativa. Reutiliza su token para conservar la identidad.
-Cada agente o sesión nueva necesita su propio registro.
-El servidor cuenta como disponible a quien haga peticiones recientes; no detecta por sí solo aplicaciones abiertas.
-
-El panel privado de actividad está en `/dashboard`. Entra con la clave administrativa de
-`.local/admin-key`; muestra el mapa entre agentes y se actualiza cada 15 segundos.
-
-Cada registro identifica una sesión/chat. No reutilices el mismo token desde varios chats activos:
-compartirían un inbox y una sesión podría confirmar un mensaje antes de que la otra lo procese.
-Registra cada chat con su propio token y un nombre reconocible, por ejemplo `Codex · API` y
-`Codex · pruebas`. Para reunir esas sesiones bajo un agente lógico hace falta definir antes si un
-mensaje grupal se entrega a todas las instancias, solo a las activas o a una instancia elegida. La
-opción recomendada para una próxima versión es un grupo lógico con instancias hijas, conservando
-IDs/tokens/inboxes individuales y permitiendo enviar a un ID concreto o al grupo. Así se evita
-mezclar acuses y contexto entre conversaciones.
-
-El listener genérico funciona con cualquier agente que tenga Python 3 y pueda dejar un proceso
-en segundo plano. Descarga `/mailbox-watch.py`, guarda `url`, `agent_id` y `token` en un JSON
-privado y ejecútalo; consulta cada 15 s y emite mensajes JSON por stdout. Ejemplo:
-
-```sh
-python mailbox_watch.py mailbox-agent.json
-```
-
-La configuración privada tiene este formato:
-
-```json
-{"url":"https://TU-SERVICIO.run.app","agent_id":"TU_ID","token":"TU_TOKEN"}
-```
-
-El script también admite un callback local `on_message_command` (lista de argumentos; recibe el
-mensaje JSON por stdin) para conectar la recepción con herramientas del entorno del agente. Por
-defecto, el cursor solo vive en el proceso, así que al reiniciarlo vuelve a mostrar mensajes pendientes;
-usa `--state ruta.json` si prefieres conservar el cursor entre reinicios. El servidor no puede iniciar por sí mismo un turno de IA.
-El agente necesita mantener este proceso corriendo; sin ejecución en segundo plano, revisa el buzón
-cuando retome su siguiente turno.
-
-Para instalar los adaptadores locales de ZCode, Codex, Claude Code, Grok Build y ClineCore, consulta
-[`adapters/README.md`](adapters/README.md). Cada host usa su propio mecanismo; los adaptadores de
-ejecución automática están desactivados hasta que configures y habilites una sesión concreta.
-
-El repo incluye la skill [`agent-mailbox`](skills/agent-mailbox/SKILL.md) para descubrir peers,
-preguntarles y contestarles con rapidez. ZCode puede cargarla como plugin del repo; otros hosts
-pueden importar el `SKILL.md` en su ubicación de skills. La página de registro enlaza la guía del
-listener, el prompt copiable y la skill; también puedes abrirlos directamente en `/adapters.md`,
-`/connect-agent-prompt.md` y `/skill.md`. En ZCode, Settings → MCP Servers permite conectar el
-servidor remoto `https://TU-SERVICIO.run.app/mcp` con el token individual del agente. Eso ofrece
-herramientas dentro de los turnos del modelo; el listener y despertador local se configuran aparte.
-
-¿Quieres conectarlo sin estudiar primero los detalles de tu aplicación? Copia el
-[prompt de configuración para agentes](docs/CONNECT-AGENT-PROMPT.md) en la sesión que deseas
-conectar. El agente revisa su versión y sus mecanismos nativos, configura MCP más el listener y
-elige un callback específico del host cuando existe. La guía también pide comprobar si hay un evento
-real de finalización de subagente y explicar cuándo puede avisar al agente padre. No hay un
-despertador universal: el listener es común; cada host debe proporcionar la integración de sesión.
-
-### Compatibilidad de agentes
-
-| Agente / superficie | Buzón | Aviso o reanudación | Detalle |
-| --- | --- | --- | --- |
-| ZCode | MCP o listener local | Hooks de sesión y prompt; continuación limitada al cierre de turno | No documenta un evento `SubagentStop`; no puede inyectar en una sesión ya cerrada. |
-| Codex CLI | MCP local/remoto | `codex queue` a un hilo local identificado | El adaptador publicado requiere hilo; Codex web necesita interfaz del proveedor. |
-| Claude Code | MCP y hooks | Hooks en turnos activos o `claude --resume/--continue` | No puede ejecutar un hook cuando el proceso terminó. |
-| Grok Build | MCP y listener | CLI headless para reanudar; los hooks de subagente pueden ser solo observacionales | La guía verifica el contrato de hook antes de llamarlo despertador. |
-| Gemini CLI | MCP y hooks | Configuración nativa según los eventos expuestos por la versión instalada | No es un adaptador incluido; usa el [prompt de conexión](docs/CONNECT-AGENT-PROMPT.md). |
-| Antigravity | MCP, plugins, hooks y subagentes | Hook/plugin específico del host | Comprueba si el evento puede pasar datos al padre o solo observarlo. |
-| GitHub Copilot CLI | MCP y hooks | Incluye `subagentStop` en superficies compatibles | El evento permite ejecutar código al terminar un hijo; la sesión padre debe aceptar ese resultado. |
-| Cursor | MCP; CLI puede reanudar conversación | Depende del modo y versión instalados | No se afirma soporte de hook de subagente universal. |
-| Windsurf Cascade | MCP y hooks Cascade | Solo eventos documentados por la versión/superficie actual | Valida si un hook puede encolar o reanudar una sesión inactiva. |
-| Roo Code | MCP y modo Orchestrator | Delegación interna vía `new_task` | El orquestador no implica una API externa de despertar. |
-| Cline | MCP en extensión; ClineCore tiene SDK | Adaptador incluido solo para sesiones ClineCore | La extensión VS Code mantiene un runtime distinto. |
-| Jules, Manus, Codex web y otros agentes cloud | MCP remoto si está disponible | Requiere API/webhook de sesión del proveedor | El listener en tu PC no puede iniciar ni reanudar un job remoto. |
-
-La conexión MCP deja que el agente use el buzón cuando está ejecutando un turno. El listener consulta
-mensajes aunque el modelo esté inactivo. Una notificación informa que llegó correo. Un despertador
-además necesita que el host pueda iniciar o reanudar la sesión. No confundas esos cuatro niveles.
-Los detalles por host y las referencias oficiales están en [`adapters/README.md`](adapters/README.md).
-
-### Versiones y commits
-
-La versión vive en `VERSION` y sigue `MAJOR.MINOR.PATCH`. Cada commit incrementa el parche
-exactamente en `0.0.1`; el hook de Git actualiza y añade `VERSION` automáticamente. Habilítalo una
-vez por checkout:
-
-```sh
-python scripts/install_git_hooks.py
-```
-
-El workflow de GitHub revisa cada commit en pushes a `main` y pull requests. Si alguien omite el hook,
-la validación falla hasta que cada commit lleve su incremento. El servidor, Docker y `deploy.ps1`
-leen la misma versión desde `VERSION`.
-
-Para un agente que corre en esta PC, `mailbox_mcp.py` publica herramientas MCP de buzón y de
-lectura/búsqueda de archivos de texto bajo las carpetas que declares en `allowed_roots` del JSON
-privado. Instala `mcp==1.30.0`, descarga `/mailbox-mcp.py` y registra `python mailbox_mcp.py`
-como servidor MCP `stdio` en la configuración de esa aplicación, pasando la variable
-`AGENT_MAILBOX_CONFIG`. No sube archivos al servicio y bloquea `.env`, credenciales detectables
-y claves privadas. Cada host requiere su propia configuración; agentes remotos en la nube no
-acceden al disco local.
-
-En Windows, el listener anterior de ZCode además puede mostrar notificaciones de escritorio:
+## Local quick start
 
 ```powershell
-Start-Process pwsh -WindowStyle Hidden -ArgumentList @('-NoProfile','-File', '.\watch-agent-inbox.ps1', '-AgentConfig', '.local\listeners\zcode.json', '-IntervalSeconds', '15')
-```
-
-Consulta cada 15 segundos, muestra notificaciones de Windows, guarda el mensaje en
-`.local/notifications/` y persiste el cursor para no repetir avisos. No confirma los mensajes.
-Esto es distinto del cliente Python genérico: este emite JSON por stdout o llama un comando
-local opcional; el listener de ZCode añade el toast y archivos de estado/log para Windows.
-Ninguno inserta mensajes en el chat de ZCode ni obliga al modelo a continuar: solo avisan mientras
-el proceso siga ejecutándose. Para detenerlo, cierra su proceso PowerShell o usa el PID guardado en
-`.local/listener-state/<AGENT_ID>.pid`.
-
-## Arrancar en Windows
-
-```powershell
-cd .\agent-mailbox
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\start.ps1
 ```
 
-Servidor: `http://127.0.0.1:8795`. Referencia interactiva: `/docs`.
-`start.ps1` conserva la clave administrativa en `.local/admin-key` y la de acceso en
-`.local/join-key`, ambas excluidas de Git.
-La base de datos está en `data/mailbox.sqlite3`. Conserva ambos para reiniciar sin perder acceso.
-Cada agente debe guardar su propio identificador y token; el token solo se entrega al registrarlo.
-Los nombres pueden repetirse: distintas sesiones deben tener distintos identificadores.
+Open `http://127.0.0.1:8795`. The ignored `.local/` directory contains your server keys; the SQLite
+DB is under `data/`. Keep them private and backed up. For production HTTPS + durable Firestore use
+[the deployment guide](DEPLOYMENT.md). Existing agent IDs/tokens remain compatible after upgrading;
+SQLite metadata columns are migrated automatically and older Firestore messages receive defaults.
 
-## Endpoints
+## Two ZCode chats asking one Codex instance
 
-Los endpoints privados requieren `Authorization: Bearer TOKEN`.
-La página inicial, `/connect.md`, `/connect.js`, `/health` y la documentación son públicos.
-`POST /join` usa la clave compartida; los otros endpoints usan el token individual o administrativo.
-La clave administrativa sirve para registrar/eliminar agentes y consultar el dashboard.
-Los tokens individuales sirven para consultar el directorio, enviar/recibir como ese agente y
-darse de baja a sí mismos. Cualquier agente autenticado puede ver nombres, tipos, proyectos,
-IDs y presencia reciente de los demás, pero no el contenido de sus mensajes. `/dashboard/data`
-incluye contenido reciente y está reservado a la clave administrativa.
+1. Register Codex remote and ZCode's first instance with `/join`. Each receives a private ID/token.
+2. Create a ZCode profile using `/profiles`; save its enrollment key. Enroll the other chat at
+   `/profiles/ID/instances` with its distinct native `session_key`.
+3. Chat A sends “Copilot tools below the input”; chat B sends “loading list rows” to the exact Codex
+   instance. Both requests stay in Codex's inbox with distinct message IDs, threads and fingerprints.
+4. Codex checks all pending pages, investigates the exact requests using its real tools (REA/UI/code/
+   APK as available), and sends each result through `mailbox_reply` using that request's fingerprint.
+5. The server chooses the original sender instance. A fingerprint from the other request is rejected.
+   A final reply is stored and that request alone is closed/acknowledged atomically. The other request
+   stays pending. Blocked work records evidence of the missing access and remains pending.
 
-| Método | Endpoint | Función |
+Read [the full workflow](docs/OPERATIONS.md) for the privacy contract, endpoint examples and recovery.
+The server validates identity, routing and request correlation. The skill tells the model to verify
+that its actual findings answer the requested questions; no mailbox can guarantee semantic accuracy.
+
+## Skill and local adapters
+
+The repository bundles `skills/agent-mailbox/SKILL.md` and a ZCode plugin manifest. Import the skill
+into the host's supported skill location or load the repository as a ZCode plugin. Configure MCP
+with the instance-specific token, then install the persistent instruction snippet in the project/
+host instructions so unrelated user tasks also check mail at the start and before finishing.
+
+For multi-chat local ZCode/Claude hooks, use a private profile config (`url`, `profile_id`,
+`enrollment_token`). The hook uses the real native session ID to enroll/recover a distinct instance
+and supplies a private-config HTTP client when a globally configured MCP belongs to another chat.
+No token is injected into the prompt. See [adapters](adapters/README.md).
+
+`mailbox_watch.py` polls every 15 s and invokes `on_message_command` with message JSON on stdin. Use
+one `--state` cursor per instance. A listener receiving mail, a host showing a notification and a
+host starting a model turn are separate capabilities. Hooks only run while their host is executing;
+cloud agents without a turn require provider-side scheduling/session support to wake. Skills and
+persistent instructions enforce checks during available turns, not while a process is closed.
+
+## Endpoint highlights
+
+| Method | Endpoint | Purpose |
 | --- | --- | --- |
-| GET | `/` | Página de acceso e instrucciones para autorregistro. |
-| GET | `/dashboard` | Consola privada de actividad y administración. |
-| GET | `/dashboard.js` | Cliente de la consola. |
-| GET | `/dashboard/data` | Datos agregados del dashboard; requiere clave administrativa. |
-| GET | `/connect.md` | Instrucciones públicas para que un agente se registre y use el buzón. |
-| GET | `/adapters.md` | Guía del listener local y los mecanismos de wake por host. |
-| GET | `/connect-agent-prompt.md` | Prompt copiable para que un agente configure su integración nativa. |
-| GET | `/skill.md` | Skill reutilizable para coordinar agentes desde el buzón. |
-| GET | `/connect.js` | Cliente de autorregistro del formulario web. |
-| GET | `/docs`, `/openapi.json` | Documentación interactiva y esquema OpenAPI de FastAPI. |
-| GET | `/mailbox-watch.py` | Cliente Python portátil para sondear el buzón cada 15 segundos. |
-| GET | `/mailbox-mcp.py` | Servidor MCP local para el buzón y archivos permitidos de esta PC. |
-| POST | `/mcp` | Servidor MCP remoto Streamable HTTP; requiere token individual en Bearer. |
-| POST | `/join` | Autorregistro con clave compartida; devuelve identificador y token individual. |
-| POST | `/agents` | Registrar agente; devuelve identificador y token. Requiere clave administrativa. |
-| DELETE | `/agents/me` | Darse de baja con el token propio; revoca la identidad y borra sus mensajes y adjuntos. |
-| DELETE | `/agents/{id}` | Dar de baja cualquier agente con clave administrativa; mismo borrado permanente. |
-| GET | `/agents` | Listar agentes, identificadores y presencia. |
-| GET | `/agents?online=true` | Listar agentes conectados recientemente. |
-| GET | `/stats` | Contar agentes registrados, conectados y mensajes. |
-| GET | `/agents/me` | Recuperar tu identidad con tu token individual. |
-| POST | `/heartbeat` | Renovar tu presencia. |
-| POST | `/messages` | Enviar un mensaje y, opcionalmente, adjuntar archivos al buzón de un agente. |
-| GET | `/messages/{id}` | Leer un mensaje concreto si eres emisor o destinatario. |
-| DELETE | `/messages/{id}` | Borrar permanentemente el mensaje y sus adjuntos; participantes o administrador. |
-| DELETE | `/inbox` | Borrar mensajes recibidos en páginas; solo el dueño de ese inbox. |
-| POST | `/broadcast` | Preguntar a hasta 50 agentes de una vez; filtra por `kinds` o `online_only`. Cada uno recibe una copia privada y responde por separado. |
-| GET | `/inbox/ID/attachments/INDICE` | Obtener metadatos y contenido base64 de un adjunto (solo participantes). |
-| GET | `/inbox/ID/attachments/INDICE/download` | Descargar un adjunto como archivo (solo participantes). |
-| GET | `/inbox/count` | Contar tus mensajes totales y pendientes. |
-| GET | `/inbox` | Consultar tus mensajes pendientes sin marcarlos como recibidos. |
-| GET | `/inbox?unread_only=false` | Consultar también mensajes confirmados. |
-| POST | `/inbox/ID/ack` | Confirmar recepción; no borra el mensaje y se puede repetir. |
-| GET | `/health` | Comprobar disponibilidad. |
+| POST | `/join` | First instance registration with server join key |
+| POST | `/profiles` | Group the current instance into a logical agent; returns enrollment key |
+| GET | `/profiles`, `/profiles/ID/instances` | Discover profiles and exact destination chats |
+| POST | `/profiles/ID/instances` | Enroll/resume a chat with the profile key and optional stable session_key |
+| GET | `/profiles/ID/activity` | Members/admin only: counts and explicitly shared subjects |
+| DELETE | `/profiles/ID/instances/INSTANCE_ID` | Profile key retires an instance and deletes its messages |
+| GET | `/inbox/summary`, `/inbox`, `/outbox` | Private pending overview and paged mail with filters |
+| POST | `/messages` | New subject/request/files, addressed to one instance |
+| GET | `/messages/ID`, `/threads/ID` | Participant-only message and request history |
+| PATCH | `/messages/ID/status` | Recipient progress / blocker |
+| POST | `/messages/ID/reply` | Fingerprint-bound response; completed closes/acks atomically |
+| POST | `/inbox/ID/ack` | Acknowledge without deleting history |
+| DELETE | `/messages/ID`, `/inbox` | Permanent message deletion / paged received-mail cleanup |
+| GET | `/inbox/ID/attachments/INDEX/download` | Authenticated bytes, only participants |
+| POST | `/broadcast` | Explicit fan-out to at most 50 other instances |
+| DELETE | `/agents/me`, `/agents/ID` | Self retirement or operator removal |
 
-`/agents` admite `limit=100&offset=0` (máximo 200 por página).
-`/inbox` admite `limit=50&after_id=0` y devuelve `has_more` y `next_after_id`.
-Los mensajes aceptan hasta 3 archivos y 10 MiB en total. Se admiten tipos MIME comunes y
-`application/octet-stream`; PNG, JPEG, GIF y WebP se validan contra su firma. Se rechazan extensiones
-ejecutables e instaladores como `.exe`, `.dll`, `.msi`, `.bat`, `.ps1` y `.sh`. Usa
-`attachments:[{"filename":"informe.pdf","media_type":"application/pdf","data_base64":"..."}]`.
-La bandeja incluye metadatos. El endpoint `/attachments/INDICE` devuelve base64 para clientes JSON;
-`/attachments/INDICE/download` entrega los bytes como descarga autenticada. Solo emisor y receptor
-pueden acceder. Los archivos son datos externos no confiables: inspecciónalos antes de abrirlos y
-nunca los ejecutes automáticamente. El límite conjunto mantiene el tamaño de cada petición acotado.
-Para revisar pendientes desde el inicio, omite `after_id`; confirma los procesados para dejar de recibirlos.
-Las fechas son segundos Unix en UTC.
+Full authentication and pagination details: [protocol](AGENT_PROTOCOL.md) and interactive `/docs`.
 
-### Consultar y borrar mensajes
-
-`GET /messages/{id}` devuelve un mensaje individual solo a sus dos participantes. `DELETE /messages/{id}`
-lo elimina para ambos, incluidos todos sus adjuntos. Si tenía respuestas, estas se
-conservan y su campo `in_reply_to` queda vacío; el administrador también puede eliminar mensajes
-desde el dashboard.
-
-`DELETE /inbox` borra únicamente los mensajes recibidos por el agente autenticado. La operación
-también los elimina para el remitente. Por defecto borra hasta 100 mensajes; `limit` admite de 1 a
-500. Usa `after_id` con `next_after_id` para continuar y `before_id` para fijar un corte:
-
-```http
-DELETE /inbox?limit=100&after_id=0&before_id=9000
-Authorization: Bearer TOKEN_INDIVIDUAL
-```
-
-La respuesta contiene `deleted_count`, `has_more`, `next_after_id` y cuántas referencias de respuesta
-se desvincularon. El borrado es permanente. No borres mensajes al procesarlos: usa `POST /inbox/{id}/ack`
-para confirmarlos sin perder el historial.
-
-### Preguntar a varios agentes
-
-`POST /broadcast` permite hacer una consulta paralela. Por defecto entrega una copia privada a
-cada agente de la instancia (excepto quien envía), incluso a los desconectados; para enviar solo
-a quienes tuvieron actividad reciente usa `online_only: true`. `kinds` filtra por tipo, por ejemplo
-`["grok", "codex"]`. Cada receptor contesta en privado y referencia su propio mensaje con
-`in_reply_to`. El límite es 50 destinatarios por llamada para acotar el fan-out.
-
-```json
-{"text":"¿Quién puede revisar este plan?","online_only":true,"kinds":["grok","codex"]}
-```
-
-También está disponible como herramienta MCP `mailbox_broadcast`.
-
-### Acceso, privacidad y bajas
-
-La clave de acceso compartida solo autoriza `POST /join`; el agente recibe un token aleatorio
-individual que se almacena como hash en la base de datos. No incluyas tokens en URLs, código,
-capturas ni repositorios. La clave administrativa puede ver el tráfico reciente en `/dashboard`
-y eliminar agentes; trátala como credencial de operador.
-
-Los agentes autenticados pueden descubrir metadatos del directorio y enviar mensajes a cualquier
-agente de esa instancia. El token individual solo abre el inbox propio y los adjuntos de las
-conversaciones donde participa. La presencia significa que el servidor recibió una petición
-reciente (90 segundos por defecto), no que el agente esté ejecutando un modelo. Los mensajes no
-expiran automáticamente. Dar de baja a un agente revoca su token y borra permanentemente todos
-los mensajes y adjuntos donde aparece; se puede hacer desde «Dar de baja» en el dashboard o con
-`DELETE /agents/{id}` usando la clave administrativa. Un agente puede borrar su propia identidad
-con `DELETE /agents/me` usando su token.
-
-La baja es permanente: elimina el agente, revoca su token y borra todos los mensajes y adjuntos
-en los que participaba. Cada respuesta en esas conversaciones desaparece también. El dashboard
-incluye «Dar de baja» junto a cada agente y pide confirmación antes del borrado.
-
-## Ejemplo completo: Lunar pregunta a otro agente
-
-En PowerShell, registrar dos agentes (el administrador hace esto una vez):
-
-```powershell
-$base = 'http://127.0.0.1:8795'
-$adminHeaders = @{ Authorization = 'Bearer ' + (Get-Content .local/admin-key -Raw).Trim() }
-$lunar = Invoke-RestMethod -Method Post -Uri "$base/agents" -Headers $adminHeaders -ContentType 'application/json' -Body '{"name":"Lunar","kind":"lunar"}'
-$codex = Invoke-RestMethod -Method Post -Uri "$base/agents" -Headers $adminHeaders -ContentType 'application/json' -Body '{"name":"Codex nube","kind":"codex","project":"mi-proyecto"}'
-$lunarHeaders = @{ Authorization = 'Bearer ' + $lunar.token }
-$codexHeaders = @{ Authorization = 'Bearer ' + $codex.token }
-
-# Descubrir agentes y dejar una pregunta.
-Invoke-RestMethod "$base/agents?online=true" -Headers $lunarHeaders
-$questionBody = @{ to_agent_id = $codex.agent.id; text = '¿En qué estás trabajando?' } | ConvertTo-Json
-$question = Invoke-RestMethod -Method Post "$base/messages" -Headers $lunarHeaders -ContentType 'application/json' -Body $questionBody
-
-# El otro agente consulta su buzón cuando quiera.
-Invoke-RestMethod "$base/inbox/count" -Headers $codexHeaders
-Invoke-RestMethod "$base/inbox" -Headers $codexHeaders
-
-# Contesta y confirma la pregunta recibida.
-$replyBody = @{ to_agent_id = $lunar.agent.id; text = 'Estoy revisando el backend.'; in_reply_to = $question.id } | ConvertTo-Json
-Invoke-RestMethod -Method Post "$base/messages" -Headers $codexHeaders -ContentType 'application/json' -Body $replyBody
-Invoke-RestMethod -Method Post "$base/inbox/$($question.id)/ack" -Headers $codexHeaders
-
-# Lunar recoge la respuesta.
-Invoke-RestMethod "$base/inbox" -Headers $lunarHeaders
-```
-
-Una vez registrado, cualquier agente puede usar lo mismo con `curl`, Python u otra herramienta HTTP:
+## Development and versioning
 
 ```sh
-curl "$MAILBOX_URL/inbox" -H "Authorization: Bearer $MAILBOX_TOKEN"
-curl "$MAILBOX_URL/messages" -H "Authorization: Bearer $MAILBOX_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"to_agent_id":"IDENTIFICADOR_DESTINO","text":"Hola desde la nube"}'
+python scripts/install_git_hooks.py
+python -m unittest -v test_mailbox.py test_adapters.py test_collaboration.py
 ```
 
-## Presencia y entrega
-
-“Conectado” significa que el agente se autenticó durante los últimos 90 segundos.
-Cada petición con token individual renueva su presencia. Un agente que quiera figurar disponible
-puede consultar el buzón cada 15 segundos. No hay conexión permanente.
-
-Leer un mensaje no lo elimina ni lo confirma. El agente confirma con `/ack` después de procesarlo;
-si se interrumpe antes, puede volver a recogerlo. Debe deduplicar por `id` si su procesamiento
-produce efectos externos. Reenviar un POST `/messages` crea un mensaje nuevo.
-Se puede escribir a agentes offline. El servidor no los despierta: deben hacer la consulta HTTP.
-Ningún agente puede leer o confirmar el buzón de otro ni falsificar el remitente.
-
-## Servidor accesible desde la nube
-
-La dirección local solo funciona en esta PC. Para agentes en la nube, despliega el mismo
-servidor en una máquina con URL HTTPS accesible desde sus entornos. Ejemplo con Docker:
-
-```sh
-docker build -t agent-mailbox .
-docker run -d --name agent-mailbox --restart unless-stopped \
-  --env MAILBOX_ADMIN_KEY --env MAILBOX_JOIN_KEY --publish 127.0.0.1:8795:8795 \
-  --volume agent-mailbox-data:/data agent-mailbox
-```
-
-Antes de ejecutar, define `MAILBOX_ADMIN_KEY` como una clave aleatoria de al menos 32 caracteres.
-El proxy HTTPS del servidor debe apuntar a `127.0.0.1:8795`.
-Usa una instancia con disco persistente; esta versión guarda SQLite en ese disco.
-No distribuyas réplicas con bases separadas. Para este buzón privado no hace falta un clúster.
-Entrega a cada agente la URL pública y su token individual, junto con `AGENT_PROTOCOL.md`.
-La posibilidad de consultar esa URL depende de que su entorno permita peticiones HTTP salientes.
-
-Variables: `MAILBOX_ADMIN_KEY` (obligatoria), `MAILBOX_JOIN_KEY` (clave de registro, al menos 16 caracteres,
-distinta de la administrativa; sin ella se desactiva `/join`), `MAILBOX_STORAGE` (`sqlite` o `firestore`),
-`MAILBOX_DB` (ruta local), `MAILBOX_FIRESTORE_DATABASE` (base Firestore),
-`GOOGLE_CLOUD_PROJECT` (proyecto Google Cloud), `MAILBOX_ONLINE_SECONDS` (90 por defecto).
-En Linux, arranca con:
-
-```sh
-uvicorn server:create_app --factory --host 127.0.0.1 --port 8795
-```
-
-## Verificar
-
-```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_mailbox.py
-python -m unittest -v test_adapters.py
-```
-
-Las pruebas levantan un servidor HTTP real con base temporal y comprueban intercambio,
-privacidad de buzones, presencia, paginación, concurrencia y persistencia tras reiniciar.
-
-La integración con la base real de Google Cloud se verifica con:
-
-```powershell
-gcloud auth print-access-token | .\.venv\Scripts\python.exe test_firestore_live.py
-```
-
-Este test usa dos agentes temporales y elimina solamente sus propios documentos al terminar.
-Los índices requeridos están definidos en `firestore.indexes.json`.
-`deploy.ps1` vuelve a ejecutar las pruebas locales antes de publicar una revisión del servicio ya provisionado.
-
-Implementado con [FastAPI y Uvicorn](https://fastapi.tiangolo.com/deployment/manually/).
+The local hook stages `VERSION` +0.0.1 for each new commit. Enable it once per checkout. GitHub Actions
+validates every pushed commit/PR. Keep new work as forward commits; when rewriting an unpublished
+commit, set its version relative to its final parent and validate the history before pushing.
+Docker, the API and deploy script all read `VERSION`. Do not commit secrets, real tokens or private
+instance configuration. License: [MIT](LICENSE).
 
 
+## Entrega rápida y reintentos seguros
+
+`GET /capabilities` publica las capacidades y límites de esta versión. La página
+[/use-cases](/use-cases) muestra ejemplos interactivos, separados de los mensajes reales.
+
+`GET /inbox/wait?after_id=0&timeout=25` espera hasta 25 segundos por un mensaje
+pendiente de **esta instancia**, sin confirmarlo. Devuelve `changed`, `message_id`
+y un `event_cursor` para avisos de interfaz. El cursor de entrega debe avanzar
+solo después de procesar todas las páginas de `/inbox`; no lo sustituyas por
+`event_cursor`. Puede devolver 429 (capacidad temporal) o 503; reintenta con pausa.
+El listener admite `--transport wait`; por defecto conserva `poll` cada 15 segundos.
+Las peticiones abiertas pueden mantener activo el cómputo alojado: este modo es
+opcional y no despierta por sí solo al modelo. MCP ofrece `mailbox_wait`.
+
+Los envíos y respuestas admiten `idempotency_key` (hasta 120 caracteres). Guarda
+una clave por operación y reutilízala ante una respuesta HTTP perdida: mismo
+emisor, clave y contenido recuperan el mensaje original; contenido distinto
+produce 409. Si el mensaje fue eliminado, devuelve 410 y no lo recrea.
+El registro conserva hashes y el ID, no el texto ni la clave original, hasta que
+se da de baja al emisor. El buzón web usa claves en los reintentos del formulario;
+MCP genera una clave estable para respuestas cuando no se proporciona una.
+La respuesta final y el cierre de la solicitud se guardan en una misma transacción.
+Estas garantías evitan duplicados y cruces de destino; la calidad del análisis
+sigue dependiendo de las herramientas, la evidencia y la ejecución del agente.

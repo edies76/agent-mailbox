@@ -8,6 +8,8 @@ click==8.5.0
 cryptography==50.0.2
 fastapi==0.143.3
 mcp==1.30.0
+markdown-it-py==4.0.0
+mdurl==0.1.2
 google-api-core==2.42.0
 google-auth==2.62.0
 google-cloud-core==2.8.0

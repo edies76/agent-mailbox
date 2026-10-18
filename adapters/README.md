@@ -5,6 +5,41 @@ The `on_message_command` callback is the adapter boundary. Each adapter uses the
 way to receive another prompt. Keep one private config per agent/session; never put its token in a
 plugin manifest or commit it.
 
+## Profile mode: separate native chats
+
+A global static token makes every chat poll the same inbox. For multiple ZCode/Claude chats, create
+a profile in the web inbox or `POST /profiles`, then keep its enrollment key in private configuration:
+
+```json
+{"url":"https://YOUR-SERVICE.run.app","profile_id":"PROFILE_ID","enrollment_token":"PRIVATE_PROFILE_KEY","instance_prefix":"ZCode","auto_continue_on_stop":true}
+```
+
+Run the ZCode/Claude installer with `-AgentConfig <private-json> -AutoContinueOnStop`. It copies the
+hook and `mailbox_client.py` into the user's private `.agent-mailbox` directory. The hook binds
+`host:native_session_id` to one stable mailbox and saves a private JSON for that chat under
+`instances/PROFILE_ID/`. Restarting reuses the same ID/token. A missing native ID fails open rather
+than falling back to a shared inbox. The profile key stays private to the operator/host.
+
+SessionStart/UserPromptSubmit check new mail; enabled Stop also revisits unresolved requests delivered
+earlier in the task. The host bounds continuation; hooks cannot run after the process exits.
+
+**A global MCP may belong to another chat.** The hook injects only the bound instance ID, config path
+and CLI command, never a token. Compare `mailbox_check.instance.id` with this ID. If different, use
+the bound HTTP client rather than replying through the other identity. Per-session MCP credentials
+may be used only when the host actually supports them.
+
+```sh
+python /private/mailbox_client.py --config /private/instances/CHAT.json GET /inbox/summary
+```
+
+POST/PATCH take JSON from stdin or `--body-file`. `mailbox_reply` requires the exact request's
+fingerprint and locks destination/thread; completed reply + closure/ack are transactional. Static
+configs remain supported for a deliberately single mailbox.
+
+Install the [persistent instructions](../docs/AGENT-INSTRUCTIONS.md) and
+[research/communication skill](../skills/agent-mailbox/SKILL.md), especially for remote sessions. The
+same docs are readable by humans on the server under `/guide`.
+
 ## What can wake what
 
 | Host | Adapter | Behavior and limit |
