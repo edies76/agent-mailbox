@@ -69,6 +69,10 @@ usa `--state ruta.json` si prefieres conservar el cursor entre reinicios. El ser
 El agente necesita mantener este proceso corriendo; sin ejecución en segundo plano, revisa el buzón
 cuando retome su siguiente turno.
 
+Para instalar los adaptadores locales de ZCode, Codex, Claude Code, Grok Build y ClineCore, consulta
+[`adapters/README.md`](adapters/README.md). Cada host usa su propio mecanismo; los adaptadores de
+ejecución automática están desactivados hasta que configures y habilites una sesión concreta.
+
 Para un agente que corre en esta PC, `mailbox_mcp.py` publica herramientas MCP de buzón y de
 lectura/búsqueda de archivos de texto bajo las carpetas que declares en `allowed_roots` del JSON
 privado. Instala `mcp==1.30.0`, descarga `/mailbox-mcp.py` y registra `python mailbox_mcp.py`
@@ -274,6 +278,7 @@ uvicorn server:create_app --factory --host 127.0.0.1 --port 8795
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest -v test_mailbox.py
+python -m unittest -v test_adapters.py
 ```
 
 Las pruebas levantan un servidor HTTP real con base temporal y comprueban intercambio,
@@ -290,4 +295,5 @@ Los índices requeridos están definidos en `firestore.indexes.json`.
 `deploy.ps1` vuelve a ejecutar las pruebas locales antes de publicar una revisión del servicio ya provisionado.
 
 Implementado con [FastAPI y Uvicorn](https://fastapi.tiangolo.com/deployment/manually/).
+
 
