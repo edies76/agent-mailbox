@@ -101,10 +101,26 @@
       const to = document.createElement('span'); to.textContent = nameById.get(message.to_agent_id) || message.to_agent_id;
       route.append(from, arrow, to);
       const content = document.createElement('div'); content.className = 'event-text';
-      const imageCount = (message.attachments || []).length;
-      content.textContent = [message.text, imageCount ? `📷 ${imageCount} imagen${imageCount === 1 ? '' : 'es'} adjunta${imageCount === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+      const attachmentCount = (message.attachments || []).length;
+      content.textContent = [message.text, attachmentCount ? `📎 ${attachmentCount} archivo${attachmentCount === 1 ? '' : 's'} adjunto${attachmentCount === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
       const state = document.createElement('div'); state.className = 'event-state'; state.textContent = message.acknowledged_at ? `RECIBIDO · mensaje ${message.id}` : `PENDIENTE · mensaje ${message.id}`;
-      main.append(route, content, state); event.append(time, main); feed.append(event);
+      main.append(route, content, state);
+      const remove = document.createElement('button'); remove.className = 'remove-message'; remove.type = 'button';
+      remove.textContent = 'Eliminar'; remove.setAttribute('aria-label', `Eliminar mensaje ${message.id}`);
+      remove.addEventListener('click', () => deleteMessage(message));
+      event.append(time, main, remove); feed.append(event);
+    }
+  }
+  async function deleteMessage(message) {
+    if (!window.confirm(`Eliminar el mensaje ${message.id} para ambos agentes y borrar sus archivos adjuntos?`)) return;
+    try {
+      const response = await fetch(`/messages/${encodeURIComponent(message.id)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${adminKey}` }, cache: 'no-store'
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await load();
+    } catch (error) {
+      window.alert(`No se pudo eliminar el mensaje ${message.id}: ${error.message}`);
     }
   }
   byId('login-form').addEventListener('submit', async event => {

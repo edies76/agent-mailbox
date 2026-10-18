@@ -179,6 +179,44 @@ class MailboxTests(unittest.TestCase):
                          "filename": "large.dat", "media_type": "application/octet-stream",
                          "data_base64": over_limit}]}, 413)
 
+    def test_get_and_delete_message_are_participant_scoped_and_unlink_replies(self):
+        message = self.send("original", attachments=[{
+            "filename": "note.txt", "media_type": "text/plain",
+            "data_base64": base64.b64encode(b"private file").decode("ascii")
+        }])
+        self.assertEqual(self.request("GET", f"/messages/{message['id']}", self.a_token)["id"], message["id"])
+        self.assertEqual(self.request("GET", f"/messages/{message['id']}", self.b_token)["id"], message["id"])
+        other = self.request("POST", "/agents", self.admin, {"name": "Other"}, 201)
+        self.request("GET", f"/messages/{message['id']}", other["token"], expected=404)
+        self.request("DELETE", f"/messages/{message['id']}", other["token"], expected=404)
+        reply = self.request("POST", "/messages", self.b_token, {
+            "to_agent_id": self.a_id, "text": "reply", "in_reply_to": message["id"]
+        }, 201)
+        removed = self.request("DELETE", f"/messages/{message['id']}", self.a_token)
+        self.assertEqual(removed["related_replies_unlinked"], 1)
+        self.assertEqual(self.request("GET", f"/inbox?unread_only=false", self.a_token)["messages"][0]["in_reply_to"], None)
+        self.request("GET", f"/messages/{message['id']}", self.b_token, expected=404)
+        self.request("GET", f"/inbox/{message['id']}/attachments/0", self.a_token, expected=404)
+        self.request("DELETE", f"/messages/{reply['id']}", self.admin)
+
+    def test_clear_inbox_is_paged_and_keeps_messages_after_snapshot(self):
+        messages = [self.send(f"inbox {index}") for index in range(3)]
+        before_id = messages[-1]["id"]
+        sender_clear = self.request("DELETE", "/inbox", self.a_token)
+        self.assertEqual(sender_clear["deleted_count"], 0)
+        self.assertEqual(len(self.request("GET", "/inbox", self.b_token)["messages"]), 3)
+        first = self.request("DELETE", f"/inbox?limit=2&before_id={before_id}", self.b_token)
+        self.assertEqual(first["deleted_count"], 2)
+        self.assertTrue(first["has_more"])
+        last = self.request("DELETE", f"/inbox?limit=2&before_id={before_id}&after_id={first['next_after_id']}",
+                            self.b_token)
+        self.assertEqual(last["deleted_count"], 1)
+        self.assertFalse(last["has_more"])
+        self.assertEqual(self.request("GET", "/inbox?unread_only=false", self.b_token)["messages"], [])
+        empty = self.request("DELETE", "/inbox", self.b_token)
+        self.assertEqual(empty["deleted_count"], 0)
+        self.assertFalse(empty["has_more"])
+
     def test_identity_and_mailbox_isolation(self):
         message = self.send()
         self.request("GET", "/agents", expected=401)

@@ -161,6 +161,26 @@ def create_app():
                 if not message.text.strip() and not attachments:
                     raise HTTPException(422, "Message text cannot be blank")
                 return store.send(identifier, message, attachments)
+            if path.startswith("/messages/") and method == "GET":
+                message_id = int(path.rsplit("/", 1)[1])
+                if not 1 <= message_id <= MAX_MESSAGE_ID:
+                    raise HTTPException(422, "Invalid message ID")
+                return store.get_message(identifier, message_id)
+            if path.startswith("/messages/") and method == "DELETE":
+                message_id = int(path.rsplit("/", 1)[1])
+                if not 1 <= message_id <= MAX_MESSAGE_ID:
+                    raise HTTPException(422, "Invalid message ID")
+                return store.delete_message(identifier, message_id)
+            if path == "/inbox" and method == "DELETE":
+                after_id = int(query.get("after_id", 0))
+                before_value = query.get("before_id")
+                before_id = int(before_value) if before_value not in (None, "") else None
+                limit = int(query.get("limit", 100))
+                if not 0 <= after_id <= MAX_MESSAGE_ID or not 1 <= limit <= 500:
+                    raise HTTPException(422, "Invalid inbox deletion cursor or limit")
+                if before_id is not None and not 1 <= before_id <= MAX_MESSAGE_ID:
+                    raise HTTPException(422, "Invalid before_id")
+                return store.delete_inbox(identifier, after_id, before_id, limit)
             if path == "/broadcast" and method == "POST":
                 return send_broadcast(identifier, Broadcast(**payload))
             attachment_prefix = "/inbox/"
@@ -362,6 +382,14 @@ def create_app():
             raise HTTPException(422, "Message text cannot be blank")
         return store.send(sender, body, attachments)
 
+    @app.get("/messages/{message_id}")
+    def get_message(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)], identity: Identity):
+        return store.get_message(agent_id(identity), message_id)
+
+    @app.delete("/messages/{message_id}")
+    def delete_message(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)], identity: Identity):
+        return store.delete_message(identity.get("id", ""), message_id, admin=identity["admin"])
+
     @app.post("/broadcast", status_code=201)
     def broadcast(body: Broadcast, identity: Identity):
         return send_broadcast(agent_id(identity), body)
@@ -396,6 +424,12 @@ def create_app():
         messages = rows[:limit]
         return {"messages": messages, "has_more": len(rows) > limit,
                 "next_after_id": messages[-1]["id"] if messages else after_id}
+
+    @app.delete("/inbox")
+    def delete_inbox(identity: Identity, after_id: int = Query(0, ge=0, le=MAX_MESSAGE_ID),
+                     before_id: int | None = Query(None, gt=0, le=MAX_MESSAGE_ID),
+                     limit: int = Query(100, ge=1, le=500)):
+        return store.delete_inbox(agent_id(identity), after_id, before_id, limit)
 
     @app.post("/inbox/{message_id}/ack")
     def acknowledge(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)], identity: Identity):

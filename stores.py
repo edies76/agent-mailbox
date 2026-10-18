@@ -146,6 +146,47 @@ class SQLiteStore:
                 "SELECT * FROM messages WHERE to_agent_id = ? AND id > ?" + unread + " ORDER BY id LIMIT ?",
                 (identifier, after_id, limit))]
 
+    def get_message(self, identifier, message_id):
+        with self.database() as db:
+            row = db.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+            if row is None or identifier not in (row["from_agent_id"], row["to_agent_id"]):
+                raise HTTPException(404, "Message not found in your conversations")
+            return self.message_output(row)
+
+    def _delete_message_ids(self, message_ids):
+        if not message_ids:
+            return 0, 0
+        placeholders = ",".join("?" for _ in message_ids)
+        with self.database() as db:
+            unlinked = db.execute(
+                f"UPDATE messages SET in_reply_to = NULL WHERE in_reply_to IN ({placeholders})",
+                tuple(message_ids)).rowcount
+            deleted = db.execute(f"DELETE FROM messages WHERE id IN ({placeholders})",
+                                 tuple(message_ids)).rowcount
+        return deleted, unlinked
+
+    def delete_message(self, identifier, message_id, admin=False):
+        with self.database() as db:
+            row = db.execute("SELECT from_agent_id, to_agent_id FROM messages WHERE id = ?",
+                             (message_id,)).fetchone()
+            if row is None or (not admin and identifier not in (row["from_agent_id"], row["to_agent_id"])):
+                raise HTTPException(404, "Message not found in your conversations")
+        deleted, unlinked = self._delete_message_ids([message_id])
+        return {"id": message_id, "deleted": bool(deleted), "related_replies_unlinked": unlinked}
+
+    def delete_inbox(self, identifier, after_id, before_id, limit):
+        clauses, params = ["to_agent_id = ?", "id > ?"], [identifier, after_id]
+        if before_id is not None:
+            clauses.append("id <= ?")
+            params.append(before_id)
+        with self.database() as db:
+            rows = db.execute(f"SELECT id FROM messages WHERE {' AND '.join(clauses)} ORDER BY id LIMIT ?",
+                              (*params, limit + 1)).fetchall()
+        selected = [row["id"] for row in rows[:limit]]
+        deleted, unlinked = self._delete_message_ids(selected)
+        return {"deleted_count": deleted, "related_replies_unlinked": unlinked,
+                "has_more": len(rows) > limit, "next_after_id": selected[-1] if selected else after_id}
+
     def recent_messages(self, limit=15):
         with self.database() as db:
             return [self.message_output(row) for row in db.execute(
@@ -292,6 +333,59 @@ class FirestoreStore:
         if unread_only:
             query = self.where(query, "acknowledged_at", "==", None)
         return [doc.to_dict() for doc in query.order_by("id").limit(limit).stream(timeout=15)]
+
+    def get_message(self, identifier, message_id):
+        row = self.message_reference(message_id).get(timeout=15).to_dict()
+        if row is None or identifier not in (row["from_agent_id"], row["to_agent_id"]):
+            raise HTTPException(404, "Message not found in your conversations")
+        return row
+
+    def _delete_message_ids(self, message_ids):
+        if not message_ids:
+            return 0, 0
+        operations = []
+        unlinked = 0
+        for message_id in message_ids:
+            replies = self.where(self.messages, "in_reply_to", "==", message_id).stream(timeout=30)
+            for reply in replies:
+                operations.append(("update", reply.reference, {"in_reply_to": None}))
+                unlinked += 1
+            chunks = self.where(self.attachment_chunks, "message_id", "==", message_id).stream(timeout=30)
+            operations.extend(("delete", chunk.reference, None) for chunk in chunks)
+            operations.append(("delete", self.message_reference(message_id), None))
+        batch = self.client.batch()
+        count = 0
+        for operation, reference, fields in operations:
+            if operation == "update":
+                batch.update(reference, fields)
+            else:
+                batch.delete(reference)
+            count += 1
+            if count == 450:
+                batch.commit(timeout=30)
+                batch = self.client.batch()
+                count = 0
+        if count:
+            batch.commit(timeout=30)
+        return len(message_ids), unlinked
+
+    def delete_message(self, identifier, message_id, admin=False):
+        row = self.message_reference(message_id).get(timeout=15).to_dict()
+        if row is None or (not admin and identifier not in (row["from_agent_id"], row["to_agent_id"])):
+            raise HTTPException(404, "Message not found in your conversations")
+        deleted, unlinked = self._delete_message_ids([message_id])
+        return {"id": message_id, "deleted": bool(deleted), "related_replies_unlinked": unlinked}
+
+    def delete_inbox(self, identifier, after_id, before_id, limit):
+        query = self.where(self.messages, "to_agent_id", "==", identifier)
+        query = self.where(query, "id", ">", after_id)
+        if before_id is not None:
+            query = self.where(query, "id", "<=", before_id)
+        rows = list(query.order_by("id").limit(limit + 1).stream(timeout=30))
+        selected = [int(row.id) for row in rows[:limit]]
+        deleted, unlinked = self._delete_message_ids(selected)
+        return {"deleted_count": deleted, "related_replies_unlinked": unlinked,
+                "has_more": len(rows) > limit, "next_after_id": selected[-1] if selected else after_id}
 
     def recent_messages(self, limit=15):
         return [doc.to_dict() for doc in self.messages.order_by(

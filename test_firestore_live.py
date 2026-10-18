@@ -77,7 +77,22 @@ def main():
         assert second.inbox_count(b) == {"total": 10, "pending": 9}
         stats = second.stats(time.time() - 90)
         assert stats["agents_total"] >= 2 and stats["messages_total"] >= 11
-        print("PASS: real Firestore registration, authentication, send/reply, private ack, image chunk storage/read, inbox indexes, pagination, concurrent writes and persistence")
+        unlinked = store.delete_message(a, question["id"])
+        assert unlinked["deleted"] and unlinked["related_replies_unlinked"] == 1
+        assert store.get_message(a, reply["id"])["in_reply_to"] is None
+        purged = store.delete_message(b, image_message["id"])
+        assert purged["deleted"]
+        try:
+            store.get_attachment(b, image_message["id"], 0)
+            raise AssertionError("Deleted attachment was still available")
+        except HTTPException as error:
+            assert error.status_code == 404
+        sent_cutoff = max(message["id"] for message in sent)
+        first_page = store.delete_inbox(b, question["id"], sent_cutoff, 3)
+        assert first_page["deleted_count"] == 3 and first_page["has_more"]
+        remaining = store.delete_inbox(b, first_page["next_after_id"], sent_cutoff, 10)
+        assert remaining["deleted_count"] == 5 and not remaining["has_more"]
+        print("PASS: Firestore registration, auth, send/reply, ack, attachment chunks, inbox paging, concurrent writes, single/bulk delete and reply unlinking")
     finally:
         for agent in agents:
             query = store.where(store.messages, "to_agent_id", "==", agent["id"])

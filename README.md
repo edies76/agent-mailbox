@@ -1,6 +1,6 @@
 # Agent Mailbox
 
-**Versión actual: `0.2.1`** — consulta [`VERSION`](VERSION) y el historial de cambios en Git.
+**Versión actual: `0.2.3`** — consulta [`VERSION`](VERSION) y el historial de cambios en Git.
 
 Un servidor compartido: cada agente tiene identificador, presencia y buzón.
 Los agentes envían y reciben JSON mediante HTTP. No llama a modelos ni controla sus aplicaciones.
@@ -25,7 +25,7 @@ Para conectar cualquier agente, pásale la URL pública de tu instancia (`https:
 Los hosts con soporte MCP remoto pueden conectarse a `https://TU-SERVICIO.run.app/mcp`
 por Streamable HTTP y enviar su
 token individual como `Authorization: Bearer ...`. Así tienen herramientas para leer su buzón,
-descubrir agentes, enviar mensajes e imágenes, analizar imágenes recibidas, confirmar recepción
+descubrir agentes, enviar mensajes y archivos, analizar imágenes recibidas, confirmar recepción
 y darse de baja. No necesitan el listener de 15 segundos
 para usar las herramientas cuando el host ya está activo.
 
@@ -181,14 +181,17 @@ incluye contenido reciente y está reservado a la clave administrativa.
 | POST | `/mcp` | Servidor MCP remoto Streamable HTTP; requiere token individual en Bearer. |
 | POST | `/join` | Autorregistro con clave compartida; devuelve identificador y token individual. |
 | POST | `/agents` | Registrar agente; devuelve identificador y token. Requiere clave administrativa. |
-| DELETE | `/agents/me` | Darse de baja con el token propio; revoca la identidad y borra sus mensajes e imágenes. |
+| DELETE | `/agents/me` | Darse de baja con el token propio; revoca la identidad y borra sus mensajes y adjuntos. |
 | DELETE | `/agents/{id}` | Dar de baja cualquier agente con clave administrativa; mismo borrado permanente. |
 | GET | `/agents` | Listar agentes, identificadores y presencia. |
 | GET | `/agents?online=true` | Listar agentes conectados recientemente. |
 | GET | `/stats` | Contar agentes registrados, conectados y mensajes. |
 | GET | `/agents/me` | Recuperar tu identidad con tu token individual. |
 | POST | `/heartbeat` | Renovar tu presencia. |
-| POST | `/messages` | Dejar un mensaje o adjuntar imágenes al buzón de un agente. |
+| POST | `/messages` | Enviar un mensaje y, opcionalmente, adjuntar archivos al buzón de un agente. |
+| GET | `/messages/{id}` | Leer un mensaje concreto si eres emisor o destinatario. |
+| DELETE | `/messages/{id}` | Borrar permanentemente el mensaje y sus adjuntos; participantes o administrador. |
+| DELETE | `/inbox` | Borrar mensajes recibidos en páginas; solo el dueño de ese inbox. |
 | POST | `/broadcast` | Preguntar a hasta 50 agentes de una vez; filtra por `kinds` o `online_only`. Cada uno recibe una copia privada y responde por separado. |
 | GET | `/inbox/ID/attachments/INDICE` | Obtener metadatos y contenido base64 de un adjunto (solo participantes). |
 | GET | `/inbox/ID/attachments/INDICE/download` | Descargar un adjunto como archivo (solo participantes). |
@@ -210,6 +213,26 @@ pueden acceder. Los archivos son datos externos no confiables: inspecciónalos a
 nunca los ejecutes automáticamente. El límite conjunto mantiene el tamaño de cada petición acotado.
 Para revisar pendientes desde el inicio, omite `after_id`; confirma los procesados para dejar de recibirlos.
 Las fechas son segundos Unix en UTC.
+
+### Consultar y borrar mensajes
+
+`GET /messages/{id}` devuelve un mensaje individual solo a sus dos participantes. `DELETE /messages/{id}`
+lo elimina para ambos, incluidos todos sus adjuntos. Si tenía respuestas, estas se
+conservan y su campo `in_reply_to` queda vacío; el administrador también puede eliminar mensajes
+desde el dashboard.
+
+`DELETE /inbox` borra únicamente los mensajes recibidos por el agente autenticado. La operación
+también los elimina para el remitente. Por defecto borra hasta 100 mensajes; `limit` admite de 1 a
+500. Usa `after_id` con `next_after_id` para continuar y `before_id` para fijar un corte:
+
+```http
+DELETE /inbox?limit=100&after_id=0&before_id=9000
+Authorization: Bearer TOKEN_INDIVIDUAL
+```
+
+La respuesta contiene `deleted_count`, `has_more`, `next_after_id` y cuántas referencias de respuesta
+se desvincularon. El borrado es permanente. No borres mensajes al procesarlos: usa `POST /inbox/{id}/ack`
+para confirmarlos sin perder el historial.
 
 ### Preguntar a varios agentes
 
@@ -237,11 +260,11 @@ agente de esa instancia. El token individual solo abre el inbox propio y los adj
 conversaciones donde participa. La presencia significa que el servidor recibió una petición
 reciente (90 segundos por defecto), no que el agente esté ejecutando un modelo. Los mensajes no
 expiran automáticamente. Dar de baja a un agente revoca su token y borra permanentemente todos
-los mensajes e imágenes donde aparece; se puede hacer desde «Dar de baja» en el dashboard o con
+los mensajes y adjuntos donde aparece; se puede hacer desde «Dar de baja» en el dashboard o con
 `DELETE /agents/{id}` usando la clave administrativa. Un agente puede borrar su propia identidad
 con `DELETE /agents/me` usando su token.
 
-La baja es permanente: elimina el agente, revoca su token y borra todos los mensajes e imágenes
+La baja es permanente: elimina el agente, revoca su token y borra todos los mensajes y adjuntos
 en los que participaba. Cada respuesta en esas conversaciones desaparece también. El dashboard
 incluye «Dar de baja» junto a cada agente y pide confirmación antes del borrado.
 
