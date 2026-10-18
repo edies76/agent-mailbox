@@ -2,6 +2,7 @@
 
 import json
 import base64
+import mimetypes
 import os
 import re
 from contextvars import ContextVar
@@ -17,6 +18,10 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 CONFIG_PATH = Path(os.environ.get("AGENT_MAILBOX_CONFIG", "mailbox-agent.json")).expanduser()
 MAX_FILE_BYTES = 1_000_000
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+BLOCKED_ATTACHMENT_SUFFIXES = {".ade", ".apk", ".app", ".bat", ".cmd", ".com", ".deb",
+                               ".dll", ".dmg", ".exe", ".hta", ".img", ".iso", ".jar", ".msi",
+                               ".ps1", ".rpm", ".scr", ".sh", ".sys", ".vbe", ".vbs"}
 SKIP_DIRS = {".git", ".local", ".venv", "node_modules", "__pycache__", ".codex", ".ssh", ".aws"}
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".json", ".jsonl", ".csv", ".tsv", ".py",
                  ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".toml", ".yaml", ".yml",
@@ -115,7 +120,7 @@ def mailbox_agents(online_only: bool = False) -> dict:
 @mailbox_tool()
 def mailbox_send(to_agent_id: str, text: str = "", in_reply_to: int | None = None,
                  attachments: list[dict[str, str]] | None = None) -> dict:
-    """Envía texto y, opcionalmente, adjuntos de imagen base64; usa in_reply_to al responder."""
+    """Envía texto y hasta tres adjuntos base64 (máximo conjunto 10 MiB); usa in_reply_to al responder."""
     payload = {"to_agent_id": to_agent_id, "text": text, "attachments": attachments or []}
     if in_reply_to is not None:
         payload["in_reply_to"] = in_reply_to
@@ -136,6 +141,15 @@ def mailbox_get_image(message_id: int, attachment_index: int) -> Image:
     response = api(f"/inbox/{message_id}/attachments/{attachment_index}")
     mime_type = response["media_type"]
     return Image(data=base64.b64decode(response["data_base64"]), format=mime_type.split("/", 1)[1])
+
+
+@mailbox_tool()
+def mailbox_get_file(message_id: int, attachment_index: int) -> dict:
+    """Descarga un adjunto de un mensaje participante; devuelve metadatos y contenido base64."""
+    response = api(f"/inbox/{message_id}/attachments/{attachment_index}")
+    if response["size_bytes"] > MAX_ATTACHMENT_BYTES:
+        raise ValueError("El archivo excede el límite local de 10 MiB")
+    return response
 
 
 @mailbox_tool()
@@ -175,14 +189,55 @@ def mailbox_send_image(to_agent_id: str, image_path: str, text: str = "", in_rep
     if not media_type:
         raise ValueError("La imagen debe ser PNG, JPEG, GIF o WebP")
     data = file_path.read_bytes()
-    if len(data) > 5 * 1024 * 1024:
-        raise ValueError("La imagen excede el límite de 5 MiB por mensaje")
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise ValueError("La imagen excede el límite de 10 MiB por mensaje")
     payload = {"to_agent_id": to_agent_id, "text": text,
                "attachments": [{"filename": file_path.name, "media_type": media_type,
                                 "data_base64": base64.b64encode(data).decode("ascii")}]}
     if in_reply_to is not None:
         payload["in_reply_to"] = in_reply_to
     return api("/messages", method="POST", payload=payload)
+
+
+@local_mcp.tool()
+def mailbox_send_file(to_agent_id: str, file_path: str, text: str = "", in_reply_to: int | None = None) -> dict:
+    """Envía un archivo local permitido; admite hasta 10 MiB por mensaje entre todos los adjuntos."""
+    file = resolve_allowed_path(file_path, "file")
+    if is_sensitive(file) or file.suffix.lower() in BLOCKED_ATTACHMENT_SUFFIXES:
+        raise ValueError("Este archivo está bloqueado por seguridad")
+    data = file.read_bytes()
+    if not data or len(data) > MAX_ATTACHMENT_BYTES:
+        raise ValueError("El archivo debe medir entre 1 byte y 10 MiB")
+    media_type = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+    payload = {"to_agent_id": to_agent_id, "text": text,
+               "attachments": [{"filename": file.name, "media_type": media_type,
+                                "data_base64": base64.b64encode(data).decode("ascii")}]}
+    if in_reply_to is not None:
+        payload["in_reply_to"] = in_reply_to
+    return api("/messages", method="POST", payload=payload)
+
+
+@local_mcp.tool()
+def mailbox_save_file(message_id: int, attachment_index: int, destination: str) -> dict:
+    """Guarda un adjunto dentro de una carpeta permitida; no sobrescribe archivos existentes."""
+    _, roots = config()
+    requested = Path(destination).expanduser()
+    if not requested.is_absolute():
+        if not roots:
+            raise ValueError("Configura allowed_roots para guardar archivos")
+        requested = roots[0] / requested
+    target = requested.resolve()
+    if not any(target != root and root in target.parents for root in roots):
+        raise ValueError("El destino debe estar dentro de allowed_roots")
+    if not target.parent.is_dir() or target.exists() or is_sensitive(target):
+        raise ValueError("La carpeta debe existir y el archivo de destino no debe existir ni ser sensible")
+    response = mailbox_get_file(message_id, attachment_index)
+    filename = Path(response["filename"]).name
+    if target.name in ("", "."):
+        target = target.parent / filename
+    data = base64.b64decode(response["data_base64"], validate=True)
+    target.write_bytes(data)
+    return {"path": str(target), "filename": filename, "size_bytes": len(data)}
 
 
 @local_mcp.tool()

@@ -141,11 +141,38 @@ class MailboxTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/inbox", self.b_token)["messages"][0]["attachments"][0]["size_bytes"], len(image))
         downloaded = self.request("GET", f"/inbox/{message['id']}/attachments/0", self.b_token)
         self.assertEqual(base64.b64decode(downloaded["data_base64"]), image)
+        direct_request = Request(self.url + f"/inbox/{message['id']}/attachments/0/download",
+                                 headers={"Authorization": "Bearer " + self.b_token})
+        with urlopen(direct_request, timeout=10) as response:
+            direct = response.read()
+            self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(direct, image)
         self.request("GET", f"/inbox/{message['id']}/attachments/0", self.a_token, expected=200)
         self.request("GET", f"/inbox/{message['id']}/attachments/0", self.admin, expected=403)
         self.request("POST", "/messages", self.a_token,
                      {"to_agent_id": self.b_id, "attachments": [{"filename": "fake.png",
                       "media_type": "image/png", "data_base64": base64.b64encode(b"not png").decode()}]}, 422)
+
+    def test_general_file_transfer_and_limits(self):
+        content = b"hello from a document\x00\x01"
+        message = self.send("document attached", attachments=[{
+            "filename": "../notes.bin", "media_type": "application/octet-stream",
+            "data_base64": base64.b64encode(content).decode("ascii")
+        }])
+        self.assertEqual(message["attachments"][0]["filename"], "notes.bin")
+        direct_request = Request(self.url + f"/inbox/{message['id']}/attachments/0/download",
+                                 headers={"Authorization": "Bearer " + self.b_token})
+        with urlopen(direct_request, timeout=10) as response:
+            result = response.read()
+        self.assertEqual(result, content)
+        too_many = [{"filename": f"{i}.txt", "media_type": "text/plain",
+                     "data_base64": base64.b64encode(b"x").decode()} for i in range(4)]
+        self.request("POST", "/messages", self.a_token,
+                     {"to_agent_id": self.b_id, "attachments": too_many}, 422)
+        self.request("POST", "/messages", self.a_token,
+                     {"to_agent_id": self.b_id, "attachments": [{
+                         "filename": "run.exe", "media_type": "application/octet-stream",
+                         "data_base64": base64.b64encode(b"x").decode()}]}, 415)
 
     def test_identity_and_mailbox_isolation(self):
         message = self.send()

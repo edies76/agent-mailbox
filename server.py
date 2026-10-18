@@ -4,17 +4,18 @@ import hashlib
 import base64
 import binascii
 import os
+import re
 import secrets
 import time
 from contextvars import Token
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
+from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from stores import FirestoreStore, SQLiteStore
@@ -29,11 +30,11 @@ class AgentRegistration(BaseModel):
     project: str = Field(default="", max_length=300)
 
 
-class ImageAttachment(BaseModel):
+class Attachment(BaseModel):
     model_config = ConfigDict(extra="forbid")
     filename: str = Field(min_length=1, max_length=240)
-    media_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp"]
-    data_base64: str = Field(min_length=1, max_length=7_000_000)
+    media_type: str = Field(min_length=1, max_length=120)
+    data_base64: str = Field(min_length=1, max_length=14_000_000)
 
 
 class Message(BaseModel):
@@ -41,7 +42,7 @@ class Message(BaseModel):
     to_agent_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     text: str = Field(default="", max_length=32768)
     in_reply_to: int | None = Field(default=None, gt=0, le=MAX_MESSAGE_ID)
-    attachments: list[ImageAttachment] = Field(default_factory=list, max_length=10)
+    attachments: list[Attachment] = Field(default_factory=list, max_length=3)
 
 
 class Broadcast(BaseModel):
@@ -51,7 +52,10 @@ class Broadcast(BaseModel):
     kinds: list[str] = Field(default_factory=list, max_length=20)
 
 
-MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+BLOCKED_ATTACHMENT_SUFFIXES = {".ade", ".apk", ".app", ".bat", ".cmd", ".com", ".deb",
+                               ".dll", ".dmg", ".exe", ".hta", ".img", ".iso", ".jar", ".msi",
+                               ".ps1", ".rpm", ".scr", ".sh", ".sys", ".vbe", ".vbs"}
 MAX_BROADCAST_RECIPIENTS = 50
 
 
@@ -67,14 +71,22 @@ def prepare_attachments(items):
         try:
             data = base64.b64decode(item.data_base64, validate=True)
         except (binascii.Error, ValueError):
-            raise HTTPException(422, "Image attachment is not valid base64")
-        if not data or not signatures[item.media_type](data):
-            raise HTTPException(422, "Image bytes do not match their declared image type")
+            raise HTTPException(422, "Attachment is not valid base64")
+        media_type = item.media_type.lower().split(";", 1)[0].strip()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*", media_type):
+            raise HTTPException(422, "Attachment media_type must be a valid MIME type")
+        if not data:
+            raise HTTPException(422, "Attachment cannot be empty")
+        signature = signatures.get(media_type)
+        if signature and not signature(data):
+            raise HTTPException(422, "Attachment bytes do not match their declared media type")
+        filename = item.filename.replace("\\", "/").split("/")[-1].strip() or "file"
+        if FilePath(filename).suffix.lower() in BLOCKED_ATTACHMENT_SUFFIXES:
+            raise HTTPException(415, "Executable and installer attachments are not supported")
         total += len(data)
         if total > MAX_ATTACHMENT_BYTES:
-            raise HTTPException(413, "Images exceed the 5 MiB per-message limit")
-        filename = item.filename.replace("\\", "/").split("/")[-1].strip() or "image"
-        prepared.append({"filename": filename[:180], "media_type": item.media_type,
+            raise HTTPException(413, "Attachments exceed the 10 MiB per-message limit")
+        prepared.append({"filename": filename[:180], "media_type": media_type,
                          "size_bytes": len(data), "data": data})
     return prepared
 
@@ -106,7 +118,7 @@ def create_app():
         async with mailbox_mcp.session_manager.run():
             yield
 
-    app = FastAPI(title="Agent Mailbox", version="0.1.9", lifespan=lifespan,
+    app = FastAPI(title="Agent Mailbox", version="0.2.0", lifespan=lifespan,
                   description="Registro, presencia y buzones HTTP compartidos para agentes.")
 
     @app.middleware("http")
@@ -361,6 +373,16 @@ def create_app():
                              "size_bytes": attachment["size_bytes"],
                              "data_base64": base64.b64encode(attachment["data"]).decode("ascii")},
                             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/inbox/{message_id}/attachments/{attachment_index}/download")
+    def download_inbox_attachment(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)],
+                                  attachment_index: Annotated[int, Path(ge=0)], identity: Identity):
+        from urllib.parse import quote
+        attachment = store.get_attachment(agent_id(identity), message_id, attachment_index)
+        filename = attachment["filename"].replace("\\", "_").replace('"', "_")
+        return Response(content=attachment["data"], media_type=attachment["media_type"],
+                        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                                 "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"})
 
     @app.get("/inbox/count")
     def inbox_count(identity: Identity):

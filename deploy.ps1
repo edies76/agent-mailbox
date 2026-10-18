@@ -15,7 +15,7 @@ if (-not $SkipTests) {
     & '.\.venv\Scripts\python.exe' -m unittest -v test_mailbox.py
     if ($LASTEXITCODE -ne 0) { throw 'Las pruebas fallaron; no se publicara.' }
 }
-& gcloud run deploy agent-mailbox --source . --project=$CloudProject --region=$Region --port=8795 --service-account=$RuntimeServiceAccount --allow-unauthenticated --ingress=all --cpu=1 --memory=512Mi --min=0 --max=2 --concurrency=40 --set-env-vars="MAILBOX_STORAGE=firestore,MAILBOX_FIRESTORE_DATABASE=$FirestoreDatabase,GOOGLE_CLOUD_PROJECT=$CloudProject,MAILBOX_RELEASE=0.1.9" --set-secrets="MAILBOX_ADMIN_KEY=$($AdminSecretName):latest,MAILBOX_JOIN_KEY=$($JoinSecretName):latest" --quiet
+& gcloud run deploy agent-mailbox --source . --project=$CloudProject --region=$Region --port=8795 --service-account=$RuntimeServiceAccount --allow-unauthenticated --ingress=all --cpu=1 --memory=512Mi --min=0 --max=2 --concurrency=40 --set-env-vars="MAILBOX_STORAGE=firestore,MAILBOX_FIRESTORE_DATABASE=$FirestoreDatabase,GOOGLE_CLOUD_PROJECT=$CloudProject,MAILBOX_RELEASE=0.2.0" --set-secrets="MAILBOX_ADMIN_KEY=$($AdminSecretName):latest,MAILBOX_JOIN_KEY=$($JoinSecretName):latest" --quiet
 if ($LASTEXITCODE -ne 0) { throw 'El despliegue no se completo.' }
 $serviceUrl = & gcloud run services describe agent-mailbox --project=$CloudProject --region=$Region --format='value(status.url)'
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo obtener la URL.' }

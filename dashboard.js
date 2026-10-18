@@ -48,7 +48,7 @@
     }
   }
   async function unregisterAgent(agent) {
-    const confirmed = window.confirm(`Dar de baja a ${agent.name}? Esto revoca su token y borra permanentemente todos sus mensajes e imagenes.`);
+    const confirmed = window.confirm(`Dar de baja a ${agent.name}? Esto revoca su token y borra permanentemente todos sus mensajes y archivos adjuntos.`);
     if (!confirmed) return;
     try {
       const response = await fetch(`/agents/${encodeURIComponent(agent.id)}`, {
