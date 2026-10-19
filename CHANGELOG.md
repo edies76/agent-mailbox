@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.11
+
+- Set the public HTTPS origin during Cloud Run deployment so canonical and social-card URLs do not inherit the proxy's internal HTTP scheme. Document custom-domain configuration and cover public-origin rendering.
+
 ## 0.2.10
 
 - Lead the public site and README with specialist collaboration, independent security review and evidence-based handoffs. Add English landing, a routed-envelope brand mark, social artwork, launch drafts and a reusable brand/product context.

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import test_mailbox as http_tests
 from adapters.mailbox_spool import initialize_bank, mirror
@@ -88,6 +89,20 @@ class ControlAccessTests(unittest.TestCase):
                 content = response.read()
                 self.assertEqual(response.status, 200)
                 self.assertNotIn(b"{{PUBLIC_ORIGIN}}", content)
+
+    def test_public_origin_overrides_the_proxy_internal_scheme(self):
+        from urllib.request import urlopen
+        self.stop_server()
+        try:
+            with patch.dict(os.environ, {"MAILBOX_PUBLIC_URL": "https://mail.example"}):
+                self.start_server()
+            with urlopen(self.url, timeout=10) as response:
+                content = response.read().decode("utf-8")
+            self.assertIn('href="https://mail.example/"', content)
+            self.assertIn('content="https://mail.example/social-card.png"', content)
+        finally:
+            self.stop_server()
+            self.start_server()
 
 
 class FileBankTests(unittest.TestCase):

@@ -41,6 +41,9 @@ instructions. `/dashboard` is private and requires the admin key; never put that
 README, browser link, agent prompt, or source control.
 
 Check `/health` against the committed `VERSION`, then open `/workspace` and `/guide/operations`.
+The deployment script sets `MAILBOX_PUBLIC_URL` from Cloud Run's HTTPS service URL so canonical and
+social-image metadata remain correct behind its TLS proxy. Set that environment variable to your
+public HTTPS origin when using another reverse proxy or a custom domain.
 The source Dockerfile copies all human/agent documentation and skill resources used by the website.
 Existing registrations keep their IDs/tokens; SQLite schema metadata migrates on startup and
 Firestore records retain backwards-compatible defaults. Native-chat profiles are opt-in: group an

@@ -52,7 +52,7 @@ if ($serviceDescription.metadata.annotations.'run.googleapis.com/urls') {
 $previousHosts = $serviceDescription.spec.template.spec.containers[0].env | Where-Object name -eq 'MAILBOX_MCP_ALLOWED_HOSTS'
 if ($previousHosts.value) { $mcpHosts += $previousHosts.value -split ',' }
 $allowedHosts = ($mcpHosts | Where-Object { $_ } | Sort-Object -Unique) -join ','
-& gcloud run services update agent-mailbox --project=$CloudProject --region=$Region --update-env-vars="^;^MAILBOX_MCP_ALLOWED_HOSTS=$allowedHosts" --quiet
+& gcloud run services update agent-mailbox --project=$CloudProject --region=$Region --update-env-vars="^;^MAILBOX_MCP_ALLOWED_HOSTS=$allowedHosts;MAILBOX_PUBLIC_URL=$($serviceUrl.Trim())" --quiet
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo configurar el host permitido para MCP.' }
 New-Item -ItemType Directory -Path '.local' -Force | Out-Null
 @{ url = $serviceUrl.Trim(); project = $CloudProject; region = $Region } | ConvertTo-Json | Set-Content -LiteralPath '.local\deployment.json' -Encoding utf8
