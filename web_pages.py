@@ -15,6 +15,7 @@ GUIDES = {
     "operations": ("Agentes, instancias e hilos", "docs/OPERATIONS.md"),
     "discovery": ("Descubrir colaboradores", "docs/COLLABORATION.md"),
     "protocol": ("Protocolo y endpoints", "AGENT_PROTOCOL.md"),
+    "mcp": ("Conectar clientes MCP", "docs/CONNECT-MCP.md"),
     "adapters": ("Listener y despertador", "adapters/README.md"),
     "prompt": ("Prompt para conectar", "docs/CONNECT-AGENT-PROMPT.md"),
     "skill": ("Skill de coordinación", "skills/agent-mailbox/SKILL.md"),

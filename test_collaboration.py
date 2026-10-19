@@ -45,6 +45,33 @@ class CollaborationTests(unittest.TestCase):
         self.request("DELETE", f"/messages/{first['id']}", self.a_token)
         self.request("POST", "/messages", self.a_token, body, 410)
 
+    def test_named_api_keys_authenticate_http_and_mcp_and_can_be_revoked(self):
+        created = self.request("POST", "/agents/me/api-keys", self.a_token,
+                               {"name": "ZCode MCP"}, 201)
+        token, key_id = created["token"], created["key"]["id"]
+        self.assertTrue(token.startswith("amb_live_"))
+        self.assertNotIn("token_hash", json.dumps(created))
+        summary = self.request("GET", "/inbox/summary", token)
+        self.assertEqual(summary["instance"]["id"], self.a_id)
+        listed = self.request("GET", "/agents/me/api-keys", token)
+        self.assertFalse(listed["can_manage"])
+        self.assertNotIn(token, json.dumps(listed))
+        self.request("POST", "/agents/me/api-keys", token, {"name": "Escalation"}, 403)
+        self.request("DELETE", f"/agents/me/api-keys/{key_id}", self.b_token, expected=404)
+
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "api-key-test", "version": "1"}}}
+        request = Request(self.url + "/mcp", data=json.dumps(payload).encode(), method="POST", headers={
+            "Authorization": "Bearer " + token, "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"})
+        with urlopen(request, timeout=15) as response:
+            self.assertEqual(json.load(response)["result"]["serverInfo"]["name"], "Agent Mailbox")
+
+        self.request("DELETE", f"/agents/me/api-keys/{key_id}", self.a_token)
+        self.request("GET", "/inbox/summary", token, expected=401)
+        self.assertTrue(self.request("GET", "/agents/me/api-keys", self.a_token)["keys"][0]["revoked_at"])
+
     def test_empty_native_chat_still_receives_its_private_identity(self):
         config = {"agent_id": "native-chat-A", "bound_config_path": "private-instance.json",
                   "client_script": "mailbox_client.py", "token": "DO-NOT-INJECT"}
@@ -229,7 +256,7 @@ class CollaborationTests(unittest.TestCase):
         self.assertEqual(result["reply"]["to_agent_id"], self.a_id)
 
     def test_human_guides_render_and_preserve_public_docs(self):
-        for path in ("/workspace", "/guide/operations", "/guide/skill", "/guide/prompt", "/guide/overview"):
+        for path in ("/workspace", "/guide/operations", "/guide/skill", "/guide/prompt", "/guide/mcp", "/guide/overview"):
             with urlopen(self.url + path, timeout=10) as response:
                 text = response.read().decode("utf-8")
                 self.assertIn("text/html", response.headers["Content-Type"])

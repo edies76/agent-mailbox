@@ -54,6 +54,12 @@ class SQLiteStore(CollaborationStore):
                 CREATE INDEX IF NOT EXISTS unread_idx
                     ON messages(to_agent_id, id) WHERE acknowledged_at IS NULL;
                 CREATE INDEX IF NOT EXISTS online_idx ON agents(last_seen);
+                CREATE TABLE IF NOT EXISTS agent_api_keys (
+                    id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL, key_prefix TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL,
+                    created_at REAL NOT NULL, last_used_at REAL, revoked_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS agent_api_key_hash_idx ON agent_api_keys(token_hash);
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(messages)")}
             if "attachments_json" not in columns:
@@ -83,6 +89,37 @@ class SQLiteStore(CollaborationStore):
                 db.execute("UPDATE agents SET last_seen = ? WHERE id = ?", (time.time(), row["id"]))
                 return row["id"]
         return None
+
+    def authenticate_agent_api_key(self, digest):
+        with self.database() as db:
+            row = db.execute("SELECT id, agent_id FROM agent_api_keys WHERE token_hash = ? AND revoked_at IS NULL",
+                             (digest,)).fetchone()
+            if not row:
+                return None
+            seen = time.time()
+            db.execute("UPDATE agent_api_keys SET last_used_at = ? WHERE id = ?", (seen, row["id"]))
+            db.execute("UPDATE agents SET last_seen = ? WHERE id = ?", (seen, row["agent_id"]))
+            return {"id": row["agent_id"], "api_key_id": row["id"]}
+
+    def create_agent_api_key(self, row):
+        with self.database() as db:
+            db.execute("""INSERT INTO agent_api_keys
+                (id,agent_id,name,key_prefix,token_hash,created_at,last_used_at,revoked_at)
+                VALUES (?,?,?,?,?,?,NULL,NULL)""",
+                (row["id"], row["agent_id"], row["name"], row["key_prefix"], row["token_hash"], row["created_at"]))
+        return row
+
+    def agent_api_keys(self, agent_id):
+        with self.database() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT id,agent_id,name,key_prefix,created_at,last_used_at,revoked_at FROM agent_api_keys WHERE agent_id = ? ORDER BY created_at DESC",
+                (agent_id,))]
+
+    def revoke_agent_api_key(self, agent_id, key_id):
+        with self.database() as db:
+            cursor = db.execute("UPDATE agent_api_keys SET revoked_at = ? WHERE agent_id = ? AND id = ? AND revoked_at IS NULL",
+                                (time.time(), agent_id, key_id))
+            return bool(cursor.rowcount)
 
     def register(self, row):
         with self.database() as db:
@@ -294,6 +331,39 @@ class FirestoreStore(CollaborationStore):
             return rows[0].id
         return None
 
+    def authenticate_agent_api_key(self, digest):
+        rows = list(self.where(self.client.collection("agent_api_keys"), "token_hash", "==", digest)
+                    .limit(1).stream(timeout=15))
+        if not rows:
+            return None
+        row = rows[0].to_dict()
+        if row.get("revoked_at") is not None:
+            return None
+        seen = time.time()
+        rows[0].reference.update({"last_used_at": seen}, timeout=15)
+        self.agents.document(row["agent_id"]).update({"last_seen": seen}, timeout=15)
+        return {"id": row["agent_id"], "api_key_id": rows[0].id}
+
+    def create_agent_api_key(self, row):
+        self.client.collection("agent_api_keys").document(row["id"]).create(row, timeout=15)
+        return row
+
+    def agent_api_keys(self, agent_id):
+        rows = list(self.where(self.client.collection("agent_api_keys"), "agent_id", "==", agent_id)
+                    .stream(timeout=15))
+        return sorted((doc.to_dict() for doc in rows), key=lambda row: row["created_at"], reverse=True)
+
+    def revoke_agent_api_key(self, agent_id, key_id):
+        ref = self.client.collection("agent_api_keys").document(key_id)
+        snapshot = ref.get(timeout=15)
+        if not snapshot.exists:
+            return False
+        row = snapshot.to_dict()
+        if row.get("agent_id") != agent_id or row.get("revoked_at") is not None:
+            return False
+        ref.update({"revoked_at": time.time()}, timeout=15)
+        return True
+
     def register(self, row):
         self.agents.document(row["id"]).create(row, timeout=15)
 
@@ -324,6 +394,7 @@ class FirestoreStore(CollaborationStore):
         # Firestore batches are limited; delete attachment chunks before messages.
         refs = []
         refs.extend(doc.reference for doc in self.where(self.client.collection("delivery_keys"), "sender_id", "==", identifier).stream(timeout=30))
+        refs.extend(doc.reference for doc in self.where(self.client.collection("agent_api_keys"), "agent_id", "==", identifier).stream(timeout=30))
         for message_id in message_ids:
             chunks = self.where(self.attachment_chunks, "message_id", "==", message_id)
             refs.extend(doc.reference for doc in chunks.stream(timeout=30))

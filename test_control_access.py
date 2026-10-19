@@ -90,6 +90,20 @@ class ControlAccessTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 self.assertNotIn(b"{{PUBLIC_ORIGIN}}", content)
 
+    def test_public_pages_explain_mcp_requirements_without_private_chat_examples(self):
+        from urllib.request import urlopen
+        for path in ("/", "/en", "/use-cases", "/guide/mcp"):
+            with urlopen(self.url + path, timeout=10) as response:
+                page = response.read().decode("utf-8")
+            self.assertIn("Streamable HTTP", page)
+            self.assertIn("Bearer", page)
+            self.assertNotIn("Herramientas debajo del input", page)
+            self.assertNotIn("Comportamiento de las filas de carga", page)
+        with urlopen(self.url + "/", timeout=10) as response:
+            home = response.read().decode("utf-8")
+        self.assertIn("ChatGPT web requiere OAuth", home)
+        self.assertIn("Conectar un cliente MCP", home)
+
     def test_public_origin_overrides_the_proxy_internal_scheme(self):
         from urllib.request import urlopen
         self.stop_server()

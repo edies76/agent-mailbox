@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.12
+
+- Add named per-instance API keys for separate HTTP/MCP clients. Keys are shown once, stored as hashes, independently revocable, and managed in the mailbox profile view.
+- Replace the private ZCode/Codex conversation sample in the landing page with a product use case and a clear MCP connection section.
+- Publish a human MCP client guide that states transport/auth requirements, explains the one-time API key workflow, and does not promise compatibility with every local agent or ChatGPT OAuth.
+- Cover key creation, authentication, scope isolation and revocation in integration tests.
+
 ## 0.2.11
 
 - Set the public HTTPS origin during Cloud Run deployment so canonical and social-card URLs do not inherit the proxy's internal HTTP scheme. Document custom-domain configuration and cover public-origin rendering.

@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, AliasChoices, ValidationError
 from stores import FirestoreStore, SQLiteStore
 
 MAX_MESSAGE_ID = 2**63 - 1
+MAX_AGENT_API_KEYS = 25
 APP_VERSION = FilePath(__file__).with_name("VERSION").read_text(encoding="ascii").strip()
 
 
@@ -69,6 +70,11 @@ class ControlUserCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     name: str = Field(min_length=2, max_length=80)
     role: Literal["observer", "operator"] = "observer"
+
+
+class AgentApiKeyCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=80)
 
 
 class Attachment(BaseModel):
@@ -273,6 +279,9 @@ def create_app():
             return PlainTextResponse("Bearer agent token required", status_code=401,
                                      headers={"WWW-Authenticate": "Bearer"})
         identifier = store.authenticate(hashlib.sha256(token.encode()).hexdigest())
+        api_key = None if identifier else store.authenticate_agent_api_key(hashlib.sha256(token.encode()).hexdigest())
+        if identifier is None and api_key:
+            identifier = api_key["id"]
         if identifier is None:
             return PlainTextResponse("Invalid agent token", status_code=401,
                                      headers={"WWW-Authenticate": "Bearer"})
@@ -398,13 +407,32 @@ def create_app():
         if secrets.compare_digest(token.encode(), hub_key.encode()):
             return {"admin": True}
         identifier = store.authenticate(hashlib.sha256(token.encode()).hexdigest())
+        if identifier is not None:
+            return {"admin": False, "id": identifier, "credential_type": "instance"}
+        api_key = store.authenticate_agent_api_key(hashlib.sha256(token.encode()).hexdigest())
+        if api_key is not None:
+            return {"admin": False, "id": api_key["id"], "credential_type": "api_key",
+                    "api_key_id": api_key["api_key_id"]}
         if identifier is None:
             user = store.control_user_by_hash(hashlib.sha256(token.encode()).hexdigest())
             if user:
                 return {"admin": False, "control_user": True, "id": user["id"],
                         "name": user["name"], "role": user["role"]}
             raise HTTPException(401, "Invalid token", headers={"WWW-Authenticate": "Bearer"})
-        return {"admin": False, "id": identifier}
+        return {"admin": False, "id": identifier, "credential_type": "instance"}
+
+    def create_agent_api_key(identifier, name):
+        token = "amb_live_" + secrets.token_urlsafe(32)
+        row = {"id": str(uuid4()), "agent_id": identifier, "name": name,
+               "key_prefix": token[:17], "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+               "created_at": time.time(), "last_used_at": None, "revoked_at": None}
+        store.create_agent_api_key(row)
+        return {"key": {key: row[key] for key in ("id", "name", "key_prefix", "created_at", "last_used_at")},
+                "token": token, "warning": "Copy this key now. It cannot be shown again."}
+
+    def public_agent_api_key(row):
+        return {key: row.get(key) for key in
+                ("id", "name", "key_prefix", "created_at", "last_used_at", "revoked_at")}
 
     Identity = Annotated[dict, Depends(authenticate)]
 
@@ -825,6 +853,31 @@ def create_app():
     @app.get("/agents/me")
     def me(identity: Identity):
         return public_agent(store.get_agent(agent_id(identity)), time.time())
+
+    @app.get("/agents/me/api-keys")
+    def list_agent_api_keys(identity: Identity):
+        identifier = agent_id(identity)
+        return {"keys": [public_agent_api_key(row) for row in store.agent_api_keys(identifier)],
+                "can_manage": identity.get("credential_type") == "instance"}
+
+    @app.post("/agents/me/api-keys", status_code=201)
+    def issue_agent_api_key(body: AgentApiKeyCreate, identity: Identity):
+        identifier = agent_id(identity)
+        if identity.get("credential_type") != "instance":
+            raise HTTPException(403, "Use the original instance token to create or revoke API keys")
+        if sum(row.get("revoked_at") is None for row in store.agent_api_keys(identifier)) >= MAX_AGENT_API_KEYS:
+            raise HTTPException(409, f"This instance already has {MAX_AGENT_API_KEYS} active API keys")
+        return JSONResponse(create_agent_api_key(identifier, body.name), status_code=201,
+                            headers={"Cache-Control": "no-store"})
+
+    @app.delete("/agents/me/api-keys/{key_id}")
+    def revoke_agent_api_key(key_id: str, identity: Identity):
+        identifier = agent_id(identity)
+        if identity.get("credential_type") != "instance":
+            raise HTTPException(403, "Use the original instance token to create or revoke API keys")
+        if not store.revoke_agent_api_key(identifier, key_id):
+            raise HTTPException(404, "Active API key not found for this instance")
+        return {"id": key_id, "revoked": True}
 
     @app.patch("/agents/me")
     def update_my_card(body: AgentCardPatch, identity: Identity):
