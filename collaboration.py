@@ -75,6 +75,23 @@ class CollaborationStore:
             db.execute("CREATE TABLE IF NOT EXISTS control_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, "
                        "action TEXT NOT NULL, target_id TEXT NOT NULL, created_at REAL NOT NULL)")
             db.execute("CREATE INDEX IF NOT EXISTS control_user_hash_idx ON control_users(token_hash)")
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS account_users (
+                    id TEXT PRIMARY KEY, username TEXT NOT NULL, username_norm TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'owner',
+                    created_at REAL NOT NULL, last_login_at REAL, disabled_at REAL
+                );
+                CREATE TABLE IF NOT EXISTS account_sessions (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES account_users(id) ON DELETE CASCADE,
+                    token_hash TEXT UNIQUE NOT NULL, csrf_hash TEXT NOT NULL, created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL, last_seen REAL NOT NULL, revoked_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS account_session_hash_idx ON account_sessions(token_hash);
+                CREATE TABLE IF NOT EXISTS account_login_limits (
+                    key_hash TEXT PRIMARY KEY, window_started REAL NOT NULL, failures INTEGER NOT NULL,
+                    locked_until REAL NOT NULL DEFAULT 0
+                );
+            """)
             db.execute("UPDATE messages SET message_type = 'reply' WHERE in_reply_to IS NOT NULL AND message_type = 'request'")
             db.execute("CREATE INDEX IF NOT EXISTS outbox_idx ON messages(from_agent_id, id)")
             db.execute("CREATE INDEX IF NOT EXISTS thread_idx ON messages(thread_id, id)")
@@ -83,6 +100,222 @@ class CollaborationStore:
                 parent = db.execute("SELECT thread_id FROM messages WHERE id = ?", (row["in_reply_to"],)).fetchone()
                 root = parent[0] if parent and parent[0] else row["id"]
                 db.execute("UPDATE messages SET thread_id = ? WHERE id = ?", (root, row["id"]))
+
+    def owner_account_exists(self):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                return db.execute("SELECT 1 FROM account_users WHERE role = 'owner' AND disabled_at IS NULL LIMIT 1").fetchone() is not None
+        owner = self.client.collection("meta").document("account_owner").get(timeout=15)
+        return owner.exists
+
+    def create_owner_account(self, row):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM account_users LIMIT 1").fetchone():
+                    raise HTTPException(409, "The owner account has already been created")
+                db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at) VALUES (?,?,?,?, 'owner',?,NULL,NULL)",
+                           (row["id"], row["username"], row["username_norm"], row["password_hash"], row["created_at"]))
+            return row
+        owner_ref = self.client.collection("meta").document("account_owner")
+        username_ref = self.client.collection("account_usernames").document(row["username_norm"])
+        user_ref = self.client.collection("account_users").document(row["id"])
+        @self.firestore.transactional
+        def create(transaction):
+            if owner_ref.get(transaction=transaction).exists:
+                raise HTTPException(409, "The owner account has already been created")
+            if username_ref.get(transaction=transaction).exists:
+                raise HTTPException(409, "Username is already taken")
+            transaction.create(user_ref, row | {"role": "owner"})
+            transaction.create(username_ref, {"user_id": row["id"]})
+            transaction.create(owner_ref, {"user_id": row["id"], "created_at": row["created_at"]})
+        create(self.client.transaction(max_attempts=5))
+        return row
+
+    def account_by_username(self, username_norm):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT * FROM account_users WHERE username_norm = ? AND disabled_at IS NULL",
+                                 (username_norm,)).fetchone()
+                return dict(row) if row else None
+        username_ref = self.client.collection("account_usernames").document(username_norm).get(timeout=15)
+        if not username_ref.exists:
+            return None
+        return self.account_by_id(username_ref.to_dict()["user_id"])
+
+    def account_by_id(self, user_id):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT id,username,role,created_at,last_login_at FROM account_users WHERE id = ? AND disabled_at IS NULL",
+                                 (user_id,)).fetchone()
+                return dict(row) if row else None
+        row = self.client.collection("account_users").document(user_id).get(timeout=15)
+        if not row.exists or row.to_dict().get("disabled_at") is not None:
+            return None
+        return row.to_dict()
+
+    def update_account_login(self, user_id, seen):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("UPDATE account_users SET last_login_at = ? WHERE id = ?", (seen, user_id))
+        else:
+            self.client.collection("account_users").document(user_id).update({"last_login_at": seen}, timeout=15)
+
+    def update_account_password(self, user_id, encoded_password, now):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("BEGIN IMMEDIATE")
+                cursor = db.execute("UPDATE account_users SET password_hash = ? WHERE id = ? AND disabled_at IS NULL",
+                                    (encoded_password, user_id))
+                if not cursor.rowcount:
+                    return False
+                db.execute("UPDATE account_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+                           (now, user_id))
+            return True
+        user_ref = self.client.collection("account_users").document(user_id)
+        user = user_ref.get(timeout=15)
+        if not user.exists or user.to_dict().get("disabled_at") is not None:
+            return False
+        user_ref.update({"password_hash": encoded_password}, timeout=15)
+        sessions = list(self.where(self.client.collection("account_sessions"), "user_id", "==", user_id).stream(timeout=15))
+        batch = self.client.batch()
+        queued = 0
+        for doc in sessions:
+            if doc.to_dict().get("revoked_at") is None:
+                batch.update(doc.reference, {"revoked_at": now})
+                queued += 1
+                if queued == 450:
+                    batch.commit(timeout=15)
+                    batch = self.client.batch()
+                    queued = 0
+        if queued:
+            batch.commit(timeout=15)
+        return True
+
+    def create_account_session(self, row):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("INSERT INTO account_sessions (id,user_id,token_hash,csrf_hash,created_at,expires_at,last_seen,revoked_at) VALUES (?,?,?,?,?,?,?,NULL)",
+                           tuple(row[key] for key in ("id", "user_id", "token_hash", "csrf_hash", "created_at", "expires_at", "last_seen")))
+        else:
+            self.client.collection("account_sessions").document(row["id"]).create(row, timeout=15)
+        return row
+
+    def account_session_by_hash(self, token_hash, now):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT s.*,u.username,u.role FROM account_sessions s JOIN account_users u ON u.id=s.user_id WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.disabled_at IS NULL",
+                                 (token_hash, now)).fetchone()
+                if not row:
+                    return None
+                db.execute("UPDATE account_sessions SET last_seen = ? WHERE id = ?", (now, row["id"]))
+                return dict(row)
+        query = self.where(self.client.collection("account_sessions"), "token_hash", "==", token_hash).limit(1)
+        rows = list(query.stream(timeout=15))
+        if not rows:
+            return None
+        row = rows[0].to_dict()
+        if row.get("revoked_at") is not None or row.get("expires_at", 0) <= now:
+            return None
+        user = self.account_by_id(row["user_id"])
+        if not user:
+            return None
+        rows[0].reference.update({"last_seen": now}, timeout=15)
+        return row | {"username": user["username"], "role": user["role"]}
+
+    def create_team_account(self, row):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                try:
+                    db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at) VALUES (?,?,?,?,?,?,NULL,NULL)",
+                               (row["id"], row["username"], row["username_norm"], row["password_hash"], row["role"], row["created_at"]))
+                except sqlite3.IntegrityError:
+                    raise HTTPException(409, "Username is already taken")
+            return row
+        user_ref = self.client.collection("account_users").document(row["id"])
+        username_ref = self.client.collection("account_usernames").document(row["username_norm"])
+        @self.firestore.transactional
+        def create(transaction):
+            if username_ref.get(transaction=transaction).exists:
+                raise HTTPException(409, "Username is already taken")
+            transaction.create(user_ref, row | {"last_login_at": None, "disabled_at": None})
+            transaction.create(username_ref, {"user_id": row["id"]})
+        create(self.client.transaction(max_attempts=5))
+        return row
+
+    def all_account_users(self):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                rows = db.execute("SELECT id,username,role,created_at,last_login_at,disabled_at FROM account_users ORDER BY created_at").fetchall()
+                return [dict(row) for row in rows]
+        rows = [doc.to_dict() for doc in self.client.collection("account_users").stream(timeout=15)]
+        return sorted(({key: row.get(key) for key in ("id", "username", "role", "created_at", "last_login_at", "disabled_at")}
+                       for row in rows), key=lambda row: row["created_at"])
+
+    def disable_team_account(self, user_id, disabled_at):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                cursor = db.execute("UPDATE account_users SET disabled_at = ? WHERE id = ? AND role != 'owner' AND disabled_at IS NULL",
+                                    (disabled_at, user_id))
+                return bool(cursor.rowcount)
+        ref = self.client.collection("account_users").document(user_id)
+        snapshot = ref.get(timeout=15)
+        if not snapshot.exists:
+            return False
+        user = snapshot.to_dict()
+        if user.get("role") == "owner" or user.get("disabled_at") is not None:
+            return False
+        ref.update({"disabled_at": disabled_at}, timeout=15)
+        return True
+
+    def revoke_account_session(self, session_id, revoked_at):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("UPDATE account_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                           (revoked_at, session_id))
+        else:
+            self.client.collection("account_sessions").document(session_id).update({"revoked_at": revoked_at}, timeout=15)
+
+    def account_login_allowed(self, key_hash, now):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT locked_until FROM account_login_limits WHERE key_hash = ?", (key_hash,)).fetchone()
+                return not row or row["locked_until"] <= now
+        row = self.client.collection("account_login_limits").document(key_hash).get(timeout=15)
+        return not row.exists or row.to_dict().get("locked_until", 0) <= now
+
+    def record_account_login(self, key_hash, now, success):
+        window_seconds, max_failures, lock_seconds = 900, 6, 900
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT * FROM account_login_limits WHERE key_hash = ?", (key_hash,)).fetchone()
+                if success:
+                    db.execute("DELETE FROM account_login_limits WHERE key_hash = ?", (key_hash,))
+                    return
+                if not row or now - row["window_started"] > window_seconds:
+                    db.execute("INSERT OR REPLACE INTO account_login_limits VALUES (?,?,1,0)", (key_hash, now))
+                    return
+                failures = row["failures"] + 1
+                locked = now + lock_seconds if failures >= max_failures else row["locked_until"]
+                db.execute("UPDATE account_login_limits SET failures = ?, locked_until = ? WHERE key_hash = ?",
+                           (failures, locked, key_hash))
+            return
+        ref = self.client.collection("account_login_limits").document(key_hash)
+        @self.firestore.transactional
+        def update(transaction):
+            snapshot = ref.get(transaction=transaction)
+            row = snapshot.to_dict() if snapshot.exists else None
+            if success:
+                if row:
+                    transaction.delete(ref)
+                return
+            if not row or now - row.get("window_started", 0) > window_seconds:
+                transaction.set(ref, {"window_started": now, "failures": 1, "locked_until": 0})
+                return
+            failures = row.get("failures", 0) + 1
+            transaction.update(ref, {"failures": failures,
+                                     "locked_until": now + lock_seconds if failures >= max_failures else row.get("locked_until", 0)})
+        update(self.client.transaction(max_attempts=5))
 
     def profiles_all(self):
         if hasattr(self, "database"):

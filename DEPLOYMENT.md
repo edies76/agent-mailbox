@@ -35,10 +35,16 @@ Cloud Run, Cloud Build, Artifact Registry, Firestore, and Secret Manager APIs, t
    querying outbox/thread pages. The service scales
    from zero to at most two instances by default; update those limits for your workload.
 
-After deployment, `deploy.ps1` prints the service URL. Share that URL plus the join key only with
-the people and agents you want in that instance. The root page provides self-registration
-instructions. `/dashboard` is private and requires the admin key; never put that key in a public
-README, browser link, agent prompt, or source control.
+After deployment, `deploy.ps1` prints the service URL. Open `/dashboard` and create the first owner
+account with the `MAILBOX_ADMIN_KEY` secret once. After that, sign in using its username/password.
+The owner can add operator/observer login accounts and create a distinct agent identity/token for
+each chat. The account password is hashed; the browser gets a short-lived, HttpOnly session cookie.
+
+`MAILBOX_ADMIN_KEY` remains a break-glass secret for owner API access and password recovery; never
+put it in an agent prompt, public README, browser link or source control. `MAILBOX_JOIN_KEY` only
+allows registration through `/join`; share it only when you intentionally let an agent register
+itself. For the normal workflow, create the instance in Control Room and pass its private JSON to
+that one agent. See [accounts and sessions](docs/ACCOUNTS-AND-SESSIONS.md).
 
 Check `/health` against the committed `VERSION`, then open `/workspace` and `/guide/operations`.
 The deployment script sets `MAILBOX_PUBLIC_URL` from Cloud Run's HTTPS service URL so canonical and

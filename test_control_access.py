@@ -2,15 +2,20 @@
 
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import os
 import subprocess
+import sqlite3
 import sys
+import http.cookiejar
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
+from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 import test_mailbox as http_tests
 from adapters.mailbox_spool import initialize_bank, mirror
@@ -186,6 +191,102 @@ class FileBankTests(unittest.TestCase):
             (root / "b.json").write_text((root / "a.json").read_text())
             with self.assertRaises(ValueError):
                 load_manifest(manifest)
+
+
+class AccountSessionTests(unittest.TestCase):
+    setUpClass = classmethod(http_tests.MailboxTests.setUpClass.__func__)
+    tearDownClass = classmethod(http_tests.MailboxTests.tearDownClass.__func__)
+    start_server = classmethod(http_tests.MailboxTests.start_server.__func__)
+    stop_server = classmethod(http_tests.MailboxTests.stop_server.__func__)
+    setUp = http_tests.MailboxTests.setUp
+    request = http_tests.MailboxTests.request
+
+    def browser_request(self, opener, path, method="GET", body=None, headers=None, expected=200):
+        request = Request(self.url + path, data=json.dumps(body).encode() if body is not None else None,
+                          headers={"Content-Type": "application/json", **(headers or {})}, method=method)
+        try:
+            with opener.open(request, timeout=20) as response:
+                status, data = response.status, json.load(response)
+        except HTTPError as error:
+            with error:
+                status, data = error.code, json.load(error)
+        self.assertEqual(status, expected, data)
+        return data
+
+    def test_owner_setup_cookie_sessions_csrf_and_agent_handoff(self):
+        cookies = http.cookiejar.CookieJar()
+        browser = build_opener(HTTPCookieProcessor(cookies))
+        status = self.browser_request(browser, "/auth/status")
+        self.assertTrue(status["setup_required"])
+        setup = self.browser_request(browser, "/auth/setup", "POST", {
+            "setup_key": self.admin, "username": "MailboxOwner", "password": "local-password-that-is-long-42"}, expected=201)
+        self.assertEqual(setup["user"]["username"], "MailboxOwner")
+        self.browser_request(browser, "/auth/setup", "POST", {
+            "setup_key": self.admin, "username": "SecondOwner", "password": "another-password-long-enough-44"}, expected=409)
+        with contextlib.closing(sqlite3.connect(self.db_path)) as db:
+            stored_password = db.execute("SELECT password_hash FROM account_users WHERE id = ?",
+                                         (setup["user"]["id"],)).fetchone()[0]
+        self.assertTrue(stored_password.startswith("argon2id$v=19$m=19456,t=2,p=1$"))
+        self.assertNotIn("local-password-that-is-long-42", stored_password)
+        raw_session = next(cookie.value for cookie in cookies if "session" in cookie.name)
+        with contextlib.closing(sqlite3.connect(self.db_path)) as db:
+            stored_session = db.execute("SELECT token_hash FROM account_sessions WHERE user_id = ?",
+                                        (setup["user"]["id"],)).fetchone()[0]
+        self.assertNotEqual(raw_session, stored_session)
+        self.assertEqual(hashlib.sha256(raw_session.encode()).hexdigest(), stored_session)
+        self.assertFalse(self.browser_request(browser, "/auth/status")["setup_required"])
+        session = self.browser_request(browser, "/auth/session")
+        self.assertEqual(session["user"]["username"], "MailboxOwner")
+        self.assertNotIn("token", json.dumps(session))
+        logged_in = self.browser_request(browser, "/auth/login", "POST", {
+            "username": "mailboxowner", "password": "local-password-that-is-long-42"})
+        self.assertEqual(logged_in["user"]["username"], "MailboxOwner")
+
+        self.browser_request(browser, "/dashboard/accounts", "POST", {
+            "username": "no-csrf", "password": "a-long-valid-password-42", "role": "observer"}, expected=403)
+        csrf = next(cookie.value for cookie in cookies if "csrf" in cookie.name)
+        headers = {"X-CSRF-Token": csrf}
+        operator = self.browser_request(browser, "/dashboard/accounts", "POST", {
+            "username": "OperatorOne", "password": "operator-password-long-42", "role": "operator"}, headers=headers, expected=201)
+        self.assertEqual(operator["role"], "operator")
+        agent = self.browser_request(browser, "/agents", "POST", {
+            "name": "HTTP agent", "kind": "codex", "project": "test"}, headers=headers, expected=201)
+        self.assertTrue(agent["token"])
+        self.assertEqual(self.request("GET", "/inbox/summary", agent["token"])["instance"]["id"], agent["agent"]["id"])
+
+        operator_cookies = http.cookiejar.CookieJar()
+        operator_browser = build_opener(HTTPCookieProcessor(operator_cookies))
+        self.browser_request(operator_browser, "/auth/login", "POST", {
+            "username": "operatorone", "password": "operator-password-long-42"})
+        operator_dashboard = self.browser_request(operator_browser, "/dashboard/data")
+        self.assertTrue(operator_dashboard["permissions"]["can_manage_agents"])
+        self.assertFalse(operator_dashboard["permissions"]["can_manage_users"])
+        self.browser_request(operator_browser, "/dashboard/accounts", expected=403)
+        self.browser_request(browser, f"/dashboard/accounts/{operator['id']}", "DELETE", headers=headers)
+        self.browser_request(operator_browser, "/dashboard/data", expected=401)
+
+        self.browser_request(browser, "/auth/password", "POST", {
+            "current_password": "local-password-that-is-long-42",
+            "new_password": "owner-password-rotated-and-long-43"}, headers=headers)
+        headers = {"X-CSRF-Token": next(cookie.value for cookie in cookies if "csrf" in cookie.name)}
+        rejected_browser = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self.browser_request(rejected_browser, "/auth/login", "POST", {
+            "username": "MailboxOwner", "password": "local-password-that-is-long-42"}, expected=401)
+        for _ in range(6):
+            self.browser_request(rejected_browser, "/auth/login", "POST", {
+                "username": "unknown-login", "password": "definitely-the-wrong-password"}, expected=401)
+        self.browser_request(rejected_browser, "/auth/login", "POST", {
+            "username": "unknown-login", "password": "another-wrong-password"}, expected=429)
+
+        self.browser_request(browser, "/auth/logout", "POST", {}, headers=headers)
+        self.browser_request(browser, "/auth/session", expected=401)
+        self.request("POST", "/auth/recover", self.admin,
+                     {"username": "MailboxOwner", "new_password": "owner-password-recovered-and-long-44"})
+        recovered_browser = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        recovered = self.browser_request(recovered_browser, "/auth/login", "POST", {
+            "username": "MailboxOwner", "password": "owner-password-recovered-and-long-44"})
+        self.assertEqual(recovered["user"]["role"], "owner")
+        self.request("GET", "/dashboard/data", self.admin)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Require every commit in a pushed range to increase VERSION by exactly 0.0.1."""
+"""Require each commit to advance the patch or bump exactly one SemVer component."""
 
 import re
 import subprocess
@@ -43,12 +43,13 @@ def main(base, head):
             raise ValueError(f"Commit {commit[:12]} has no parent VERSION to compare")
         previous = read_version(parents[1])
         current = read_version(commit)
-        expected = (*previous[:2], previous[2] + 1)
-        if current != expected:
+        patch_bump = current[:2] == previous[:2] and current[2] == previous[2] + 1
+        minor_bump = current[0] == previous[0] and current[1] == previous[1] + 1
+        major_bump = current[0] == previous[0] + 1
+        if not (patch_bump or minor_bump or major_bump):
             old = ".".join(map(str, previous))
             new = ".".join(map(str, current))
-            want = ".".join(map(str, expected))
-            raise ValueError(f"{commit[:12]}: VERSION must move from {old} to {want}; found {new}")
+            raise ValueError(f"{commit[:12]}: VERSION must increment the patch or bump one SemVer component; moved from {old} to {new}")
         print(f"{commit[:12]}: {'.'.join(map(str, current))} OK")
     return 0
 

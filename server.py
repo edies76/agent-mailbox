@@ -21,12 +21,65 @@ from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, Response, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, AliasChoices, ValidationError, field_validator
+from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
 from stores import FirestoreStore, SQLiteStore
 
 MAX_MESSAGE_ID = 2**63 - 1
 MAX_AGENT_API_KEYS = 25
+PASSWORD_HASH_MEMORY_KIB = 19 * 1024
+PASSWORD_HASH_ITERATIONS = 2
+ACCOUNT_SESSION_SECONDS = 12 * 60 * 60
+PASSWORD_KDF_SLOTS = threading.BoundedSemaphore(4)
 APP_VERSION = FilePath(__file__).with_name("VERSION").read_text(encoding="ascii").strip()
+
+
+class PasswordKdfBusy(Exception):
+    pass
+
+
+def password_hash(password):
+    if not PASSWORD_KDF_SLOTS.acquire(timeout=2):
+        raise PasswordKdfBusy
+    try:
+        salt = secrets.token_bytes(16)
+        digest = Argon2id(salt=salt, length=32, iterations=PASSWORD_HASH_ITERATIONS,
+                          lanes=1, memory_cost=PASSWORD_HASH_MEMORY_KIB).derive(password.encode("utf-8"))
+        return f"argon2id$v=19$m={PASSWORD_HASH_MEMORY_KIB},t={PASSWORD_HASH_ITERATIONS},p=1${base64.urlsafe_b64encode(salt).decode()}${base64.urlsafe_b64encode(digest).decode()}"
+    finally:
+        PASSWORD_KDF_SLOTS.release()
+
+
+def verify_password(password, encoded):
+    if not PASSWORD_KDF_SLOTS.acquire(timeout=2):
+        raise PasswordKdfBusy
+    try:
+        scheme, version, parameters, salt, expected = encoded.split("$", 4)
+        if (scheme != "argon2id" or version != "v=19" or
+                parameters != f"m={PASSWORD_HASH_MEMORY_KIB},t={PASSWORD_HASH_ITERATIONS},p=1"):
+            return False
+        actual = Argon2id(salt=base64.urlsafe_b64decode(salt), length=32,
+                          iterations=PASSWORD_HASH_ITERATIONS, lanes=1,
+                          memory_cost=PASSWORD_HASH_MEMORY_KIB).derive(password.encode("utf-8"))
+        return secrets.compare_digest(actual, base64.urlsafe_b64decode(expected))
+    except (ValueError, TypeError):
+        return False
+    finally:
+        PASSWORD_KDF_SLOTS.release()
+
+
+def request_password_hash(password):
+    try:
+        return password_hash(password)
+    except PasswordKdfBusy:
+        raise HTTPException(429, "Password service is busy; retry shortly", headers={"Retry-After": "2"})
+
+
+def request_verify_password(password, encoded):
+    try:
+        return verify_password(password, encoded)
+    except PasswordKdfBusy:
+        raise HTTPException(429, "Password service is busy; retry shortly", headers={"Retry-After": "2"})
 
 
 class AgentRegistration(BaseModel):
@@ -70,6 +123,38 @@ class ControlUserCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     name: str = Field(min_length=2, max_length=80)
     role: Literal["observer", "operator"] = "observer"
+
+
+class OwnerSetup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    setup_key: str = Field(min_length=32, max_length=256)
+    username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
+    password: str = Field(min_length=12, max_length=256)
+
+
+class AccountLogin(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=1, max_length=40)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class TeamAccountCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
+    password: str = Field(min_length=12, max_length=256)
+    role: Literal["operator", "observer"]
+
+
+class AccountPasswordChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
+
+class AccountPasswordRecovery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=3, max_length=40)
+    new_password: str = Field(min_length=12, max_length=256)
 
 
 class AgentApiKeyCreate(BaseModel):
@@ -211,14 +296,57 @@ def create_app():
     app = FastAPI(title="Agent Mailbox", version=APP_VERSION, lifespan=lifespan,
                   description="Registro, presencia y buzones HTTP compartidos para agentes.")
 
+    def secure_web_cookies(request):
+        public_origin = os.environ.get("MAILBOX_PUBLIC_URL", "").strip()
+        return (public_origin or str(request.base_url)).startswith("https://")
+
+    def session_cookie_name(request):
+        return "__Host-agent-mailbox-session" if secure_web_cookies(request) else "agent-mailbox-session"
+
+    def csrf_cookie_name(request):
+        return "__Host-agent-mailbox-csrf" if secure_web_cookies(request) else "agent-mailbox-csrf"
+
+    def request_session_token(request):
+        return request.cookies.get(session_cookie_name(request)) or request.cookies.get("agent-mailbox-session") or request.cookies.get("__Host-agent-mailbox-session")
+
+    def set_session_cookies(response, request, session_token, csrf_token):
+        secure = secure_web_cookies(request)
+        response.set_cookie(session_cookie_name(request), session_token, max_age=ACCOUNT_SESSION_SECONDS,
+                            httponly=True, secure=secure, samesite="strict", path="/")
+        response.set_cookie(csrf_cookie_name(request), csrf_token, max_age=ACCOUNT_SESSION_SECONDS,
+                            httponly=False, secure=secure, samesite="strict", path="/")
+
+    def clear_session_cookies(response, request):
+        secure = secure_web_cookies(request)
+        for name in {session_cookie_name(request), csrf_cookie_name(request),
+                     "agent-mailbox-session", "agent-mailbox-csrf",
+                     "__Host-agent-mailbox-session", "__Host-agent-mailbox-csrf"}:
+            response.delete_cookie(name, path="/", secure=secure, httponly="session" in name,
+                                   samesite="strict")
+
     @app.middleware("http")
     async def private_response_headers(request, call_next):
         response = await call_next(request)
-        if request.headers.get("authorization") or request.url.path.startswith("/dashboard/"):
+        if request.headers.get("authorization") or request.url.path.startswith(("/dashboard", "/auth/")):
             response.headers["Cache-Control"] = "no-store"
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         return response
+
+    @app.middleware("http")
+    async def account_csrf_guard(request, call_next):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in {"/auth/login", "/auth/setup"} and not request.headers.get("authorization"):
+            session_token = request_session_token(request)
+            if session_token:
+                session = store.account_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
+                csrf_header = request.headers.get("x-csrf-token", "")
+                csrf_cookie = request.cookies.get(csrf_cookie_name(request), "") or request.cookies.get("agent-mailbox-csrf", "")
+                if (not session or not csrf_header or not csrf_cookie or
+                        not secrets.compare_digest(csrf_header, csrf_cookie) or
+                        not secrets.compare_digest(hashlib.sha256(csrf_header.encode()).hexdigest(), session["csrf_hash"])):
+                    return JSONResponse({"detail": "Invalid or missing CSRF token"}, status_code=403,
+                                        headers={"Cache-Control": "no-store"})
+        return await call_next(request)
 
     wait_slots = threading.BoundedSemaphore(12)
 
@@ -400,9 +528,18 @@ def create_app():
     bearer = HTTPBearer(auto_error=False)
     Credential = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]
 
-    def authenticate(credentials: Credential):
+    def authenticate(credentials: Credential, request: Request):
         if credentials is None:
-            raise HTTPException(401, "Bearer token required", headers={"WWW-Authenticate": "Bearer"})
+            session_token = request_session_token(request)
+            if session_token:
+                session = store.account_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
+                if session:
+                    common = {"id": session["user_id"], "username": session["username"],
+                              "name": session["username"], "role": session.get("role", "owner"),
+                              "account_session_id": session["id"], "csrf_hash": session["csrf_hash"]}
+                    return ({"admin": True} | common if common["role"] == "owner" else
+                            {"admin": False, "control_user": True} | common)
+            raise HTTPException(401, "Account session required", headers={"WWW-Authenticate": "Bearer"})
         token = credentials.credentials
         if secrets.compare_digest(token.encode(), hub_key.encode()):
             return {"admin": True}
@@ -435,6 +572,113 @@ def create_app():
                 ("id", "name", "key_prefix", "created_at", "last_used_at", "revoked_at")}
 
     Identity = Annotated[dict, Depends(authenticate)]
+
+    dummy_password_hash = password_hash(secrets.token_urlsafe(24))
+
+    def account_login_rate_key(username_norm, request):
+        address = request.client.host if request.client else "unknown"
+        return hmac.new(hub_key.encode(), f"{username_norm}|{address}".encode(), hashlib.sha256).hexdigest()
+
+    def current_account_session(request):
+        session_token = request_session_token(request)
+        if not session_token:
+            raise HTTPException(401, "Sign in to continue")
+        session = store.account_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
+        if not session:
+            raise HTTPException(401, "Account session expired; sign in again")
+        return session
+
+    def establish_account_session(user, request, status_code=200):
+        now = time.time()
+        session_token, csrf_token = secrets.token_urlsafe(40), secrets.token_urlsafe(32)
+        session = {"id": str(uuid4()), "user_id": user["id"],
+                   "token_hash": hashlib.sha256(session_token.encode()).hexdigest(),
+                   "csrf_hash": hashlib.sha256(csrf_token.encode()).hexdigest(),
+                   "created_at": now, "expires_at": now + ACCOUNT_SESSION_SECONDS, "last_seen": now,
+                   "revoked_at": None}
+        store.create_account_session(session)
+        response = JSONResponse({"user": {"id": user["id"], "username": user["username"], "role": user.get("role", "owner")},
+                                 "expires_at": session["expires_at"]}, status_code=status_code,
+                                headers={"Cache-Control": "no-store"})
+        set_session_cookies(response, request, session_token, csrf_token)
+        return response
+
+    @app.get("/auth/status")
+    def account_status():
+        exists = store.owner_account_exists()
+        return JSONResponse({"setup_required": not exists}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/auth/setup", status_code=201)
+    def setup_owner_account(body: OwnerSetup, request: Request):
+        if store.owner_account_exists():
+            raise HTTPException(409, "The first owner account is already set up")
+        if not secrets.compare_digest(body.setup_key.encode(), hub_key.encode()):
+            raise HTTPException(401, "Invalid one-time setup secret")
+        now = time.time()
+        username = body.username.strip()
+        user = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
+                "password_hash": request_password_hash(body.password), "role": "owner", "created_at": now,
+                "last_login_at": now, "disabled_at": None}
+        try:
+            store.create_owner_account(user)
+        except HTTPException:
+            raise
+        return establish_account_session(user, request, status_code=201)
+
+    @app.post("/auth/login")
+    def account_login(body: AccountLogin, request: Request):
+        username_norm = body.username.strip().casefold()
+        rate_key = account_login_rate_key(username_norm, request)
+        if not store.account_login_allowed(rate_key, time.time()):
+            raise HTTPException(429, "Too many failed sign-in attempts. Try again in 15 minutes.",
+                                headers={"Retry-After": "900"})
+        account = store.account_by_username(username_norm)
+        encoded = account["password_hash"] if account else dummy_password_hash
+        valid = request_verify_password(body.password, encoded) and account is not None
+        store.record_account_login(rate_key, time.time(), valid)
+        if not valid:
+            raise HTTPException(401, "Username or password is incorrect")
+        seen = time.time()
+        store.update_account_login(account["id"], seen)
+        account["last_login_at"] = seen
+        return establish_account_session(account, request)
+
+    @app.get("/auth/session")
+    def account_session_info(request: Request):
+        session = current_account_session(request)
+        return JSONResponse({"user": {"id": session["user_id"], "username": session["username"]},
+                             "expires_at": session["expires_at"]}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/auth/password")
+    def change_account_password(body: AccountPasswordChange, request: Request):
+        session = current_account_session(request)
+        account = store.account_by_username(session["username"].casefold())
+        if not account or not request_verify_password(body.current_password, account["password_hash"]):
+            raise HTTPException(401, "Current password is incorrect")
+        if not store.update_account_password(account["id"], request_password_hash(body.new_password), time.time()):
+            raise HTTPException(404, "Account is unavailable")
+        account["last_login_at"] = time.time()
+        store.update_account_login(account["id"], account["last_login_at"])
+        return establish_account_session(account, request)
+
+    @app.post("/auth/recover")
+    def recover_account_password(body: AccountPasswordRecovery, credentials: Credential):
+        if credentials is None or not secrets.compare_digest(credentials.credentials.encode(), hub_key.encode()):
+            raise HTTPException(403, "Password recovery requires the owner emergency key")
+        account = store.account_by_username(body.username.strip().casefold())
+        if not account or not store.update_account_password(account["id"], request_password_hash(body.new_password), time.time()):
+            raise HTTPException(404, "Account not found or disabled")
+        store.record_control_event("owner-emergency-key", "account_password_recovered", account["id"])
+        return {"username": account["username"], "password_reset": True,
+                "sessions_revoked": True, "next_step": "Sign in again with the new password"}
+
+    @app.post("/auth/logout")
+    def account_logout(request: Request):
+        session = current_account_session(request)
+        store.revoke_account_session(session["id"], time.time())
+        response = JSONResponse({"logged_out": True}, headers={"Cache-Control": "no-store"})
+        clear_session_cookies(response, request)
+        return response
 
     def agent_id(identity):
         if identity["admin"] or identity.get("control_user"):
@@ -669,6 +913,33 @@ def create_app():
         if not store.revoke_control_user(user_id):
             raise HTTPException(404, "User key not found or already revoked")
         return {"id": user_id, "revoked": True}
+
+    @app.get("/dashboard/accounts")
+    def dashboard_accounts(identity: Identity):
+        require_admin(identity)
+        return {"accounts": store.all_account_users()}
+
+    @app.post("/dashboard/accounts", status_code=201)
+    def create_dashboard_account(body: TeamAccountCreate, identity: Identity):
+        require_admin(identity)
+        active = [row for row in store.all_account_users() if row.get("disabled_at") is None]
+        if len(active) >= 100:
+            raise HTTPException(409, "Account limit reached; disable an unused account first")
+        username = body.username.strip()
+        row = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
+               "password_hash": request_password_hash(body.password), "role": body.role, "created_at": time.time(),
+               "last_login_at": None, "disabled_at": None}
+        store.create_team_account(row)
+        store.record_control_event(identity.get("id", "owner"), "account_created", row["id"])
+        return {key: row[key] for key in ("id", "username", "role", "created_at", "last_login_at", "disabled_at")}
+
+    @app.delete("/dashboard/accounts/{user_id}")
+    def disable_dashboard_account(user_id: str, identity: Identity):
+        require_admin(identity)
+        if not store.disable_team_account(user_id, time.time()):
+            raise HTTPException(404, "Non-owner account not found or already disabled")
+        store.record_control_event(identity.get("id", "owner"), "account_disabled", user_id)
+        return {"id": user_id, "disabled": True}
 
     @app.get("/dashboard/audit")
     def dashboard_audit(identity: Identity, limit: int = Query(100, ge=1, le=200)):

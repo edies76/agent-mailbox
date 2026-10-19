@@ -1,4 +1,4 @@
-"""Set VERSION to exactly one patch above the current commit's version."""
+"""Auto-bump patch versions while allowing an explicit SemVer milestone bump."""
 
 import re
 import argparse
@@ -33,12 +33,35 @@ def current_committed_version(base_revision):
     return tuple(map(int, match.groups()))
 
 
+def version_tuple(value, label):
+    match = VERSION_PATTERN.fullmatch(value.strip())
+    if not match:
+        raise SystemExit(f"{label} is not numeric MAJOR.MINOR.PATCH: {value!r}")
+    return tuple(map(int, match.groups()))
+
+
+def advances(previous, current):
+    patch = current[:2] == previous[:2] and current[2] == previous[2] + 1
+    minor = current[0] == previous[0] and current[1] == previous[1] + 1
+    major = current[0] == previous[0] + 1
+    return patch or minor or major
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default="HEAD", help="revision whose version this commit follows")
     args = parser.parse_args()
-    major, minor, patch = current_committed_version(args.base)
-    next_version = f"{major}.{minor}.{patch + 1}\n"
+    previous = current_committed_version(args.base)
+    requested = VERSION_FILE.read_text(encoding="ascii").strip()
+    current = version_tuple(requested, "Working VERSION")
+    if current == previous:
+        major, minor, patch = previous
+        current = (major, minor, patch + 1)
+    elif not advances(previous, current):
+        before = ".".join(map(str, previous))
+        after = ".".join(map(str, current))
+        raise SystemExit(f"VERSION must increase the patch or bump one SemVer component; {before} -> {after} is not allowed")
+    next_version = ".".join(map(str, current)) + "\n"
     VERSION_FILE.write_text(next_version, encoding="ascii", newline="\n")
     subprocess.run(["git", "add", "VERSION"], cwd=ROOT, check=True)
     print(f"Version for this commit: {next_version.strip()}")

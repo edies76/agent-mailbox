@@ -10,7 +10,7 @@ bounded assignment, and bring the answer back to the exact chat that asked.
 
 A self-hosted HTTP + MCP coordination server with one address, token and private inbox per native
 chat. Profiles group a logical agent; capability cards describe useful tools and expertise.
-The version lives in [VERSION](VERSION); each commit advances the patch by one.
+The version lives in [VERSION](VERSION); patch releases advance the patch by one, and agreed product/breaking milestones may bump the minor or major component.
 
 **Every person/team deploys their own server and URL. This repository is not a public hosted mailbox.**
 All agents on one instance share a discoverable directory. The operator's dashboard can inspect
@@ -44,6 +44,8 @@ recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 | Task-start / task-end instructions | [Persistent instructions](docs/AGENT-INSTRUCTIONS.md) | `/guide/instructions`, `/agent-instructions.md` |
 | Master agent entry point and local bank | [Master prompt](docs/AGENT-MAILBOX-MASTER-PROMPT.md) | `/guide/start`, `/agent-bank.md`, `/workflow` |
 | Named control keys and roles | [Access & security](docs/SECURITY-ACCESS.md) | `/guide/security` |
+| Password sessions and agent connection tokens | [Accounts and sessions](docs/ACCOUNTS-AND-SESSIONS.md) | `/guide/accounts` |
+| How to contribute code, adapters, docs and compatibility reports | [CONTRIBUTING](CONTRIBUTING.md) | GitHub |
 | Your own deployment | [DEPLOYMENT](DEPLOYMENT.md) | `/guide/deployment` |
 | Changes | [CHANGELOG](CHANGELOG.md) | `/guide/changelog` |
 
@@ -64,6 +66,15 @@ Open `http://127.0.0.1:8795`. The ignored `.local/` directory contains your serv
 DB is under `data/`. Keep them private and backed up. For production HTTPS + durable Firestore use
 [the deployment guide](DEPLOYMENT.md). Existing agent IDs/tokens remain compatible after upgrading;
 SQLite metadata columns are migrated automatically and older Firestore messages receive defaults.
+
+On a new deployment, open `/dashboard` and create the first owner login with `MAILBOX_ADMIN_KEY`
+once. Then use the username/password session to create agent identities and download one private
+HTTP/MCP connection file per chat. The owner key stays server-side as a break-glass credential;
+never send it to an agent. See the [account and token guide](docs/ACCOUNTS-AND-SESSIONS.md).
+
+Contributions are welcome. Add an adapter for a documented host event, verify an agent/version
+combination, improve a setup guide, or strengthen a routing/security test. Read
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the local test command and safe contribution rules.
 
 ## Two ZCode chats asking one Codex instance
 
@@ -125,6 +136,9 @@ persistent instructions enforce checks during available turns, not while a proce
 | GET | `/agents/discover?q=REA&capability=Android&online=true` | Search peer descriptions and capability/tool tags |
 | PATCH | `/agents/me` | Update this instance's public peer card |
 | GET, POST, DELETE | `/agents/me/api-keys`, `/agents/me/api-keys/ID` | List, issue and revoke named MCP/HTTP keys |
+| GET, POST | `/auth/status`, `/auth/setup`, `/auth/login`, `/auth/session` | Initial owner setup and password-based web session |
+| POST | `/auth/password`, `/auth/logout`, `/auth/recover` | Change password, end session, or recover with the owner emergency key |
+| GET, POST, DELETE | `/dashboard/accounts`, `/dashboard/accounts/ID` | Owner-managed operator/observer username-password accounts |
 | DELETE | `/agents/me`, `/agents/ID` | Self retirement or operator removal |
 | GET | `/dashboard/data` | Owner/operator traffic view; observer receives redacted routes and metrics |
 | GET, POST | `/dashboard/users` | Owner-only named control accounts; generated key displayed once |

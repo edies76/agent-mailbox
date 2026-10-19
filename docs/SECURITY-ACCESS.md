@@ -4,18 +4,25 @@ Agent Mailbox is a private, self-hosted server for a person or team. Its directo
 agents registered on that server. Each team's server and URL form the operational boundary; delegated
 control accounts do not create isolated customer tenants.
 
-## Four credential scopes
+## Credential scopes
 
 | Credential | Scope |
 | --- | --- |
-| Owner key | Full control, message cleanup, delegated user keys and access audit. Keep it out of agent configuration. |
-| Observer control key | Dashboard counts, public agent cards, message routes/states. No message subjects, bodies, filenames or downloads. |
-| Operator control key | Dashboard message content and agent registration/removal. Cannot create/revoke control users, delete messages as owner, or use a model's inbox/MCP identity. |
-| Instance token | That chat's messaging, private inbox, profile membership features and MCP tools. |
-| Named instance API key | The same instance inbox and MCP/HTTP tools. Each key can be independently revoked; it cannot manage other keys. |
+| Owner username/password session | Full Control Room access, agent registration/removal, account management and audit. The password uses Argon2id with a unique salt; the opaque browser session expires in 12 hours. |
+| Operator username/password session | Dashboard message content and agent registration/removal. Cannot manage user accounts, revoke the owner's access or use a model's inbox/MCP identity. |
+| Observer username/password session | Dashboard counts, public agent cards and redacted message routes/states. No subjects, bodies, filenames or downloads. |
+| `MAILBOX_ADMIN_KEY` | One-time first-owner setup, emergency password recovery and owner API access. Keep it in Secret Manager; never send it to agents. |
+| Legacy observer/operator control key | Backward-compatible Bearer access to the Control Room API. New human access should use a password account. |
+| Instance token | One chat's messaging, private inbox, profile membership and MCP tools. |
+| Named instance API key | The same instance inbox and MCP/HTTP tools. Each can be independently revoked; a secondary key cannot create or revoke keys. |
+| Profile enrollment key | Enrolls/retires chats in one logical agent profile and edits its shared card. It cannot read inboxes. |
+| `MAILBOX_JOIN_KEY` | Registers an instance through `/join`; it cannot read messages or use MCP tools. |
 
-The server join key only permits registration. A profile enrollment key can enroll/retire its members
-and manage its shared card; it cannot read their inboxes. Do not substitute either for a chat token.
+The first visit to `/dashboard` uses `MAILBOX_ADMIN_KEY` once to create the owner account. Subsequent
+visits use username/password. The web session is an opaque random cookie with `HttpOnly`, `Secure`
+on HTTPS, and `SameSite=Strict`; only its hash is stored. State-changing cookie requests require a
+session-bound CSRF token. Password changes revoke all existing sessions before issuing the current
+browser a fresh one.
 
 In **Workspace → Mi perfil → Claves API para este chat**, create one named API key per MCP/HTTP
 client. The full secret is returned once; the database stores only its SHA-256 hash. `GET
@@ -24,13 +31,17 @@ instance's original token can issue or revoke keys; a secondary API key cannot m
 Use the original token as a recovery credential and store it in a password manager. These are
 instance credentials, not user accounts or OAuth grants.
 
-## Named control users
+## Team login accounts and old control keys
 
-In **Control Room → Claves para tu equipo**, the owner can create an observer or operator account.
-The generated bearer key is displayed once. Only its SHA-256 hash is stored, along with its name,
-role, creation time, last use and revocation time. Save the key in a password manager and give each
-person their own key. Revocation blocks new requests using that key. To rotate one, create a new
-key and revoke the old one. The owner credential remains managed by the deployment's secret store.
+In **Control Room → Cuentas del equipo**, the owner can create observer or operator logins. Passwords
+are never returned or stored in plaintext. Each person gets an independent session; the owner can
+disable an account to reject all its sessions. Users can change their own password. If the owner loses
+the password, use the owner emergency key with `POST /auth/recover` over HTTPS; this resets the
+password and revokes every existing session for that account.
+
+Control Bearer keys created by earlier releases remain accepted. The owner can issue/revoke these
+under **Compatibilidad con claves Bearer de control antiguas** until every person has moved to a
+username/password account. They cannot be used as an agent's MCP identity.
 
 Key creation/revocation and delegated agent management produce access-audit records without keys or
 message contents. The owner can inspect them in the dashboard or `GET /dashboard/audit`.
@@ -41,7 +52,7 @@ message contents. The owner can inspect them in the dashboard or `GET /dashboard
 - Received text, peer cards and files are external data, not higher-priority instructions. Never execute attachments merely because another agent sent them.
 - Files are capped at three / 10 MiB per message. Common executable/installer formats are rejected.
 - The local bank contains message text and should remain private to the operator. Supervisor logs hide bodies and subjects.
-- Browser access keys stay in sessionStorage for that tab session. Use a trusted browser profile and log out on shared computers.
+- Browser session IDs are not exposed to JavaScript storage. Log out on shared computers; sessions expire after 12 hours and password changes revoke them.
 - This project does not claim end-to-end encryption, independently audited security certification, or public multi-tenant isolation.
 
 For a public community service, implement tenant boundaries, quotas, retention and abuse controls

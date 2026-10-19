@@ -1,7 +1,6 @@
 (() => {
   const byId = id => document.getElementById(id);
-  const keyName = 'agent-mailbox-dashboard-key';
-  let accessKey = sessionStorage.getItem(keyName) || '';
+  let currentUser = null;
   let timer;
   let view = null;
   let newAgentAccess = null;
@@ -21,16 +20,29 @@
   function el(tag, cls, text) {
     const node=document.createElement(tag); if(cls)node.className=cls; if(text!==undefined)node.textContent=text; return node;
   }
+  function csrfCookie(){
+    const item=document.cookie.split('; ').find(value=>value.startsWith('__Host-agent-mailbox-csrf=')||value.startsWith('agent-mailbox-csrf='));
+    return item?decodeURIComponent(item.slice(item.indexOf('=')+1)):'';
+  }
   async function api(path,method='GET',body) {
-    const response=await fetch(path,{method,headers:{Authorization:`Bearer ${accessKey}`,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,cache:'no-store'});
+    const headers={...(body?{'Content-Type':'application/json'}:{})};
+    if(!['GET','HEAD','OPTIONS'].includes(method))headers['X-CSRF-Token']=csrfCookie();
+    const response=await fetch(path,{method,headers,body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'same-origin'});
     const data=await response.json(); if(!response.ok){const error=new Error(typeof data.detail==='string'?data.detail:`HTTP ${response.status}`);error.status=response.status;throw error;} return data;
+  }
+  async function showLogin(){
+    clearInterval(timer);currentUser=null;
+    try{const status=await api('/auth/status');byId('setup-form').hidden=!status.setup_required;byId('login-form').hidden=status.setup_required;}
+    catch{byId('setup-form').hidden=true;byId('login-form').hidden=false;}
+    byId('login').hidden=false;byId('connection').textContent='Inicia sesión';
   }
   async function load() {
     try {
-      const data=await api('/dashboard/data'); view=data; render(data); byId('login').hidden=true; byId('connection').textContent='Conectado';
-      if(data.permissions.can_manage_users)loadControlUsers(); else byId('key-panel').hidden=true;
+      const session=await api('/auth/session');currentUser=session.user;
+      const data=await api('/dashboard/data'); view=data; render(data); byId('login').hidden=true; byId('connection').textContent=`Conectado · ${currentUser.username}`;
+      if(data.permissions.can_manage_users){loadAccounts();loadLegacyControlUsers();} else byId('key-panel').hidden=true;
     } catch(error) {
-      if([401,403].includes(error.status)){sessionStorage.removeItem(keyName);accessKey='';clearInterval(timer);byId('login').hidden=false;byId('connection').textContent='Clave requerida';}
+      if(error.status===401){await showLogin();}
       else {byId('connection').textContent='Sin conexión';byId('admin-error').textContent=error.message;}
     }
   }
@@ -82,24 +94,35 @@
     }
   }
   async function deleteMessage(message){if(!await confirmAction(`Eliminar el mensaje ${message.id} para ambos agentes y borrar los adjuntos.`,'Eliminar definitivamente'))return;try{await api(`/messages/${encodeURIComponent(message.id)}`,'DELETE');await load();}catch(error){byId('admin-error').textContent=`No se pudo eliminar el mensaje ${message.id}: ${error.message}`;}}
-  async function loadControlUsers(){
-    try{const data=await api('/dashboard/users');const list=byId('key-list');list.replaceChildren();byId('key-count').textContent=`${data.users.length} claves`;
-      if(!data.users.length)list.append(el('div','empty','Aún no hay claves delegadas.'));
-      for(const user of data.users){const row=el('article','key-row');const info=el('div','key-row-info');info.append(el('strong','',user.name),el('span','pill',user.role==='operator'?'Operador':'Observador'),el('small','',user.revoked_at?`Revocada ${fmtTime(user.revoked_at)}`:`Último uso: ${fmtTime(user.last_seen)}`));row.append(info);if(!user.revoked_at){const revoke=el('button','remove-agent','Revocar');revoke.type='button';revoke.onclick=()=>revokeUser(user);row.append(revoke);}list.append(row);}
-      const audit=byId('key-audit');audit.replaceChildren();for(const event of data.audit){audit.append(el('div','audit-entry',`${fmtTime(event.created_at)} · ${event.action} · ${event.target_id}`));}
-    }catch(error){byId('key-status').textContent=`No se pudieron cargar las claves: ${error.message}`;}
+  async function loadAccounts(){
+    try{const [data,auditData]=await Promise.all([api('/dashboard/accounts'),api('/dashboard/audit')]);const list=byId('key-list');list.replaceChildren();byId('key-count').textContent=`${data.accounts.filter(user=>!user.disabled_at).length} activas · ${data.accounts.length} total`;
+      if(!data.accounts.length)list.append(el('div','empty','Aún no hay cuentas de equipo.'));
+      for(const user of data.accounts){const row=el('article','key-row');const info=el('div','key-row-info');info.append(el('strong','',user.username),el('span','pill',user.role==='owner'?'Propietario':user.role==='operator'?'Operador':'Observador'),el('small','',user.disabled_at?`Desactivada ${fmtTime(user.disabled_at)}`:`Último acceso: ${fmtTime(user.last_login_at)}`));row.append(info);if(user.role!=='owner'&&!user.disabled_at){const disable=el('button','remove-agent','Desactivar');disable.type='button';disable.onclick=()=>disableAccount(user);row.append(disable);}list.append(row);}
+      const audit=byId('key-audit');audit.replaceChildren();for(const event of auditData.events){audit.append(el('div','audit-entry',`${fmtTime(event.created_at)} · ${event.action} · ${event.target_id}`));}
+    }catch(error){byId('key-status').textContent=`No se pudieron cargar las cuentas: ${error.message}`;}
   }
-  async function revokeUser(user){if(!await confirmAction(`Revocar permanentemente la clave de ${user.name}.`,'Revocar clave'))return;try{await api(`/dashboard/users/${encodeURIComponent(user.id)}`,'DELETE');await loadControlUsers();}catch(error){byId('admin-error').textContent=error.message;}}
+  async function disableAccount(user){if(!await confirmAction(`Desactivar la cuenta de ${user.username}. Sus sesiones dejarán de funcionar.`,'Desactivar cuenta'))return;try{await api(`/dashboard/accounts/${encodeURIComponent(user.id)}`,'DELETE');await loadAccounts();}catch(error){byId('admin-error').textContent=error.message;}}
+  async function loadLegacyControlUsers(){
+    try{const data=await api('/dashboard/users'),list=byId('legacy-key-list');list.replaceChildren();byId('legacy-key-count').textContent=`${data.users.length} claves`;
+      if(!data.users.length)list.append(el('div','empty','No quedan claves Bearer heredadas.'));
+      for(const user of data.users){const row=el('article','key-row'),info=el('div','key-row-info');info.append(el('strong','',user.name),el('span','pill',user.role==='operator'?'Operador':'Observador'),el('small','',user.revoked_at?`Revocada ${fmtTime(user.revoked_at)}`:`Último uso: ${fmtTime(user.last_seen)}`));row.append(info);if(!user.revoked_at){const revoke=el('button','remove-agent','Revocar');revoke.type='button';revoke.onclick=()=>revokeLegacyControlKey(user);row.append(revoke);}list.append(row);}
+    }catch(error){byId('legacy-key-status').textContent=`No se pudieron cargar claves antiguas: ${error.message}`;}
+  }
+  async function revokeLegacyControlKey(user){if(!await confirmAction(`Revocar la clave Bearer de ${user.name}.`,'Revocar clave'))return;try{await api(`/dashboard/users/${encodeURIComponent(user.id)}`,'DELETE');await loadLegacyControlUsers();}catch(error){byId('admin-error').textContent=error.message;}}
   byId('new-agent').onclick=()=>{newAgentAccess=null;byId('new-agent-form').reset();byId('new-agent-result').hidden=true;byId('new-agent-status').textContent='';byId('register-agent-button').disabled=false;byId('new-agent-dialog').showModal();};
   byId('close-new-agent').onclick=()=>byId('new-agent-dialog').close();
   byId('new-agent-dialog').addEventListener('close',()=>{newAgentAccess=null;byId('new-agent-access').value='';byId('new-agent-result').hidden=true;});
-  byId('new-agent-form').addEventListener('submit',async event=>{event.preventDefault();const button=byId('register-agent-button');button.disabled=true;try{const result=await api('/agents','POST',{name:byId('new-agent-name').value,kind:byId('new-agent-kind').value,project:byId('new-agent-project').value,description:byId('new-agent-description').value,capabilities:byId('new-agent-caps').value.split(',').map(v=>v.trim()).filter(Boolean)});newAgentAccess={url:location.origin,agent_id:result.agent.id,token:result.token};byId('new-agent-access').value=JSON.stringify(newAgentAccess,null,2);byId('new-agent-result').hidden=false;byId('new-agent-status').textContent='Instancia registrada. Guarda el acceso antes de cerrar.';await load();}catch(error){byId('new-agent-status').textContent=error.message;button.disabled=false;}});
+  byId('new-agent-form').addEventListener('submit',async event=>{event.preventDefault();const button=byId('register-agent-button');button.disabled=true;try{const result=await api('/agents','POST',{name:byId('new-agent-name').value,kind:byId('new-agent-kind').value,project:byId('new-agent-project').value,description:byId('new-agent-description').value,capabilities:byId('new-agent-caps').value.split(',').map(v=>v.trim()).filter(Boolean)});newAgentAccess={url:location.origin,mcp_url:`${location.origin}/mcp`,transport:'streamable-http',agent_id:result.agent.id,token:result.token};byId('new-agent-access').value=JSON.stringify(newAgentAccess,null,2);byId('new-agent-result').hidden=false;byId('new-agent-status').textContent='Instancia y token HTTP/MCP listos. El token se muestra solo en este archivo privado.';await load();}catch(error){byId('new-agent-status').textContent=error.message;button.disabled=false;}});
   byId('save-agent-access').onclick=()=>{if(!newAgentAccess)return;const url=URL.createObjectURL(new Blob([JSON.stringify(newAgentAccess,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='agent-mailbox-instance-private.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-  byId('key-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;byId('key-status').textContent='';byId('key-once').hidden=true;try{const result=await api('/dashboard/users','POST',{name:byId('key-user-name').value,role:byId('key-user-role').value});byId('new-key-value').textContent=result.access_key;byId('key-once').hidden=false;byId('key-user-name').value='';byId('key-status').textContent='La clave solo se muestra ahora; guárdala en un gestor seguro.';await loadControlUsers();}catch(error){byId('key-status').textContent=error.message;}finally{button.disabled=false;}});
-  byId('copy-new-key').onclick=async()=>{try{await navigator.clipboard.writeText(byId('new-key-value').textContent);byId('copy-key-status').textContent='Clave copiada.';}catch{byId('copy-key-status').textContent='No se pudo copiar; selecciona la clave manualmente.';}};
+  byId('account-form').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button');button.disabled=true;byId('key-status').textContent='Creando cuenta…';try{const result=await api('/dashboard/accounts','POST',{username:byId('account-user-name').value,password:byId('account-user-password').value,role:byId('account-user-role').value});byId('account-user-password').value='';byId('key-status').className='status success';byId('key-status').textContent=`Cuenta ${result.username} creada. Entrará con la contraseña que acabas de asignar.`;await loadAccounts();}catch(error){byId('key-status').className='status error';byId('key-status').textContent=error.message;}finally{button.disabled=false;}});
+  byId('legacy-key-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;try{const result=await api('/dashboard/users','POST',{name:byId('legacy-key-name').value,role:byId('legacy-key-role').value});byId('legacy-key-value').textContent=result.access_key;byId('legacy-key-once').hidden=false;byId('legacy-key-name').value='';byId('legacy-key-status').textContent='Clave creada y visible una sola vez.';await loadLegacyControlUsers();}catch(error){byId('legacy-key-status').textContent=error.message;}finally{button.disabled=false;}});
+  byId('change-password').onclick=()=>{byId('password-status').textContent='';byId('password-form').reset();byId('password-dialog').showModal();};
+  byId('password-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;const status=byId('password-status');try{await api('/auth/password','POST',{current_password:byId('current-password').value,new_password:byId('new-password').value});event.currentTarget.reset();status.className='status success';status.textContent='Contraseña actualizada. Se cerraron las demás sesiones.';await load();}catch(error){status.className='status error';status.textContent=error.message;}finally{button.disabled=false;}});
+  document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>byId(button.dataset.close).close()));
   byId('agent-filter').addEventListener('input',()=>view&&renderAgents(view.agents,view.permissions));byId('agent-state').addEventListener('change',()=>view&&renderAgents(view.agents,view.permissions));byId('event-filter').addEventListener('change',()=>view&&renderMessages(view.messages,view.agents,view.permissions));
-  byId('login-form').addEventListener('submit',async event=>{event.preventDefault();byId('login-error').textContent='';accessKey=byId('key').value.trim();sessionStorage.setItem(keyName,accessKey);byId('key').value='';await load();if(byId('login').hidden){clearInterval(timer);timer=setInterval(load,15000);}else byId('login-error').textContent='La clave no es válida o ha sido revocada.';});
-  byId('logout').addEventListener('click',()=>{clearInterval(timer);sessionStorage.removeItem(keyName);accessKey='';view=null;byId('new-key-value').textContent='';byId('key-once').hidden=true;byId('login').hidden=false;byId('connection').textContent='Clave requerida';});
+  byId('login-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;byId('login-error').textContent='';try{await api('/auth/login','POST',{username:byId('account-username').value,password:byId('account-password').value});byId('account-password').value='';await load();if(byId('login').hidden){clearInterval(timer);timer=setInterval(load,15000);}}catch(error){byId('login-error').textContent=error.message;}finally{button.disabled=false;}});
+  byId('setup-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;byId('setup-error').textContent='';try{await api('/auth/setup','POST',{setup_key:byId('setup-key').value,username:byId('setup-username').value,password:byId('setup-password').value});byId('setup-key').value='';byId('setup-password').value='';await load();if(byId('login').hidden){clearInterval(timer);timer=setInterval(load,15000);}}catch(error){byId('setup-error').textContent=error.message;}finally{button.disabled=false;}});
+  byId('logout').addEventListener('click',async()=>{try{await api('/auth/logout','POST',{});}catch{}view=null;await showLogin();});
   let resizeFrame;new ResizeObserver(()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(()=>view&&renderMessages(view.messages,view.agents,view.permissions));}).observe(byId('map'));
-  if(accessKey)load().then(()=>{if(byId('login').hidden)timer=setInterval(load,15000);});else byId('login').hidden=false;
+  load().then(()=>{if(byId('login').hidden)timer=setInterval(load,15000);});
 })();

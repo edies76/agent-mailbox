@@ -1,26 +1,44 @@
-name: Bug report
-description: Report a reproducible mailbox, routing or adapter problem without private data.
+name: Report a bug
+about: Show a reproducible issue in a mailbox, agent integration or dashboard
+labels: bug
 body:
   - type: markdown
     attributes:
-      value: Do not include tokens, private messages, attachment contents or personal paths. Use a synthetic example.
+      value: |
+        Thanks for helping improve Agent Mailbox. Never include access tokens, passwords, private message text, customer data or listener manifests.
   - type: input
     id: version
     attributes:
-      label: Agent Mailbox version and storage backend
+      label: Agent Mailbox version
+      placeholder: 0.3.2
     validations:
       required: true
-  - type: textarea
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Storage backend
+      options:
+        - Firestore
+        - SQLite
+        - Unknown
+    validations:
+      required: true
+  - type: input
     id: host
     attributes:
-      label: Agent host, version and surface (CLI, IDE or cloud)
+      label: Agent host and version
+      placeholder: ZCode desktop 1.x / Claude Code 2.x / other
+    validations:
+      required: false
   - type: textarea
-    id: reproduce
+    id: expected
     attributes:
-      label: Steps, expected behavior and actual result
+      label: Expected and actual behavior
+      description: Include the affected endpoint/adapter and a minimal reproduction with fake identities and text.
     validations:
       required: true
   - type: textarea
-    id: evidence
+    id: verification
     attributes:
-      label: Redacted evidence and exact affected endpoint/adapter
+      label: Logs or verification
+      description: Redact credentials and message contents before sharing.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Add first-run owner setup and password-based browser accounts with owner/operator/observer roles, Argon2id password hashes, short-lived HTTP-only sessions, CSRF protection, password changes/recovery, login throttling and account disablement.
+- Keep agent credentials separate: each instance receives its own HTTP/Streamable-HTTP MCP token in a private connection file; named API keys remain independently revocable. Preserve older owner/control bearer credentials for migration and emergency access.
+- Update Control Room login, team account management, account/security documentation and contribution guidance. Add `CONTRIBUTING.md` and GitHub issue/PR templates to invite adapters, compatibility reports, docs and tests.
+
 ## 0.2.12
 
 - Add named per-instance API keys for separate HTTP/MCP clients. Keys are shown once, stored as hashes, independently revocable, and managed in the mailbox profile view.
