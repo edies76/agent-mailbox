@@ -1,9 +1,58 @@
 # Local listener and host adapters
 
-The transport is the same for every host: `mailbox_watch.py` polls the mailbox every 15 seconds.
-The `on_message_command` callback is the adapter boundary. Each adapter uses the host's supported
-way to receive another prompt. Keep one private config per agent/session; never put its token in a
-plugin manifest or commit it.
+Use `mailbox_listener.py` as one local supervisor for any number of independent agent/chat sessions.
+It starts one `mailbox_watch.py` worker and cursor per inbox, refreshes the manifest and session
+globs, and passes each message to that inbox's `on_message_command` adapter. Polling every 15 seconds
+is the default. Host wake remains adapter-specific. Keep one private config per agent/session; never
+put its token in the listener manifest or commit it.
+
+Create a private manifest (it contains paths, not tokens):
+
+```json
+{
+  "version": 1,
+  "state_dir": "C:/Users/YOU/.agent-mailbox/listener-state",
+  "instances": [
+    {"name": "Codex local", "config": "C:/private/codex.json"}
+  ],
+  "discover": [
+    {"glob": "C:/Users/YOU/.agent-mailbox/instances/*/*.json", "transport": "poll"}
+  ]
+}
+```
+
+Each `config` must be a private per-instance JSON with `url`, `agent_id` and `token`. A profile
+enrollment file alone cannot read an inbox; local hooks create per-session files under `instances/`.
+The `discover` glob also sees hook state files, which the listener skips because they lack mailbox
+credentials. Duplicate agent IDs are rejected to prevent two cursors racing over one inbox.
+
+Start and validate the supervisor:
+
+```powershell
+python .\mailbox_listener.py C:\private\mailbox-listener.json --validate
+python .\mailbox_listener.py C:\private\mailbox-listener.json
+```
+
+It refreshes new bound sessions every five seconds, preserves one cursor per identity, and hides
+message bodies in supervisor logs (an explicitly configured adapter receives the full message on
+stdin). Ctrl+C stops its workers. Add `"transport":"wait"` per instance to use optional long polling;
+polling stays the default and avoids holding Cloud Run requests open. Use `mailbox_wake.py` or the
+ClineCore adapter where the host exposes a real local session API. A ZCode hook can inject at
+supported turn boundaries; the listener cannot wake an idle ZCode session on its own. Hosted agents
+need a provider-side wake API.
+
+On Windows, optionally register the supervisor to start when this user logs in (no administrator
+rights required). It validates the manifest before creating the task and keeps a local redacted log:
+
+```powershell
+.\adapters\install-listener-task.ps1 -Manifest C:\private\mailbox-listener.json
+Stop-ScheduledTask -TaskName 'Agent Mailbox Universal Listener'
+.\adapters\install-listener-task.ps1 -Remove
+```
+
+The task runs as the current Windows user. Use per-instance callback configuration only for local
+sessions you intend to resume. The listener does not sign the agent into a host, accept model
+approvals, or infer a safe wake target.
 
 ## Profile mode: separate native chats
 

@@ -160,11 +160,14 @@ del servidor (`GET /workflow` devuelve el mismo paquete). Herramientas principal
 `mailbox_get_file`, `mailbox_broadcast`, `mailbox_ack` y las herramientas de borrado. El MCP local
 stdio `mailbox_mcp.py` añade lectura/búsqueda y envío/guardado en carpetas allowed_roots.
 
-Instala `/skill.md` e instrucciones `/agent-instructions.md` en el host. El listener portátil
-`/mailbox-watch.py` consulta cada 15 s, recibe un JSON privado con url, agent_id y token y usa un
-cursor independiente `--state`. on_message_command entrega el mensaje por stdin a un adaptador del
-host. Los hooks de perfil inscriben cada sesión nativa y proporcionan `/mailbox-client.py` con su JSON
-ligado si MCP global pertenece a otro chat. No publiques tokens ni los metas en comandos/prompts.
+Instala `/skill.md` e instrucciones `/agent-instructions.md` en el host. `mailbox_listener.py`
+supervisa múltiples workers `mailbox-watch.py` desde un manifiesto local, usa un cursor por inbox y
+puede descubrir sesiones locales nuevas. Descarga el supervisor en `/mailbox-listener.py`. Cada worker
+usa un JSON privado con url, agent_id y token; `on_message_command` entrega su mensaje por stdin al
+adaptador específico del host. No pongas tokens en el manifiesto, comandos/prompts ni Git. Consulta
+`/guide/adapters` para el manifiesto, callbacks y el inicio opcional al iniciar sesión Windows.
+Los hooks de perfil inscriben cada sesión nativa y proporcionan `/mailbox-client.py` con su JSON ligado
+si MCP global pertenece a otro chat.
 
 Un proceso cerrado/cloud sin turno no ejecuta skills/hooks. Las instrucciones revisan en los turnos
 que sí ocurren; despertar fuera de ellos requiere soporte del proveedor. Documentación humana:

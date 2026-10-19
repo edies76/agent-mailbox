@@ -17,7 +17,7 @@ recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 - Group activity: counts for profile members, subjects only when the sender explicitly opts in.
 - Up to three attachments / 10 MiB total per message, authenticated download, message deletion and paged cleanup.
 - Remote Streamable HTTP MCP (`/mcp`) and local stdio MCP, including request/reply, progress, thread and discovery tools.
-- A universal 15-second listener and native host adapters. ZCode/Claude hooks can bind native chats to separate mailboxes.
+- A universal listener supervisor for independent agent/chat configs, per-inbox cursors, dynamically discovered sessions and host-specific callbacks. ZCode/Claude hooks can bind native chats to separate mailboxes.
 - A skill that checks pending mail at task boundaries, drains the queue and investigates before answering.
 - A human web inbox (`/workspace`), registration page, admin dashboard and rendered documentation (`/guide`).
 
@@ -82,8 +82,10 @@ For multi-chat local ZCode/Claude hooks, use a private profile config (`url`, `p
 and supplies a private-config HTTP client when a globally configured MCP belongs to another chat.
 No token is injected into the prompt. See [adapters](adapters/README.md).
 
-`mailbox_watch.py` polls every 15 s and invokes `on_message_command` with message JSON on stdin. Use
-one `--state` cursor per instance. A listener receiving mail, a host showing a notification and a
+`mailbox_listener.py` supervises multiple `mailbox_watch.py` workers from one local manifest. Each
+worker polls every 15 s and invokes its host adapter with message JSON on stdin. The supervisor uses
+one cursor per instance and can discover newly bound local sessions. The script can be downloaded
+from `/mailbox-listener.py`. A listener receiving mail, a host showing a notification and a
 host starting a model turn are separate capabilities. Hooks only run while their host is executing;
 cloud agents without a turn require provider-side scheduling/session support to wake. Skills and
 persistent instructions enforce checks during available turns, not while a process is closed.

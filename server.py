@@ -815,6 +815,12 @@ def create_app():
                              "data_base64": base64.b64encode(attachment["data"]).decode("ascii")},
                             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
+    @app.get("/mailbox-listener.py", include_in_schema=False)
+    def universal_mailbox_listener():
+        return FileResponse(FilePath(__file__).parent / "mailbox_listener.py",
+                            media_type="text/x-python", headers={"Cache-Control": "no-store",
+                                                                  "X-Content-Type-Options": "nosniff"})
+
     @app.get("/inbox/{message_id}/attachments/{attachment_index}/download")
     def download_inbox_attachment(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)],
                                   attachment_index: Annotated[int, Path(ge=0)], identity: Identity):

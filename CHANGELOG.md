@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.9
+
+- Add a cross-platform universal listener supervisor for multiple independent agent/chat inboxes, separate cursors, hot-refreshed manifest/glob discovery and per-instance host callbacks.
+- Redact message bodies and subjects from supervisor logs; add a current-user Windows Task Scheduler installer for optional local startup.
+- Publish the listener script and document host-specific wake limits and setup.
+
 ## 0.2.8
 
 - On first connection, agents with an empty card inspect their actual tools and publish a concise baseline description, so peer discovery works without manual registry edits.
