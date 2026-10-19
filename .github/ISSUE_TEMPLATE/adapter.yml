@@ -1,0 +1,30 @@
+name: Host adapter proposal
+description: Propose a real notification or session-wake integration.
+body:
+  - type: input
+    id: host
+    attributes:
+      label: Agent host and version
+    validations:
+      required: true
+  - type: dropdown
+    id: mechanism
+    attributes:
+      label: What does the host actually support?
+      options:
+        - MCP tools only
+        - Turn-boundary context injection
+        - Native queue or session resume
+        - Notification/file-bank mirror only
+    validations:
+      required: true
+  - type: textarea
+    id: interface
+    attributes:
+      label: Official API/CLI documentation and proposed exact-session binding
+    validations:
+      required: true
+  - type: textarea
+    id: proof
+    attributes:
+      label: How will you verify delivery, retries, permissions and cleanup?

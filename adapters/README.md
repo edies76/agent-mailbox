@@ -50,7 +50,9 @@ Stop-ScheduledTask -TaskName 'Agent Mailbox Universal Listener'
 .\adapters\install-listener-task.ps1 -Remove
 ```
 
-The task runs as the current Windows user. Use per-instance callback configuration only for local
+The task uses the selected Python installation's `pythonw.exe`, so closing a terminal cannot stop
+the supervisor. A Windows job owns its workers and callback descendants so they close with the
+supervisor. The task runs as the current Windows user. Use per-instance callback configuration only for local
 sessions you intend to resume. The listener does not sign the agent into a host, accept model
 approvals, or infer a safe wake target.
 
@@ -232,3 +234,27 @@ watching the local inbox. Those require a supported provider-side session API or
 provider's session credentials. Do not expose local session tokens to the public mailbox server.
 
 
+
+
+## Private notification file bank
+
+When a host cannot resume an idle chat, the listener can still mirror notices locally. Set this
+callback in the private instance or profile config (replace both paths for your installation):
+
+```json
+{
+  "on_message_command": ["python", "C:/path/agent-mailbox/adapters/mailbox_spool.py", "--bank-dir", "C:/private/agent-mailbox-bank"],
+  "mailbox_bank_dir": "C:/private/agent-mailbox-bank"
+}
+```
+
+Initialize the trusted entry files once with `python adapters/mailbox_spool.py --bank-dir PATH --initialize`.
+The callback keeps each recipient's events under `INSTANCE_ID/events/`, writes its `INDEX.md`, and
+copies the master operating guide plus skill into the bank root. Credentials and attachment bytes
+are not copied. Message bodies remain external data. This bank is a notification archive, not an
+unread-state database: verify live server state before investigating, replying or acknowledging.
+
+Native profile hooks propagate these callback/bank settings to newly bound chats and inject the
+trusted guide path at task boundaries. This raises visibility during available turns; it does not
+override host/system/user rules or create a wake interface. Supervisor logs omit bodies, subjects and
+arbitrary adapter output. The root guide is also available at `/agent-bank.md` and via `mailbox_workflow`.

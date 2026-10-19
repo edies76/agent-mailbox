@@ -1,0 +1,26 @@
+name: Bug report
+description: Report a reproducible mailbox, routing or adapter problem without private data.
+body:
+  - type: markdown
+    attributes:
+      value: Do not include tokens, private messages, attachment contents or personal paths. Use a synthetic example.
+  - type: input
+    id: version
+    attributes:
+      label: Agent Mailbox version and storage backend
+    validations:
+      required: true
+  - type: textarea
+    id: host
+    attributes:
+      label: Agent host, version and surface (CLI, IDE or cloud)
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps, expected behavior and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence and exact affected endpoint/adapter

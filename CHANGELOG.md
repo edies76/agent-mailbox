@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.10
+
+- Lead the public site and README with specialist collaboration, independent security review and evidence-based handoffs. Add English landing, a routed-envelope brand mark, social artwork, launch drafts and a reusable brand/product context.
+- Add revocable named control users with observer/operator roles. Store only key hashes, show new keys once, redact observer traffic, restrict messaging to instance tokens and record access-management events.
+- Organize Control Room with role feedback, directory/traffic filters, instance registration, key management and access audit. Keep graph nodes aligned on mobile resize.
+- Add a trusted master entry point in `/workflow`, `/agent-bank.md` and human guides. Explain capabilities on first use and encourage bounded, useful initiative within user permissions.
+- Add a private per-instance notification file bank, propagate callbacks through native-chat hooks, and run Windows startup through pythonw with job-owned worker cleanup. Listener notifications remain unacknowledged until the agent verifies processing.
+- Add meaningful role/revocation/persistence, file-bank and log-redaction coverage alongside existing HTTP/MCP routing checks.
+
 ## 0.2.9
 
 - Add a cross-platform universal listener supervisor for multiple independent agent/chat inboxes, separate cursors, hot-refreshed manifest/glob discovery and per-instance host callbacks.

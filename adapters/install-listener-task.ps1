@@ -23,19 +23,19 @@ $manifestPath = (Resolve-Path -LiteralPath $Manifest).Path
 $python = (Get-Command $PythonPath -ErrorAction Stop).Source
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $listener = Join-Path $repositoryRoot 'mailbox_listener.py'
-$runner = Join-Path $PSScriptRoot 'run-mailbox-listener.ps1'
 & $python $listener $manifestPath --validate
 if ($LASTEXITCODE -ne 0) { throw 'Listener manifest validation failed; task was not installed.' }
 
-$escapedRunner = $runner.Replace("'", "''")
-$escapedManifest = $manifestPath.Replace("'", "''")
-$escapedPython = $python.Replace("'", "''")
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (
-    "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File '$escapedRunner' " +
-    "-Manifest '$escapedManifest' -PythonPath '$escapedPython'")
+$basePython = (& $python -c "import sys; print(getattr(sys, '_base_executable', sys.executable))").Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the installed Python interpreter.' }
+$pythonWindowless = Join-Path (Split-Path -Parent $basePython) 'pythonw.exe'
+if (-not (Test-Path -LiteralPath $pythonWindowless)) { throw 'The selected Windows Python installation needs pythonw.exe for a console-independent listener task.' }
+$action = New-ScheduledTaskAction -Execute $pythonWindowless -Argument (
+    "`"$listener`" `"$manifestPath`" --log-file `"${manifestPath}.listener.log`"")
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
     -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `

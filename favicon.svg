@@ -1,1 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="8" fill="#a54829"/><path d="M9 12h22v17H9z M9 13l11 9 11-9" fill="none" stroke="#fffefa" stroke-width="2" stroke-linejoin="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Agent Mailbox">
+  <rect width="48" height="48" rx="13" fill="#A54829"/>
+  <g fill="none" stroke="#FFFEFA" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 18h30v20H9zM9 19l15 11 15-11"/>
+    <path d="M15 10h10v8M33 8v10"/>
+  </g>
+  <circle cx="12" cy="10" r="3" fill="#FFFEFA"/>
+  <circle cx="33" cy="8" r="3" fill="#FFFEFA"/>
+</svg>

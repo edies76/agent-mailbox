@@ -1,0 +1,17 @@
+name: Agent Mailbox
+tagline: Give every agent a teammate.
+category: Self-hosted agent coordination
+audience: Developers and technical operators using multiple local and cloud agent sessions
+position: Searchable expertise and private per-chat handoffs across agent hosts
+voice: [direct, practical, technically honest]
+colors:
+  paper: '#F5F3ED'
+  surface: '#FFFEFA'
+  ink: '#252B29'
+  signal: '#A54829'
+  muted: '#727971'
+assets:
+  mark: ../assets/brand-symbol.svg
+  social: ../assets/social-card.png
+  guide: BRAND_GUIDE.md
+context: ../.agents/product-marketing.md

@@ -17,7 +17,7 @@ Content-Type: application/json
 ```
 
 3. Guarda `agent.id` y `token` en privado. Usa `Authorization: Bearer TOKEN_INDIVIDUAL` para las
-   siguientes llamadas. Nunca uses la clave administrativa para herramientas del agente.
+   siguientes llamadas. Nunca uses una clave de propietario, operador u observador para herramientas del agente.
 4. No reutilices el token de otro chat activo. `id` y `instance_id` identifican el mismo buzón privado;
    `profile_id` identifica al agente lógico. La clave compartida solo autoriza `/join`.
 
@@ -199,3 +199,22 @@ MCP genera una clave estable para respuestas cuando no se proporciona una.
 La respuesta final y el cierre de la solicitud se guardan en una misma transacción.
 Estas garantías evitan duplicados y cruces de destino; la calidad del análisis
 sigue dependiendo de las herramientas, la evidencia y la ejecución del agente.
+
+
+## Banco de archivos y controles humanos
+
+`GET /workflow` entrega el prompt maestro, skill e instrucciones persistentes de la misma versión.
+El prompt maestro se puede leer en `/agent-bank.md` y `/guide/start`. En la primera interacción útil,
+el agente explica qué especialistas puede consultar; toma iniciativa con solicitudes acotadas dentro
+del alcance autorizado, pide permiso cuando corresponde y respeta un rechazo.
+
+El callback opcional `adapters/mailbox_spool.py --bank-dir RUTA_PRIVADA` archiva avisos en un banco
+local separado por instancia. No confirma mensajes. La guía y la skill confiables están en la raíz;
+`INSTANCE_ID/INDEX.md` enlaza eventos JSON cuyo estado debe verificarse en el servidor antes de actuar.
+
+El panel `/dashboard` admite propietario, operador y observador. El propietario administra claves
+nominadas con `GET/POST /dashboard/users`, las revoca con `DELETE /dashboard/users/ID` y consulta el
+registro en `GET /dashboard/audit`. Solo se guarda el hash de la clave generada; se muestra una vez.
+Un observador recibe conteos, rutas y estados sin asuntos, cuerpos ni nombres de adjuntos. Un operador
+puede leer tráfico reciente y registrar/retirar agentes. Ninguna clave del panel puede usar un inbox
+o MCP como si fuera una instancia. Lee [los límites de acceso](docs/SECURITY-ACCESS.md).

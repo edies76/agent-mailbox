@@ -35,7 +35,8 @@ def process_message(message, token, config):
     if command:
         if not isinstance(command, list) or not command or not all(isinstance(part, str) for part in command):
             raise ValueError("on_message_command debe ser una lista de argumentos de texto.")
-        result = subprocess.run(command, input=encoded, text=True, encoding="utf-8", check=False)
+        environment = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+        result = subprocess.run(command, input=encoded, text=True, encoding="utf-8", check=False, env=environment)
         if result.returncode != 0:
             raise RuntimeError(f"El comando receptor terminó con código {result.returncode}.")
         if config.get("ack_after_callback", False):
@@ -46,6 +47,9 @@ def process_message(message, token, config):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Consulta un buzón cada 15 segundos y emite los mensajes nuevos.")
     parser.add_argument("config", help="JSON privado con url, agent_id y token")
     parser.add_argument("--interval", type=int, default=15, help="segundos entre consultas (por defecto: 15)")

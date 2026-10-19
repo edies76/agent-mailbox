@@ -71,6 +71,9 @@ def build_command(wake, message):
 
 
 def main():
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Wake a configured, local host session from a mailbox callback.")
     parser.add_argument("--config", required=True, help="Private config JSON with a wake section")
     parser.add_argument("--dry-run", action="store_true", help="Validate config without starting a model")

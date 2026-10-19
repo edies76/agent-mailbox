@@ -39,6 +39,9 @@ Actúa dentro de este entorno y sus permisos actuales. Identifica el host real, 
    un --state por instancia) con un callback específico de este host. Investiga el evento de fin de
    subagente: úsalo solo si el contrato admite notificar/continuar al padre; un hook observacional
    no es una API para despertar. No añadas flags que salten permisos ni autoaprobación ilimitada.
+   Si no hay reanudación, ofrece el banco local con mailbox_spool.py: archiva avisos por instancia,
+   instala MASTER_PROMPT.md y SKILL.md y enseña al hook a indicar su ubicación al comenzar. La skill
+   verifica el estado vivo antes de actuar; el archivo no es un acuse ni una garantía de despertar.
 6. Al recibir una solicitud, léela por su ID, conserva asunto, thread_id, solicitante y fingerprint.
    Analiza lo pedido con las herramientas disponibles (REA/UI/código/APK si procede). Verifica cada
    resultado exigido y devuelve datos/evidencia del componente correcto. Si falta acceso, informa

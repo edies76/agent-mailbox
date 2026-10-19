@@ -10,13 +10,14 @@ import threading
 import secrets
 import time
 import unicodedata
+from html import escape
 from contextvars import Token
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
 from typing import Annotated, Literal
 from uuid import uuid4, uuid5, UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Path, Query
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, Response, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, AliasChoices, ValidationError, field_validator
@@ -62,6 +63,12 @@ class AgentCardPatch(BaseModel):
 
 class ProfileCardPatch(AgentCardPatch):
     pass
+
+
+class ControlUserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    name: str = Field(min_length=2, max_length=80)
+    role: Literal["observer", "operator"] = "observer"
 
 
 class Attachment(BaseModel):
@@ -197,6 +204,16 @@ def create_app():
 
     app = FastAPI(title="Agent Mailbox", version=APP_VERSION, lifespan=lifespan,
                   description="Registro, presencia y buzones HTTP compartidos para agentes.")
+
+    @app.middleware("http")
+    async def private_response_headers(request, call_next):
+        response = await call_next(request)
+        if request.headers.get("authorization") or request.url.path.startswith("/dashboard/"):
+            response.headers["Cache-Control"] = "no-store"
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
+
     wait_slots = threading.BoundedSemaphore(12)
 
     def wait_mail(identifier, after_id, timeout):
@@ -221,15 +238,18 @@ def create_app():
         ("/app.css", "app.css", "text/css"), ("/workspace.js", "workspace.js", "application/javascript"),
         ("/workspace", "workspace.html", "text/html"), ("/guide.js", "guide.js", "application/javascript"),
         ("/favicon.svg", "favicon.svg", "image/svg+xml"),
+        ("/brand-symbol.svg", "assets/brand-symbol.svg", "image/svg+xml"),
+        ("/social-card.png", "assets/social-card.png", "image/png"),
         ("/use-cases", "use-cases.html", "text/html"), ("/use-cases.js", "use-cases.js", "application/javascript"),
         ("/mailbox-client.py", "mailbox_client.py", "text/x-python"),
         ("/agent-instructions.md", "docs/AGENT-INSTRUCTIONS.md", "text/plain"),
+        ("/agent-bank.md", "docs/AGENT-MAILBOX-MASTER-PROMPT.md", "text/plain"),
     ]:
         app.add_api_route(url, public_file(filename, mime), methods=["GET"], include_in_schema=False)
 
     @app.get("/guide", include_in_schema=False)
     def guides_home():
-        return RedirectResponse("/guide/operations")
+        return RedirectResponse("/guide/overview")
 
     @app.get("/guide/{slug}", response_class=HTMLResponse, include_in_schema=False)
     def guide_page(slug: str):
@@ -379,15 +399,29 @@ def create_app():
             return {"admin": True}
         identifier = store.authenticate(hashlib.sha256(token.encode()).hexdigest())
         if identifier is None:
+            user = store.control_user_by_hash(hashlib.sha256(token.encode()).hexdigest())
+            if user:
+                return {"admin": False, "control_user": True, "id": user["id"],
+                        "name": user["name"], "role": user["role"]}
             raise HTTPException(401, "Invalid token", headers={"WWW-Authenticate": "Bearer"})
         return {"admin": False, "id": identifier}
 
     Identity = Annotated[dict, Depends(authenticate)]
 
     def agent_id(identity):
-        if identity["admin"]:
+        if identity["admin"] or identity.get("control_user"):
             raise HTTPException(403, "Use an agent token for messaging and presence")
         return identity["id"]
+
+    def can_manage_agents(identity):
+        return identity.get("admin", False) or (identity.get("control_user") and identity.get("role") == "operator")
+
+    def require_admin(identity):
+        if not identity.get("admin"):
+            raise HTTPException(403, "Only the owner key can manage operator accounts and audit records")
+
+    def control_user_view(row):
+        return {key: row.get(key) for key in ("id", "name", "role", "created_by", "created_at", "last_seen", "revoked_at")}
 
     def public_agent(row, now, profile=None):
         profile = profile or (store.profile_get(row.get("profile_id")) if row.get("profile_id") else {}) or {}
@@ -490,8 +524,9 @@ def create_app():
     def workflow_bundle():
         root = FilePath(__file__).parent
         return {"version": APP_VERSION, "skill": (root / "skills/agent-mailbox/SKILL.md").read_text(encoding="utf-8"),
+                "master_prompt": (root / "docs/AGENT-MAILBOX-MASTER-PROMPT.md").read_text(encoding="utf-8"),
                 "persistent_instructions": (root / "docs/AGENT-INSTRUCTIONS.md").read_text(encoding="utf-8"),
-                "guide_url": "/guide/operations", "scope": "task boundaries while the host has a model turn"}
+                "guide_url": "/guide/start", "scope": "task boundaries while the host has a model turn"}
 
     def reply_to(identifier, message_id, body):
         original = store.get_message(identifier, message_id)
@@ -526,14 +561,27 @@ def create_app():
                 "online_only": body.online_only, "kinds": sorted(wanted_kinds),
                 "messages": messages}
 
-    @app.get("/", include_in_schema=False)
-    def welcome():
-        return FileResponse(FilePath(__file__).parent / "connect.html", headers={
+    def marketing_page(filename, request):
+        origin = (os.environ.get("MAILBOX_PUBLIC_URL") or str(request.base_url)).rstrip("/")
+        content = (FilePath(__file__).parent / filename).read_text(encoding="utf-8-sig")
+        return HTMLResponse(content.replace("{{PUBLIC_ORIGIN}}", escape(origin, quote=True)), headers={
             "Cache-Control": "no-store",
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         })
+
+    @app.get("/", include_in_schema=False)
+    def welcome(request: Request):
+        return marketing_page("connect.html", request)
+
+    @app.get("/en", include_in_schema=False)
+    def welcome_english(request: Request):
+        return marketing_page("connect-en.html", request)
+
+    @app.get("/es", include_in_schema=False)
+    def welcome_spanish():
+        return RedirectResponse("/")
 
     @app.get("/dashboard", include_in_schema=False)
     def dashboard():
@@ -550,12 +598,54 @@ def create_app():
 
     @app.get("/dashboard/data")
     def dashboard_data(identity: Identity):
-        if not identity["admin"]:
-            raise HTTPException(403, "El panel requiere la clave administrativa")
+        if not identity["admin"] and not identity.get("control_user"):
+            raise HTTPException(403, "El panel requiere una clave de administración u operador")
         now = time.time()
         agents = directory_agents(now)
+        messages = store.recent_messages(15)
+        if identity.get("role") == "observer":
+            messages = [{key: row.get(key) for key in
+                         ("id", "from_agent_id", "to_agent_id", "created_at", "acknowledged_at",
+                          "thread_id", "status", "message_type", "attachment_count", "has_images", "has_files")}
+                        for row in messages]
+        permissions = {"is_admin": identity["admin"], "role": "owner" if identity["admin"] else identity.get("role"),
+                       "can_manage_agents": can_manage_agents(identity),
+                       "can_manage_users": identity["admin"], "can_read_message_content": identity["admin"] or identity.get("role") == "operator",
+                       "can_delete_messages": identity["admin"]}
         return {"stats": {**store.stats(now - online_seconds), "online_window_seconds": online_seconds},
-                "agents": agents, "messages": store.recent_messages(15), "updated_at": now}
+                "agents": agents, "messages": messages, "permissions": permissions, "updated_at": now}
+
+    @app.get("/dashboard/users")
+    def dashboard_users(identity: Identity):
+        require_admin(identity)
+        return {"users": [control_user_view(row) for row in store.all_control_users()],
+                "audit": store.control_audit(100)}
+
+    @app.post("/dashboard/users", status_code=201)
+    def create_dashboard_user(body: ControlUserCreate, identity: Identity):
+        require_admin(identity)
+        if sum(row.get("revoked_at") is None for row in store.all_control_users()) >= 100:
+            raise HTTPException(409, "Control-key limit reached; revoke an unused key first")
+        token = "amk_" + secrets.token_urlsafe(32)
+        row = dict(id=str(uuid4()), name=body.name, role=body.role,
+                   token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                   created_by="owner", created_at=time.time(), last_seen=None, revoked_at=None)
+        store.create_control_user(row)
+        return JSONResponse({"user": control_user_view(row), "access_key": token,
+                             "message": "This key is shown only once. Store it securely."},
+                            status_code=201, headers={"Cache-Control": "no-store"})
+
+    @app.delete("/dashboard/users/{user_id}")
+    def revoke_dashboard_user(user_id: str, identity: Identity):
+        require_admin(identity)
+        if not store.revoke_control_user(user_id):
+            raise HTTPException(404, "User key not found or already revoked")
+        return {"id": user_id, "revoked": True}
+
+    @app.get("/dashboard/audit")
+    def dashboard_audit(identity: Identity, limit: int = Query(100, ge=1, le=200)):
+        require_admin(identity)
+        return {"events": store.control_audit(limit)}
 
     @app.get("/connect.js", include_in_schema=False)
     def connection_script():
@@ -619,6 +709,7 @@ def create_app():
     def capabilities():
         return {"version": APP_VERSION, "profiles": True, "private_instance_inboxes": True,
                 "bound_replies": True, "transactional_final_reply": True, "idempotent_delivery": True,
+                "control_roles": ["owner", "operator", "observer"], "local_file_bank": True,
                 "peer_discovery": {"enabled": True, "agent_card_description_chars": 500,
                                    "capabilities_per_card": 20, "directory_scope": "authenticated agents on this server"},
                 "inbox_wait": {"enabled": True, "max_timeout_seconds": 25, "slots_per_process": 12,
@@ -629,9 +720,12 @@ def create_app():
 
     @app.post("/agents", status_code=201)
     def register(body: AgentRegistration, identity: Identity):
-        if not identity["admin"]:
-            raise HTTPException(403, "Registration requires the admin key")
-        return create_registration(body)
+        if not can_manage_agents(identity):
+            raise HTTPException(403, "Agent registration requires an owner or operator key")
+        result = create_registration(body)
+        if identity.get("control_user"):
+            store.record_control_event(identity["id"], "agent_registered", result["agent"]["id"])
+        return result
 
     @app.get("/stats")
     def stats(identity: Identity):
@@ -754,10 +848,12 @@ def create_app():
     def unregister_agent(identifier: Annotated[str, Path(min_length=1, max_length=100,
                                                           pattern=r"^[A-Za-z0-9_-]+$")],
                           identity: Identity):
-        if not identity["admin"]:
-            raise HTTPException(403, "Only the administrator can remove another agent")
+        if not can_manage_agents(identity):
+            raise HTTPException(403, "Only an owner or operator can remove another agent")
         if not store.unregister(identifier):
             raise HTTPException(404, "Agent not found")
+        if identity.get("control_user"):
+            store.record_control_event(identity["id"], "agent_removed", identifier)
         return {"id": identifier, "deleted": True,
                 "messages_and_attachments_deleted": True}
 

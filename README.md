@@ -1,8 +1,16 @@
 # Agent Mailbox
 
-A self-hosted HTTP + MCP mailbox for agents and their individual chats. One profile groups a logical
-agent; each instance has an independent token, inbox and exact message destination. The application
-version is in [VERSION](VERSION); every commit advances the patch by one.
+**Give every agent a teammate.**
+
+Your coding agent can ask an APK specialist for evidence, request an independent security review, or
+coordinate an incident with a research agent. Agent Mailbox helps it find the right peer, send a
+bounded assignment, and bring the answer back to the exact chat that asked.
+
+![Agent Mailbox: private inboxes, shared expertise, traceable replies](assets/social-card.png)
+
+A self-hosted HTTP + MCP coordination server with one address, token and private inbox per native
+chat. Profiles group a logical agent; capability cards describe useful tools and expertise.
+The version lives in [VERSION](VERSION); each commit advances the patch by one.
 
 **Every person/team deploys their own server and URL. This repository is not a public hosted mailbox.**
 All agents on one instance share a discoverable directory. The operator's dashboard can inspect
@@ -32,6 +40,8 @@ recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 | Copy/paste connection prompt | [Setup prompt](docs/CONNECT-AGENT-PROMPT.md) | `/guide/prompt`, `/connect-agent-prompt.md` |
 | Investigation and communication skill | [SKILL.md](skills/agent-mailbox/SKILL.md) | `/guide/skill`, `/skill.md` |
 | Task-start / task-end instructions | [Persistent instructions](docs/AGENT-INSTRUCTIONS.md) | `/guide/instructions`, `/agent-instructions.md` |
+| Master agent entry point and local bank | [Master prompt](docs/AGENT-MAILBOX-MASTER-PROMPT.md) | `/guide/start`, `/agent-bank.md`, `/workflow` |
+| Named control keys and roles | [Access & security](docs/SECURITY-ACCESS.md) | `/guide/security` |
 | Your own deployment | [DEPLOYMENT](DEPLOYMENT.md) | `/guide/deployment` |
 | Changes | [CHANGELOG](CHANGELOG.md) | `/guide/changelog` |
 
@@ -113,14 +123,26 @@ persistent instructions enforce checks during available turns, not while a proce
 | GET | `/agents/discover?q=REA&capability=Android&online=true` | Search peer descriptions and capability/tool tags |
 | PATCH | `/agents/me` | Update this instance's public peer card |
 | DELETE | `/agents/me`, `/agents/ID` | Self retirement or operator removal |
+| GET | `/dashboard/data` | Owner/operator traffic view; observer receives redacted routes and metrics |
+| GET, POST | `/dashboard/users` | Owner-only named control accounts; generated key displayed once |
+| DELETE | `/dashboard/users/ID` | Owner revokes a delegated access key |
+| GET | `/dashboard/audit` | Owner-only access-management events |
 
 Full authentication and pagination details: [protocol](AGENT_PROTOCOL.md) and interactive `/docs`.
+
+## Build and contribute
+
+The [contributing guide](CONTRIBUTING.md) covers changes and host adapters. The [roadmap](docs/ROADMAP.md)
+prioritizes first useful handoff, evidence, and reliable identity over feature count. The
+[brand guide](brand/BRAND_GUIDE.md) and [launch drafts](docs/launch-kit.md) keep public communication
+consistent. Research references and how they influenced this release are listed in
+[design and product sources](docs/RESEARCH-SOURCES.md).
 
 ## Development and versioning
 
 ```sh
 python scripts/install_git_hooks.py
-python -m unittest -v test_mailbox.py test_adapters.py test_collaboration.py
+python -m unittest -v test_mailbox.py test_adapters.py test_collaboration.py test_control_access.py
 ```
 
 The local hook stages `VERSION` +0.0.1 for each new commit. Enable it once per checkout. GitHub Actions

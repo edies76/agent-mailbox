@@ -16,6 +16,59 @@ import threading
 import time
 from pathlib import Path
 
+_event_stream = None
+_event_lock = threading.Lock()
+_windows_job = None
+
+
+class WindowsJob:
+    """Close all owned listener/callback descendants if the supervisor exits unexpectedly."""
+    def __init__(self):
+        import ctypes
+        from ctypes import wintypes
+
+        class BasicLimits(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong), ("PerJobUserTimeLimit", ctypes.c_longlong),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+        class IOCounts(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_ulonglong) for name in
+                        ("ReadOperationCount", "WriteOperationCount", "OtherOperationCount", "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class ExtendedLimits(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BasicLimits), ("IoInfo", IOCounts),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        self.kernel.CreateJobObjectW.restype = wintypes.HANDLE
+        self.kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        self.kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.handle = self.kernel.CreateJobObjectW(None, None)
+        if not self.handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        limits = ExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not self.kernel.SetInformationJobObject(self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+            self.close()
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def assign(self, process):
+        import ctypes
+        if not self.kernel.AssignProcessToJobObject(self.handle, int(process._handle)):
+            process.terminate()
+            process.wait(timeout=5)
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def close(self):
+        if self.handle:
+            self.kernel.CloseHandle(self.handle)
+            self.handle = None
+
 
 def absolute(value, base):
     path = Path(os.path.expandvars(str(value))).expanduser()
@@ -89,8 +142,13 @@ def load_manifest(manifest_path):
 
 
 def emit(event, **fields):
-    print(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                      "type": event, **fields}, ensure_ascii=False), flush=True)
+    encoded = json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                          "type": event, **fields}, ensure_ascii=False)
+    stream = _event_stream or sys.stdout
+    if stream:
+        with _event_lock:
+            stream.write(encoded + "\n")
+            stream.flush()
 
 
 def drain_output(process, spec):
@@ -108,20 +166,32 @@ def drain_output(process, spec):
                 emit("mailbox_message", instance=spec["name"], agent_id=spec["agent_id"],
                      message_id=message.get("id"), from_agent_id=message.get("from_agent_id"),
                      attachment_count=message.get("attachment_count", len(message.get("attachments", []))))
+            elif event.get("type") in {"mailbox_listener_started", "mailbox_listener_stopped", "mailbox_bank_saved"}:
+                safe = {key: event[key] for key in ("agent_id", "message_id", "interval_seconds", "transport") if key in event}
+                emit(event["type"], instance=spec["name"], **safe)
+            elif event.get("type") in {"mailbox_listener_error", "mailbox_wait_error"}:
+                emit(event["type"], instance=spec["name"], detail="Worker reported a transport or adapter error; inspect URL, credentials and callback configuration locally")
             else:
-                emit(event.pop("type", "listener_worker_event"), instance=spec["name"], **event)
+                emit("listener_worker_output", instance=spec["name"], detail="Adapter output content suppressed")
     except (OSError, ValueError):
         return
 
 
 def start_worker(spec, watcher_path):
-    command = [sys.executable, str(watcher_path), str(spec["config"]),
+    # The transport is stdlib-only. Bypass the Windows venv launcher so the owned
+    # child cannot spawn its real interpreter before it joins our process job.
+    interpreter = Path(getattr(sys, "_base_executable", sys.executable))
+    if interpreter.name.lower() == "pythonw.exe":
+        interpreter = interpreter.with_name("python.exe")
+    command = [str(interpreter), str(watcher_path), str(spec["config"]),
                "--interval", str(spec["interval"]), "--state", str(spec["state"]),
                "--transport", spec["transport"]]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     process = subprocess.Popen(command, cwd=watcher_path.parent, stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                                bufsize=1, creationflags=flags)
+    if _windows_job:
+        _windows_job.assign(process)
     threading.Thread(target=drain_output, args=(process, spec), daemon=True).start()
     emit("listener_worker_started", instance=spec["name"], agent_id=spec["agent_id"],
          transport=spec["transport"], interval_seconds=spec["interval"])
@@ -144,10 +214,15 @@ def stop_workers(workers):
 
 
 def main():
+    global _event_stream, _windows_job
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Supervise independent listeners for any local agent/session adapters.")
     parser.add_argument("manifest", help="Private/local JSON manifest containing instance config paths")
     parser.add_argument("--refresh", type=int, default=5, help="Seconds between manifest/glob refreshes")
     parser.add_argument("--validate", action="store_true", help="Validate without starting listeners")
+    parser.add_argument("--log-file", help="Append redacted events to this local file, including under pythonw")
     args = parser.parse_args()
     if not 1 <= args.refresh <= 300:
         parser.error("--refresh must be 1–300 seconds")
@@ -158,8 +233,16 @@ def main():
                                                     "transport": row["transport"]}
                                                    for row in specs.values()])
         return 0
-    if not specs:
-        parser.error("manifest has no valid instance configs")
+    if args.log_file:
+        log_path = Path(args.log_file).expanduser().resolve()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        _event_stream = log_path.open("a", encoding="utf-8", buffering=1)
+    if os.name == "nt":
+        try:
+            _windows_job = WindowsJob()
+        except OSError as error:
+            emit("listener_process_ownership_error", code=getattr(error, "winerror", None))
+            raise
     watcher_path = Path(__file__).with_name("mailbox_watch.py").resolve()
     workers = {}
     failed = set()
@@ -194,7 +277,11 @@ def main():
                     del workers[key]
             for key, spec in specs.items():
                 if key not in workers and key not in failed:
-                    workers[key] = {"spec": spec, "process": start_worker(spec, watcher_path)}
+                    try:
+                        workers[key] = {"spec": spec, "process": start_worker(spec, watcher_path)}
+                    except OSError as error:
+                        failed.add(key)
+                        emit("listener_worker_start_error", instance=spec["name"], code=getattr(error, "winerror", None))
             if not workers:
                 if not announced_idle:
                     emit("listener_idle", detail="No matching instance configs; waiting for manifest/glob changes")
@@ -206,6 +293,11 @@ def main():
     finally:
         stop_workers(workers)
         emit("universal_listener_stopped", workers=len(workers))
+        if _windows_job:
+            _windows_job.close()
+        if _event_stream:
+            _event_stream.close()
+            _event_stream = None
     return 0
 
 

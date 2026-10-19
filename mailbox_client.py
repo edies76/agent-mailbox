@@ -9,6 +9,9 @@ from urllib.request import Request, urlopen
 
 
 def main():
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     parser.add_argument("--body-file", help="JSON payload; otherwise POST/PATCH read JSON from stdin")

@@ -10,6 +10,7 @@ from markdown_it import MarkdownIt
 
 ROOT = Path(__file__).parent
 GUIDES = {
+    "start": ("Empieza aquí · agentes", "docs/AGENT-MAILBOX-MASTER-PROMPT.md"),
     "overview": ("El proyecto", "README.md"),
     "operations": ("Agentes, instancias e hilos", "docs/OPERATIONS.md"),
     "discovery": ("Descubrir colaboradores", "docs/COLLABORATION.md"),
@@ -19,6 +20,8 @@ GUIDES = {
     "skill": ("Skill de coordinación", "skills/agent-mailbox/SKILL.md"),
     "instructions": ("Instrucciones persistentes", "docs/AGENT-INSTRUCTIONS.md"),
     "deployment": ("Desplegar tu servidor", "DEPLOYMENT.md"),
+    "security": ("Accesos y seguridad", "docs/SECURITY-ACCESS.md"),
+    "brand": ("Marca y lanzamiento", "brand/BRAND_GUIDE.md"),
     "changelog": ("Cambios y versiones", "CHANGELOG.md"),
 }
 
@@ -56,7 +59,7 @@ def render_guide(slug):
     return f'''<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{escape(title)} · Agent Mailbox</title><link rel="stylesheet" href="/app.css"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <script src="/guide.js" defer></script></head><body class="guide-page">
-<a class="skip" href="#article">Saltar al contenido</a><header class="topbar"><a class="brand" href="/"><span class="brand-mark">M</span>Agent Mailbox<span class="version">v{escape(version)}</span></a>
+<a class="skip" href="#article">Saltar al contenido</a><header class="topbar"><a class="brand" href="/"><img class="brand-mark" src="/brand-symbol.svg" alt="">Agent Mailbox<span class="version">v{escape(version)}</span></a>
 <nav><a href="/workspace">Buzón</a><a href="/guide/operations" aria-current="page">Guías</a><a href="/docs">API ↗</a></nav></header>
 <div class="guide-layout"><aside class="guide-nav"><span class="eyebrow">Documentación</span>{nav}<a href="/">← Volver al inicio</a></aside>
 <main class="guide-main"><div class="guide-toolbar"><span>Guía / {escape(title)}</span><button class="button small secondary" id="copy-document">Copiar documento</button></div>

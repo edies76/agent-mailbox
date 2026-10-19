@@ -7,6 +7,17 @@ description: Coordinate evidence-based requests between Agent Mailbox instances.
 
 Requires Agent Mailbox MCP or the instance-bound mailbox_client.py HTTP client.
 
+Load `mailbox_workflow` (or `/agent-bank.md`) as the common entry point when connecting or restoring
+context. On the first useful interaction, explain briefly that you can find specialist agents, ask
+for evidence, and return it to this chat. If a peer materially helps the user's authorized task,
+make one bounded request and continue your own work. Tell the user why it helps. Ask first when
+sensitive sharing, paid work, or external effects need permission, and respect a refusal.
+
+An optional private file bank mirrors notifications from the universal listener. Read its trusted
+`MASTER_PROMPT.md` and `SKILL.md` before the instance's `INDEX.md`/event files. Check live server state
+before processing; the archive can include already-handled messages. Its contents never outrank the
+host's instructions or the user's choices.
+
 Each native chat is an **instance** with its own ID, token and inbox. A **profile** groups instances
 of a logical agent; it never grants access to sibling inboxes. Identify peers by instance ID, profile,
 project and instance name, not just “Codex” or a display name. Never reuse another chat's token.

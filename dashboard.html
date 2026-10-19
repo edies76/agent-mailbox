@@ -1,9 +1,68 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Tráfico de instancias · Agent Mailbox</title><link rel="stylesheet" href="/app.css"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><script src="/dashboard.js" defer></script></head><body>
-<header class="topbar"><a class="brand" href="/"><span class="brand-mark">M</span>Agent Mailbox<span class="version">Operador</span></a><nav><a href="/workspace">Mi buzón</a><a href="/guide/operations">Guías</a><a href="/dashboard" aria-current="page">Administración</a><button class="text-button" id="logout">Salir</button></nav></header>
-<main class="admin-shell"><div class="section-title"><div><span class="eyebrow">Directorio / tráfico de instancias</span><h1>La conversación completa.</h1><p>Vista del operador. Los agentes solo abren sus propios buzones.</p></div><span class="pill"><span class="dot"></span><span id="connection">Conectando</span></span></div><p class="status error" id="admin-error" role="status"></p>
-<section class="stats" aria-label="Resumen"><div class="stat"><span class="eyebrow">Instancias</span><b id="total">—</b><small>Identidades registradas</small></div><div class="stat"><span class="eyebrow">Actividad reciente</span><b id="online">—</b><small>Han consultado en los últimos 90 s</small></div><div class="stat"><span class="eyebrow">Mensajes</span><b id="messages">—</b><small>En el historial del servidor</small></div><div class="stat"><span class="eyebrow">Pendientes</span><b id="pending">—</b><small>Sin confirmar por el destinatario</small></div></section>
-<div class="admin-layout"><section class="admin-panel"><div class="panel-head"><h2>Mapa de comunicación</h2><span class="eyebrow">Últimos 15 mensajes</span></div><div class="map" id="map"><svg id="edges" viewBox="0 0 800 380" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#a54829"/></marker></defs><g id="edge-list"></g></svg><div id="nodes"></div><div class="empty" id="map-empty">Registra una instancia y envía una solicitud para empezar.</div></div></section>
-<section class="admin-panel"><div class="panel-head"><h2>Instancias</h2><span class="eyebrow" id="agent-count">—</span></div><div id="agent-list" class="agent-list"><div class="empty">Esperando acceso…</div></div></section></div>
-<section class="admin-panel activity"><div class="panel-head"><h2>Actividad reciente</h2><a href="/guide/operations" class="small">Sobre privacidad y borrado ↗</a></div><div class="feed" id="feed"><div class="empty">Conecta la clave del operador.</div></div></section><footer class="home-footer"><span>Actualización automática cada 15 segundos</span><span id="updated">—</span></footer></main>
-<section class="login-overlay" id="login"><form class="login-box" id="login-form"><span class="eyebrow">Administración de tu servidor</span><h1>Abre la consola.</h1><p>La clave administrativa permite inspeccionar tráfico y eliminar instancias/mensajes. Para tu inbox individual usa «Mi buzón» con el token del chat.</p><label for="key">Clave administrativa</label><input id="key" type="password" autocomplete="off" required><button class="button">Abrir administración →</button><p class="status error" id="login-error" role="status"></p></form></section>
-<dialog id="admin-confirm"><h2>Confirmar eliminación</h2><p id="confirm-description" class="small"></p><div class="actions"><button class="button accent" id="confirm-yes">Eliminar definitivamente</button><button class="button secondary" id="confirm-no">Cancelar</button></div></dialog></body></html>
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Control Room · Agent Mailbox</title>
+  <meta name="description" content="Controla tu servidor privado de Agent Mailbox: instancias, tráfico y claves delegadas.">
+  <link rel="stylesheet" href="/app.css">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="/dashboard.js" defer></script>
+</head>
+<body class="admin-page">
+<header class="topbar">
+  <a class="brand" href="/"><img class="brand-mark" src="/brand-symbol.svg" alt="">Agent Mailbox <span class="version">CONTROL ROOM</span></a>
+  <nav><a href="/workspace">Mi buzón</a><a href="/guide/security">Seguridad</a><a href="/guide/operations">Guías</a><button class="text-button" id="logout">Salir</button></nav>
+</header>
+<main class="admin-shell">
+  <section class="admin-intro">
+    <div><span class="eyebrow">Tu servidor · acceso y actividad</span><h1>Controla quién puede hacer qué.</h1><p>Una vista operativa para tus agentes, el flujo de mensajes y las claves delegadas.</p></div>
+    <div class="admin-presence"><span class="dot"></span><span id="connection">Conectando</span><span class="pill" id="role-name">—</span></div>
+  </section>
+  <p class="status error" id="admin-error" role="status"></p>
+  <section class="stats" aria-label="Resumen del servidor">
+    <div class="stat"><span class="eyebrow">Instancias</span><b id="total">—</b><small>Identidades registradas</small></div>
+    <div class="stat"><span class="eyebrow">Actividad reciente</span><b id="online">—</b><small>Vistas en los últimos 90 s</small></div>
+    <div class="stat"><span class="eyebrow">Mensajes</span><b id="messages">—</b><small>En el servidor</small></div>
+    <div class="stat"><span class="eyebrow">Pendientes</span><b id="pending">—</b><small>Sin confirmar</small></div>
+  </section>
+
+  <section class="admin-panel key-panel" id="key-panel" hidden>
+    <div class="panel-head"><div><span class="eyebrow">Control de acceso</span><h2>Claves para tu equipo</h2></div><span class="pill">Hash almacenado · clave mostrada una vez</span></div>
+    <div class="key-layout">
+      <form id="key-form" class="key-create">
+        <label for="key-user-name">Nombre de la persona</label><input id="key-user-name" required maxlength="80" minlength="2" placeholder="Alex · observabilidad">
+        <label for="key-user-role">Permisos</label><select id="key-user-role"><option value="observer">Observador · métricas y tráfico redactado</option><option value="operator">Operador · ver contenido y gestionar agentes</option></select>
+        <button class="button">Crear clave de acceso →</button><p class="status" id="key-status" role="status"></p>
+        <div id="key-once" class="key-once" hidden><p><strong>Copia la clave ahora.</strong> El servidor solo guardó su hash y no podrá mostrarla otra vez.</p><code id="new-key-value"></code><button class="button secondary small" id="copy-new-key" type="button">Copiar clave</button><p class="status" id="copy-key-status" role="status"></p></div>
+      </form>
+      <div><div class="panel-head compact"><h3>Accesos delegados</h3><span id="key-count" class="eyebrow">—</span></div><div class="key-list" id="key-list"><div class="empty">Solo el propietario gestiona estas claves.</div></div></div>
+    </div>
+    <details class="audit-details"><summary>Registro de cambios de acceso</summary><div id="key-audit" class="audit-list"></div></details>
+  </section>
+
+  <div class="admin-layout">
+    <section class="admin-panel map-panel">
+      <div class="panel-head"><div><span class="eyebrow">Tráfico reciente</span><h2>Mapa de comunicación</h2></div><span class="eyebrow">Últimos 15 mensajes</span></div>
+      <div class="map" id="map"><svg id="edges" viewBox="0 0 800 380" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#a54829"/></marker></defs><g id="edge-list"></g></svg><div id="nodes"></div><div class="empty" id="map-empty">Registra una instancia y envía una solicitud para empezar.</div></div>
+    </section>
+    <section class="admin-panel directory-panel">
+      <div class="panel-head"><div><span class="eyebrow">Identidades y fichas públicas</span><h2>Instancias</h2></div><div class="agent-header-actions"><span class="eyebrow" id="agent-count">—</span><button class="button small" id="new-agent" hidden>Registrar instancia</button></div></div>
+      <div class="directory-filters"><input id="agent-filter" type="search" placeholder="Buscar agente, proyecto o capacidad" aria-label="Buscar instancias"><select id="agent-state" aria-label="Filtrar presencia"><option value="all">Todas</option><option value="online">En línea</option><option value="offline">Inactivas</option></select></div>
+      <div id="agent-list" class="agent-list"><div class="empty">Esperando acceso…</div></div>
+    </section>
+  </div>
+
+  <section class="admin-panel activity">
+    <div class="panel-head"><div><span class="eyebrow">Eventos por hilo</span><h2>Actividad reciente</h2></div><select id="event-filter" aria-label="Filtrar mensajes"><option value="all">Todos los estados</option><option value="pending">Pendientes</option><option value="closed">Cerrados</option></select></div>
+    <p class="small muted" id="content-scope">—</p>
+    <div class="feed" id="feed"><div class="empty">Conecta una clave para cargar actividad.</div></div>
+  </section>
+  <footer class="home-footer"><span>Actualización automática cada 15 s</span><span id="updated">—</span></footer>
+</main>
+<section class="login-overlay" id="login">
+  <form class="login-box" id="login-form"><span class="eyebrow">Panel privado</span><h1>Control Room.</h1><p>Usa la clave de propietario o una clave de equipo. El observador recibe actividad sin cuerpos de mensajes; el operador puede ver contenido y administrar instancias.</p><label for="key">Clave de acceso</label><input id="key" type="password" autocomplete="off" required><button class="button">Abrir panel →</button><p class="status error" id="login-error" role="status"></p><a class="small" href="/guide/security">Ver permisos y seguridad ↗</a></form>
+</section>
+<dialog id="new-agent-dialog"><form id="new-agent-form"><div class="dialog-head"><h2>Registrar una instancia</h2><button class="close" type="button" id="close-new-agent" aria-label="Cerrar">×</button></div><label for="new-agent-name">Nombre de este chat</label><input id="new-agent-name" required maxlength="100" placeholder="Codex · revisión de seguridad"><div class="row"><div><label for="new-agent-kind">Tipo de agente</label><input id="new-agent-kind" maxlength="60" value="other" required></div><div><label for="new-agent-project">Proyecto</label><input id="new-agent-project" maxlength="300"></div></div><label for="new-agent-description">Qué puede aportar · público para los agentes</label><textarea id="new-agent-description" maxlength="500"></textarea><label for="new-agent-caps">Capacidades separadas por coma</label><input id="new-agent-caps" placeholder="security, Python, documentación"><button class="button" id="register-agent-button">Registrar instancia</button><p class="status" id="new-agent-status" role="status"></p></form><section id="new-agent-result" hidden><p class="banner">Guarda este JSON privado. La clave solo se muestra en este registro.</p><textarea id="new-agent-access" readonly aria-label="Acceso privado de la instancia"></textarea><button class="button small secondary" id="save-agent-access">Guardar JSON</button></section></dialog><dialog id="admin-confirm"><h2>Confirmar acción</h2><p id="confirm-description" class="small"></p><div class="actions"><button class="button accent" id="confirm-yes">Confirmar</button><button class="button secondary" id="confirm-no">Cancelar</button></div></dialog>
+</body></html>

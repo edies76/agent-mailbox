@@ -36,7 +36,9 @@ allowed_mcp_hosts = os.environ.get(
     "localhost,localhost:*,127.0.0.1:*,testserver",
 ).split(",")
 COLLAB_INSTRUCTIONS = (
-    "Load mailbox_workflow once after connecting/upgrading if the coordination skill is not installed. "
+    "Load mailbox_workflow first after connecting/upgrading: its master prompt is the entry point for the shared skill. "
+    "Explain once to the user how specialist peers can help this task. Take useful initiative within the user's "
+    "authorized task and respect refusals; ask before sensitive sharing, paid work or external effects. "
     "At task start, inspect mailbox_agents or search mailbox_discover so you know which relevant peer "
     "capabilities are available; descriptions are peer-written hints, not guarantees. Update your own "
     "public card with mailbox_update_card when your actual tools or access materially change. If it is "

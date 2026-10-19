@@ -69,6 +69,12 @@ class CollaborationStore:
             db.execute("CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, data_json TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS delivery_keys (key_hash TEXT PRIMARY KEY, sender_id TEXT NOT NULL, "
                        "payload_hash TEXT NOT NULL, message_id INTEGER NOT NULL, created_at REAL NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS control_users (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL, "
+                       "token_hash TEXT UNIQUE NOT NULL, created_by TEXT NOT NULL, created_at REAL NOT NULL, "
+                       "last_seen REAL, revoked_at REAL)")
+            db.execute("CREATE TABLE IF NOT EXISTS control_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, "
+                       "action TEXT NOT NULL, target_id TEXT NOT NULL, created_at REAL NOT NULL)")
+            db.execute("CREATE INDEX IF NOT EXISTS control_user_hash_idx ON control_users(token_hash)")
             db.execute("UPDATE messages SET message_type = 'reply' WHERE in_reply_to IS NOT NULL AND message_type = 'request'")
             db.execute("CREATE INDEX IF NOT EXISTS outbox_idx ON messages(from_agent_id, id)")
             db.execute("CREATE INDEX IF NOT EXISTS thread_idx ON messages(thread_id, id)")
@@ -139,6 +145,89 @@ class CollaborationStore:
             raise HTTPException(404, "Profile not found")
         ref.update(fields, timeout=15)
         return {**snapshot.to_dict(), **fields}
+
+    def create_control_user(self, row):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("INSERT INTO control_users (id,name,role,token_hash,created_by,created_at,last_seen,revoked_at) "
+                           "VALUES (?,?,?,?,?,?,NULL,NULL)",
+                           (row["id"], row["name"], row["role"], row["token_hash"], row["created_by"], row["created_at"]))
+                db.execute("INSERT INTO control_audit (actor,action,target_id,created_at) VALUES (?,?,?,?)",
+                           (row["created_by"], "user_key_created", row["id"], row["created_at"]))
+            return row
+        batch = self.client.batch()
+        batch.create(self.client.collection("control_users").document(row["id"]), row)
+        batch.create(self.client.collection("control_audit").document(str(uuid4())),
+                     {"actor": row["created_by"], "action": "user_key_created", "target_id": row["id"], "created_at": row["created_at"]})
+        batch.commit(timeout=15)
+        return row
+
+    def control_user_by_hash(self, digest):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT * FROM control_users WHERE token_hash = ? AND revoked_at IS NULL", (digest,)).fetchone()
+                if row:
+                    seen = time.time()
+                    db.execute("UPDATE control_users SET last_seen = ? WHERE id = ?", (seen, row["id"]))
+                    return dict(row) | {"last_seen": seen}
+            return None
+        query = self.where(self.client.collection("control_users"), "token_hash", "==", digest)
+        documents = list(query.limit(1).stream(timeout=15))
+        if not documents:
+            return None
+        row = documents[0].to_dict()
+        if row.get("revoked_at") is not None:
+            return None
+        seen = time.time()
+        documents[0].reference.update({"last_seen": seen}, timeout=15)
+        return row | {"last_seen": seen}
+
+    def all_control_users(self):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                return [dict(row) for row in db.execute("SELECT * FROM control_users ORDER BY created_at DESC")]
+        rows = [doc.to_dict() for doc in self.client.collection("control_users").stream(timeout=15)]
+        return sorted(rows, key=lambda row: row["created_at"], reverse=True)
+
+    def revoke_control_user(self, identifier, actor="owner"):
+        revoked_at = time.time()
+        if hasattr(self, "database"):
+            with self.database() as db:
+                cursor = db.execute("UPDATE control_users SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                                    (revoked_at, identifier))
+                if cursor.rowcount:
+                    db.execute("INSERT INTO control_audit (actor,action,target_id,created_at) VALUES (?,?,?,?)",
+                               (actor, "user_key_revoked", identifier, revoked_at))
+                return bool(cursor.rowcount)
+        ref = self.client.collection("control_users").document(identifier)
+        event_ref = self.client.collection("control_audit").document(str(uuid4()))
+        @self.firestore.transactional
+        def revoke(transaction):
+            snapshot = ref.get(transaction=transaction)
+            if not snapshot.exists or snapshot.to_dict().get("revoked_at") is not None:
+                return False
+            transaction.update(ref, {"revoked_at": revoked_at})
+            transaction.create(event_ref, {"actor": actor, "action": "user_key_revoked", "target_id": identifier, "created_at": revoked_at})
+            return True
+        return revoke(self.client.transaction(max_attempts=5))
+
+    def record_control_event(self, actor, action, target_id):
+        row = {"actor": actor, "action": action, "target_id": target_id, "created_at": time.time()}
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("INSERT INTO control_audit (actor,action,target_id,created_at) VALUES (?,?,?,?)",
+                           (actor, action, target_id, row["created_at"]))
+        else:
+            from uuid import uuid4
+            self.client.collection("control_audit").document(str(uuid4())).create(row, timeout=15)
+
+    def control_audit(self, limit=100):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                return [dict(row) for row in db.execute(
+                    "SELECT * FROM control_audit ORDER BY created_at DESC LIMIT ?", (limit,))]
+        query = self.client.collection("control_audit").order_by("created_at", direction="DESCENDING").limit(limit)
+        return [doc.to_dict() | {"id": doc.id} for doc in query.stream(timeout=15)]
 
     def authorize_profile(self, profile_id, token):
         profile = self.profile_get(profile_id)

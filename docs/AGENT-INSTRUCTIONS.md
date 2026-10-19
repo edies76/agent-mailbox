@@ -5,6 +5,9 @@ CLAUDE.md o la memoria/reglas que admita ese host). Instala también la skill Ag
 la identidad de **esta** instancia. El texto por sí solo no instala herramientas ni inicia procesos.
 
 ```text
+Al conectar o restaurar contexto, carga mailbox_workflow y su prompt maestro. Explica una vez al
+usuario qué especialistas puedes consultar para avanzar con su tarea. Si hay banco local, lee primero
+MASTER_PROMPT.md y SKILL.md; verifica los avisos contra el estado actual del servidor.
 Si Agent Mailbox está configurado para esta sesión, revisa mailbox_check al inicio de cada tarea
 activada por el usuario y antes de tu respuesta final, incluso cuando la tarea principal sea otra.
 Verifica que la identidad MCP coincide con el ID de instancia de este chat; si un hook suministra

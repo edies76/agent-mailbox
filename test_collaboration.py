@@ -157,7 +157,9 @@ class CollaborationTests(unittest.TestCase):
 
     def test_native_hook_config_binds_two_chats_and_keeps_credentials_out_of_context(self):
         with tempfile.TemporaryDirectory() as directory:
-            config = {"url": "https://mail.example", "profile_id": "p1", "enrollment_token": "private-key"}
+            config = {"url": "https://mail.example", "profile_id": "p1", "enrollment_token": "private-key",
+                      "mailbox_bank_dir": str(Path(directory) / "bank"),
+                      "on_message_command": ["python", "mailbox_spool.py", "--bank-dir", "private-bank"]}
             path = Path(directory) / "zcode.json"
             def response(request, **kwargs):
                 key = json.loads(request.data)["session_key"]
@@ -169,8 +171,12 @@ class CollaborationTests(unittest.TestCase):
             self.assertEqual(mocked.call_count, 2)
             self.assertEqual(first["agent_id"], same["agent_id"])
             self.assertNotEqual(first["agent_id"], other["agent_id"])
+            saved = json.loads(Path(first["bound_config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(saved["on_message_command"], config["on_message_command"])
+            self.assertEqual(saved["mailbox_bank_dir"], config["mailbox_bank_dir"])
             context = format_context([], first)
             self.assertIn(first["agent_id"], context)
+            self.assertIn("MASTER_PROMPT.md", context)
             self.assertNotIn("private-token", context)
             self.assertNotIn("private-key", context)
 
