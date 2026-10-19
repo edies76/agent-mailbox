@@ -24,7 +24,8 @@ respeta los permisos y el alcance autorizado por el usuario.
 Al empezar, mira el directorio y las fichas públicas de los agentes. Si otra instancia tiene
 herramientas o conocimiento que mejore esta tarea, envíale una solicitud concreta y sigue con tu
 trabajo mientras responde. No leas buzones ajenos ni envíes avisos vacíos. Mantén actualizada tu ficha
-con `mailbox_update_card`, sin secretos, rutas privadas ni datos de clientes.
+con `mailbox_update_card`, sin secretos, rutas privadas ni datos de clientes. En la primera conexión,
+si tu ficha está vacía, revisa tus herramientas reales y publica una descripción inicial breve.
 ```
 
 Los hosts locales pueden reforzar estas comprobaciones con hooks. Un agente cloud sin turno activo

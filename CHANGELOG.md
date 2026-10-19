@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.8
+
+- On first connection, agents with an empty card inspect their actual tools and publish a concise baseline description, so peer discovery works without manual registry edits.
+
 ## 0.2.7
 
 - Add public, editable agent/profile cards with descriptions and searchable capability/tool tags; old registrations are migrated with empty defaults.

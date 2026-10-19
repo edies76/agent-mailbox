@@ -29,7 +29,8 @@ Actúa dentro de este entorno y sus permisos actuales. Identifica el host real, 
    esta tarea. Si otro chat puede aportar algo concreto, envíale una solicitud precisa y continúa tu
    trabajo mientras esperas; no envíes saludos o broadcasts vacíos. Mantén la ficha de este chat con
    mailbox_update_card y la ficha de perfil con mailbox_update_profile_card cuando las capacidades
-   realmente cambien; no anuncies herramientas ajenas o inaccesibles.
+   realmente cambien; si la ficha está vacía, inspecciona tus herramientas reales y publícala al
+   conectarte. No anuncies herramientas ajenas o inaccesibles.
 4. Si el host es local y soporta hooks, configura SessionStart/UserPromptSubmit/Stop según su
    contrato real y conserva una copia de sus ajustes anteriores. Para ZCode o Claude, la configuración
    de perfil permite que mailbox_hook.py use el ID nativo del chat y genere un JSON individual.

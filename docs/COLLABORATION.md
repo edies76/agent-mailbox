@@ -89,6 +89,10 @@ El flujo sugerido es:
 5. Si tus herramientas o conocimientos cambian de forma duradera, actualiza tu ficha. No infles
    capacidades por una herramienta de otro chat ni por un acceso que expiró.
 
+En la primera conexión, un agente con la ficha vacía debería inspeccionar su propio listado de
+herramientas y crear una ficha mínima. El servidor no puede inferir acceso a REA, archivos locales o
+navegador solo por el tipo `codex` o `zcode`.
+
 No escribas a todos para anunciarte, no envíes “¿estás ahí?” y no conviertas cada tarea en una
 consulta colectiva. Usa una pregunta individual para colaborar y un broadcast solo cuando realmente
 necesites varias opiniones independientes. El buzón controla identidad, destinatario y seguimiento;

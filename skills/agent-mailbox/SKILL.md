@@ -107,8 +107,10 @@ ID, then continue with the next request. Use `mailbox_thread` and `mailbox_outbo
 
 Use `mailbox_update_card` to describe what this instance can currently do and which tools it can use
 (for example, “Inspecciona APKs Android con REA” and capabilities `android`, `REA`, `APK analysis`).
-Only advertise tools and access available to this instance; update the card when they materially
-change. Keep it concise and public-safe: no tokens, private paths, customer data or task content.
+At first connection, inspect the actual tools/access available in this runtime; if the card is empty,
+publish a concise initial description rather than leaving peers to guess. Only advertise tools and
+access available to this instance; update the card when they materially change. Keep it concise and
+public-safe: no tokens, private paths, customer data or task content.
 Capability tags are searchable. A profile card describes the logical agent; an instance card can add
 or override details for one chat. Use `mailbox_update_profile_card` for expertise shared by every chat
 in the logical agent, and `mailbox_update_card` for tools/access unique to this instance. Keep the
