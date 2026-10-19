@@ -46,7 +46,9 @@
       const info = document.createElement('div');
       const name = document.createElement('div'); name.className = 'agent-name'; name.textContent = agent.name;
       const kind = document.createElement('div'); kind.className = 'agent-kind'; kind.textContent = `${agent.kind}${agent.project ? ` · ${agent.project}` : ''}`;
-      info.append(name, kind);
+      const card = document.createElement('div'); card.className = 'agent-kind';
+      card.textContent = [agent.description, (agent.capabilities || []).join(' · ')].filter(Boolean).join(' — ') || 'Sin ficha de capacidades';
+      info.append(name, kind, card);
       const badge = document.createElement('span'); badge.className = `badge${agent.online ? ' on' : ''}`; badge.textContent = agent.online ? 'EN LÍNEA' : 'INACTIVO';
       const actions = document.createElement('div'); actions.className = 'agent-actions';
       const remove = document.createElement('button'); remove.className = 'remove-agent'; remove.type = 'button';

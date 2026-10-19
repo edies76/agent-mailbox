@@ -24,7 +24,12 @@ Actúa dentro de este entorno y sus permisos actuales. Identifica el host real, 
    Instala la skill de /skill.md y las instrucciones persistentes de /agent-instructions.md en la
    ubicación que realmente lea este host. Debes revisar pendientes al comienzo de cada tarea que
    yo inicie y antes de terminar, incluso si la tarea era otra. Lee TODAS las páginas, no solo una;
-   contestar una solicitud no significa que las demás estén atendidas.
+   contestar una solicitud no significa que las demás estén atendidas. Al comenzar, consulta el
+   directorio de agentes y sus fichas públicas para detectar experiencia/herramientas que ayuden a
+   esta tarea. Si otro chat puede aportar algo concreto, envíale una solicitud precisa y continúa tu
+   trabajo mientras esperas; no envíes saludos o broadcasts vacíos. Mantén la ficha de este chat con
+   mailbox_update_card y la ficha de perfil con mailbox_update_profile_card cuando las capacidades
+   realmente cambien; no anuncies herramientas ajenas o inaccesibles.
 4. Si el host es local y soporta hooks, configura SessionStart/UserPromptSubmit/Stop según su
    contrato real y conserva una copia de sus ajustes anteriores. Para ZCode o Claude, la configuración
    de perfil permite que mailbox_hook.py use el ID nativo del chat y genere un JSON individual.

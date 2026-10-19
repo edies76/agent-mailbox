@@ -9,6 +9,7 @@ import hmac
 import threading
 import secrets
 import time
+import unicodedata
 from contextvars import Token
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
@@ -18,7 +19,7 @@ from uuid import uuid4, uuid5, UUID
 from fastapi import Depends, FastAPI, HTTPException, Path, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, Response, HTMLResponse, RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field, AliasChoices, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, AliasChoices, ValidationError, field_validator
 
 from stores import FirestoreStore, SQLiteStore
 
@@ -31,6 +32,36 @@ class AgentRegistration(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     kind: str = Field(default="other", min_length=1, max_length=60)
     project: str = Field(default="", max_length=300)
+    description: str = Field(default="", max_length=500)
+    capabilities: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("capabilities")
+    @classmethod
+    def unique_capabilities(cls, values):
+        result, seen = [], set()
+        for value in values:
+            label = value.strip()
+            if not 1 <= len(label) <= 64:
+                raise ValueError("Each capability must contain 1–64 characters")
+            if label.casefold() not in seen:
+                result.append(label)
+                seen.add(label.casefold())
+        return result
+
+
+class AgentCardPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    description: str | None = Field(default=None, max_length=500)
+    capabilities: list[str] | None = Field(default=None, max_length=20)
+
+    @field_validator("capabilities")
+    @classmethod
+    def unique_capabilities(cls, values):
+        return AgentRegistration.unique_capabilities(values) if values is not None else values
+
+
+class ProfileCardPatch(AgentCardPatch):
+    pass
 
 
 class Attachment(BaseModel):
@@ -65,6 +96,13 @@ class InstanceRegistration(BaseModel):
     instance_name: str = Field(min_length=1, max_length=100)
     project: str = Field(default="", max_length=300)
     session_key: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str = Field(default="", max_length=500)
+    capabilities: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("capabilities")
+    @classmethod
+    def unique_capabilities(cls, values):
+        return AgentRegistration.unique_capabilities(values)
 
 
 class RequestStatus(BaseModel):
@@ -235,6 +273,18 @@ def create_app():
                 return new_profile(identifier, AgentRegistration(**payload))
             if path.startswith("/profiles/") and path.endswith("/activity"):
                 return store.profile_activity(identifier, path.split("/")[2])
+            if path.startswith("/profiles/") and path.endswith("/card") and method == "PATCH":
+                profile_id = path.split("/")[2]
+                agent = store.get_agent(identifier)
+                if not agent or agent.get("profile_id") != profile_id:
+                    raise HTTPException(403, "Only an instance in this profile can update its shared card")
+                patch = ProfileCardPatch(**payload)
+                fields = patch.model_dump(exclude_unset=True)
+                fields = {key: value if value is not None else ("" if key == "description" else [])
+                          for key, value in fields.items()}
+                if not fields:
+                    raise HTTPException(422, "Provide description and/or capabilities")
+                return public_profile(store.update_profile_card(profile_id, fields))
             if path.startswith("/profiles/") and path.endswith("/instances"):
                 return profile_instances(path.split("/")[2])
             if path.startswith("/threads/") and method == "GET":
@@ -247,13 +297,22 @@ def create_app():
                 return store.update_status(identifier, int(path.split("/")[2]), state.status, state.note)
             if path == "/agents" and method == "GET":
                 now = time.time()
-                agents = [public_agent(row, now) for row in store.all_agents()]
+                profiles = {row["id"]: row for row in store.profiles_all()}
+                agents = [public_agent(row, now, profiles.get(row.get("profile_id"))) for row in store.all_agents()]
                 if query.get("online") in ("true", "false"):
                     agents = [row for row in agents if row["online"] == (query["online"] == "true")]
                 limit, offset = int(query.get("limit", 100)), int(query.get("offset", 0))
                 if not 1 <= limit <= 200 or offset < 0:
                     raise HTTPException(422, "Invalid directory page")
                 return {"agents": agents[offset:offset + limit], "total": len(agents), "limit": limit, "offset": offset}
+            if path == "/agents/discover" and method == "GET":
+                return discover_agents(query)
+            if path == "/agents/me" and method == "PATCH":
+                patch = AgentCardPatch(**payload)
+                fields = patch.model_dump(exclude_unset=True)
+                if not fields:
+                    raise HTTPException(422, "Provide description and/or capabilities")
+                return public_agent(store.update_agent_card(identifier, fields), time.time())
             if path == "/inbox" and method == "GET":
                 return page_mail(identifier, "inbox", {"unread_only": True, **query})
             if path == "/messages" and method == "POST":
@@ -330,22 +389,67 @@ def create_app():
             raise HTTPException(403, "Use an agent token for messaging and presence")
         return identity["id"]
 
-    def public_agent(row, now):
+    def public_agent(row, now, profile=None):
+        profile = profile or (store.profile_get(row.get("profile_id")) if row.get("profile_id") else {}) or {}
         result = {key: row[key] for key in ("id", "name", "kind", "project", "created_at", "last_seen")}
         result.update(instance_id=row["id"], profile_id=row.get("profile_id"),
-                      instance_name=row.get("instance_name") or row["name"])
+                      instance_name=row.get("instance_name") or row["name"],
+                      description=row.get("description") or profile.get("description", ""),
+                      capabilities=row.get("capabilities") or profile.get("capabilities", []))
         result["online"] = row["last_seen"] >= now - online_seconds
         return result
+
+    def directory_agents(now=None):
+        now = now or time.time()
+        profiles = {row["id"]: row for row in store.profiles_all()}
+        return [public_agent(row, now, profiles.get(row.get("profile_id"))) for row in store.all_agents()]
+
+    def discover_agents(query):
+        def fold(value):
+            return "".join(char for char in unicodedata.normalize("NFKD", value.casefold())
+                           if not unicodedata.combining(char))
+        text = fold(query.get("q", "").strip())
+        capability = fold(query.get("capability", "").strip())
+        online = query.get("online")
+        terms = [part for part in text.split() if part]
+        now = time.time()
+        matches = []
+        for agent in directory_agents(now):
+            if online in ("true", "false") and agent["online"] != (online == "true"):
+                continue
+            caps = agent["capabilities"]
+            matched_caps = [item for item in caps if capability and capability in fold(item)]
+            if capability and not matched_caps:
+                continue
+            searchable = fold(" ".join([agent["name"], agent["instance_name"], agent["kind"],
+                                         agent["project"], agent["description"], *caps]))
+            matched_terms = [term for term in terms if term in searchable]
+            if terms and len(matched_terms) != len(terms):
+                continue
+            score = 4 * len(matched_caps) + sum(3 if term in fold(" ".join(caps)) else
+                                                 2 if term in fold(agent["description"]) else 1
+                                                 for term in terms) + int(agent["online"])
+            matches.append({**agent, "relevance": score,
+                            "matched_capabilities": matched_caps or [item for item in caps
+                                if any(term in fold(item) for term in terms)]})
+        matches.sort(key=lambda agent: (-agent["relevance"], -agent["last_seen"], agent["id"]))
+        limit = int(query.get("limit", 20))
+        if not 1 <= limit <= 100:
+            raise HTTPException(422, "Discovery limit must be 1–100")
+        return {"agents": matches[:limit], "total": len(matches), "query": text,
+                "capability": capability, "scope": "authenticated server directory; descriptions and capabilities are peer supplied"}
 
     def create_registration(body):
         identifier, token, now = str(uuid4()), secrets.token_urlsafe(32), time.time()
         row = dict(id=identifier, name=body.name, kind=body.kind, project=body.project,
+                   description=body.description, capabilities=body.capabilities,
                    token_hash=hashlib.sha256(token.encode()).hexdigest(), created_at=now, last_seen=now)
         store.register(row)
         return {"agent": public_agent(row, now), "token": token}
 
     def public_profile(row):
-        return {key: row[key] for key in ("id", "name", "kind", "project", "created_at")}
+        return {key: row.get(key, [] if key == "capabilities" else "") for key in
+                ("id", "name", "kind", "project", "created_at", "description", "capabilities")}
 
     def profiles_directory():
         agents = store.all_agents()
@@ -354,13 +458,16 @@ def create_app():
                              for row in store.profiles_all()]}
 
     def profile_instances(profile_id):
-        if not store.profile_get(profile_id):
+        profile = store.profile_get(profile_id)
+        if not profile:
             raise HTTPException(404, "Profile not found")
-        return {"profile_id": profile_id, "instances": [public_agent(row, time.time())
+        return {"profile_id": profile_id, "profile": public_profile(profile),
+                "instances": [public_agent(row, time.time(), profile)
                 for row in store.all_agents() if row.get("profile_id") == profile_id]}
 
     def new_profile(identifier, body):
-        profile, token = store.create_profile(identifier, body.name, body.kind, body.project)
+        profile, token = store.create_profile(identifier, body.name, body.kind, body.project,
+                                              body.description, body.capabilities)
         return {"profile": public_profile(profile), "enrollment_token": token,
                 "instance": public_agent(store.get_agent(identifier), time.time()),
                 "token_scope": "enroll and retire instances; cannot read inboxes"}
@@ -446,7 +553,7 @@ def create_app():
         if not identity["admin"]:
             raise HTTPException(403, "El panel requiere la clave administrativa")
         now = time.time()
-        agents = [public_agent(row, now) for row in store.all_agents()]
+        agents = directory_agents(now)
         return {"stats": {**store.stats(now - online_seconds), "online_window_seconds": online_seconds},
                 "agents": agents, "messages": store.recent_messages(15), "updated_at": now}
 
@@ -512,6 +619,8 @@ def create_app():
     def capabilities():
         return {"version": APP_VERSION, "profiles": True, "private_instance_inboxes": True,
                 "bound_replies": True, "transactional_final_reply": True, "idempotent_delivery": True,
+                "peer_discovery": {"enabled": True, "agent_card_description_chars": 500,
+                                   "capabilities_per_card": 20, "directory_scope": "authenticated agents on this server"},
                 "inbox_wait": {"enabled": True, "max_timeout_seconds": 25, "slots_per_process": 12,
                                "scope": "new unread messages for the authenticated instance only",
                                "mode": "opt-in; an open request can keep hosted compute active"},
@@ -536,6 +645,29 @@ def create_app():
     def create_profile(body: AgentRegistration, identity: Identity):
         return JSONResponse(new_profile(agent_id(identity), body), status_code=201,
                             headers={"Cache-Control": "no-store"})
+
+    @app.patch("/profiles/{profile_id}")
+    def update_profile_card(profile_id: str, body: ProfileCardPatch, credentials: Credential):
+        store.authorize_profile(profile_id, credentials.credentials if credentials else "")
+        fields = body.model_dump(exclude_unset=True)
+        fields = {key: value if value is not None else ("" if key == "description" else [])
+                  for key, value in fields.items()}
+        if not fields:
+            raise HTTPException(422, "Provide description and/or capabilities")
+        return public_profile(store.update_profile_card(profile_id, fields))
+
+    @app.patch("/profiles/{profile_id}/card")
+    def update_member_profile_card(profile_id: str, body: ProfileCardPatch, identity: Identity):
+        identifier = agent_id(identity)
+        instance = store.get_agent(identifier)
+        if not instance or instance.get("profile_id") != profile_id:
+            raise HTTPException(403, "Only an instance in this profile can update its shared card")
+        fields = body.model_dump(exclude_unset=True)
+        fields = {key: value if value is not None else ("" if key == "description" else [])
+                  for key, value in fields.items()}
+        if not fields:
+            raise HTTPException(422, "Provide description and/or capabilities")
+        return public_profile(store.update_profile_card(profile_id, fields))
 
     @app.get("/profiles/{profile_id}/instances")
     def get_instances(profile_id: str, identity: Identity):
@@ -562,6 +694,7 @@ def create_app():
         now = time.time()
         row = dict(id=identifier, name=body.instance_name, kind=profile["kind"],
                    project=body.project or profile["project"], created_at=now, last_seen=now,
+                   description=body.description, capabilities=body.capabilities,
                    token_hash=hashlib.sha256(token.encode()).hexdigest())
         created = store.enroll_profile_instance(profile_id, row)
         return JSONResponse({"agent": public_agent(store.get_agent(identifier), time.time()),
@@ -577,11 +710,20 @@ def create_app():
         store.unregister(instance_id)
         return {"instance_id": instance_id, "deleted": True}
 
+    @app.get("/agents/discover")
+    def discover_agent_cards(identity: Identity, q: str = Query("", max_length=200),
+                             capability: str = Query("", max_length=64), online: bool | None = None,
+                             limit: int = Query(20, ge=1, le=100)):
+        query = {"q": q, "capability": capability, "limit": limit}
+        if online is not None:
+            query["online"] = str(online).lower()
+        return discover_agents(query)
+
     @app.get("/agents")
     def list_agents(identity: Identity, online: bool | None = None,
                     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0)):
         now = time.time()
-        agents = [public_agent(row, now) for row in store.all_agents()]
+        agents = directory_agents(now)
         if online is not None:
             agents = [row for row in agents if row["online"] == online]
         return {"agents": agents[offset:offset + limit], "total": len(agents), "limit": limit, "offset": offset}
@@ -589,6 +731,16 @@ def create_app():
     @app.get("/agents/me")
     def me(identity: Identity):
         return public_agent(store.get_agent(agent_id(identity)), time.time())
+
+    @app.patch("/agents/me")
+    def update_my_card(body: AgentCardPatch, identity: Identity):
+        fields = body.model_dump(exclude_unset=True)
+        fields = {key: value if value is not None else ("" if key == "description" else [])
+                  for key, value in fields.items()}
+        if not fields:
+            raise HTTPException(422, "Provide description and/or capabilities")
+        row = store.update_agent_card(agent_id(identity), fields)
+        return public_agent(row, time.time())
 
     @app.delete("/agents/me")
     def unregister_me(identity: Identity):

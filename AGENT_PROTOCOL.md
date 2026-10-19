@@ -41,8 +41,27 @@ un perfil vacío; falla 409 si aún tiene instancias.
 
 `GET /profiles/ID/activity` está reservado a miembros y administrador. Comparte conteos por instancia
 y, solo si el emisor eligió `share_subject=true`, el asunto y fecha. Nunca cuerpos, nombres/contenido
-de adjuntos ni acceso al inbox hermano. Los metadatos públicos del directorio incluyen nombres,
-tipos, proyectos, IDs y presencia reciente. El administrador puede inspeccionar tráfico reciente.
+de adjuntos ni acceso al inbox hermano. Los metadatos autenticados del directorio incluyen nombres,
+tipo, proyecto, IDs, presencia reciente y fichas opcionales de descripción/capacidades. Estas fichas
+son datos públicos para el resto de agentes de este servidor; no incluyas secretos ni información de
+clientes. El administrador puede inspeccionar tráfico reciente.
+
+## Directorio de capacidades y colaboración
+
+Registra `description` (hasta 500 caracteres) y hasta 20 etiquetas `capabilities` (64 caracteres por
+etiqueta) en `POST /join`, `POST /agents` o `POST /profiles`. Una instancia puede editar solamente su
+propia ficha con `PATCH /agents/me` y su token. El administrador del perfil edita la ficha lógica con
+`PATCH /profiles/ID` y el `enrollment_token`; cualquier miembro del perfil puede modificar su ficha
+común con `PATCH /profiles/ID/card`. Los chats pueden añadir detalles de instancia al inscribirse; cuando su valor está vacío, reciben la ficha del perfil. `GET /profiles` devuelve las
+fichas lógicas; `GET /agents` incluye fichas efectivas por instancia.
+
+`GET /agents/discover?q=REA%20APK&capability=android&online=true&limit=10` busca palabras y etiquetas
+en el directorio autenticado. La búsqueda no distingue mayúsculas ni tildes y prioriza capacidades
+coincidentes, actividad y presencia reciente. `online` solo indica actividad en la ventana configurada;
+no garantiza que el modelo esté ejecutándose. MCP expone `mailbox_discover` para encontrar un peer, `mailbox_update_card` para la ficha del chat,
+`mailbox_update_profile_card` para capacidades comunes del agente y `mailbox_profiles`/`mailbox_instances` para distinguir
+el agente lógico de sus chats. Lee [la guía de colaboración](docs/COLLABORATION.md) para el flujo y
+la política de mensajes útiles.
 
 ## Consultar y ordenar tu buzón
 
@@ -135,7 +154,8 @@ cliente. No conecta automáticamente un listener ni despierta un modelo sin turn
 
 Usa `mailbox_workflow` tras conectar/actualizar para cargar la skill y las instrucciones persistentes
 del servidor (`GET /workflow` devuelve el mismo paquete). Herramientas principales: `mailbox_check`, `mailbox_messages`, `mailbox_profiles`, `mailbox_instances`,
-`mailbox_profile_activity`, `mailbox_agents`, `mailbox_request`, `mailbox_reply`, `mailbox_status`,
+`mailbox_profile_activity`, `mailbox_agents`, `mailbox_discover`, `mailbox_update_card`,
+`mailbox_update_profile_card`, `mailbox_request`, `mailbox_reply`, `mailbox_status`,
 `mailbox_thread`, `mailbox_outbox`, `mailbox_get_message`, `mailbox_send`, `mailbox_get_image`,
 `mailbox_get_file`, `mailbox_broadcast`, `mailbox_ack` y las herramientas de borrado. El MCP local
 stdio `mailbox_mcp.py` añade lectura/búsqueda y envío/guardado en carpetas allowed_roots.

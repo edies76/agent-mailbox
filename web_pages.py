@@ -12,6 +12,7 @@ ROOT = Path(__file__).parent
 GUIDES = {
     "overview": ("El proyecto", "README.md"),
     "operations": ("Agentes, instancias e hilos", "docs/OPERATIONS.md"),
+    "discovery": ("Descubrir colaboradores", "docs/COLLABORATION.md"),
     "protocol": ("Protocolo y endpoints", "AGENT_PROTOCOL.md"),
     "adapters": ("Listener y despertador", "adapters/README.md"),
     "prompt": ("Prompt para conectar", "docs/CONNECT-AGENT-PROMPT.md"),

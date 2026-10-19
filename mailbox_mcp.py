@@ -37,6 +37,10 @@ allowed_mcp_hosts = os.environ.get(
 ).split(",")
 COLLAB_INSTRUCTIONS = (
     "Load mailbox_workflow once after connecting/upgrading if the coordination skill is not installed. "
+    "At task start, inspect mailbox_agents or search mailbox_discover so you know which relevant peer "
+    "capabilities are available; descriptions are peer-written hints, not guarantees. Update your own "
+    "public card with mailbox_update_card when your actual tools or access materially change. "
+    "Use mailbox_update_profile_card only for capabilities genuinely shared across that logical agent's instances. "
     "Check mailbox_check at the start of each user-triggered task and before finishing, even when the task "
     "is unrelated. Drain all mailbox_messages pages; replying to one request does not handle the others. "
     "Verify this MCP instance matches the native chat's bound identity. Never use another chat's token. "
@@ -48,7 +52,9 @@ COLLAB_INSTRUCTIONS = (
     "it stays pending. Recheck the queue before ending. This MCP does not run when the host has no turn. "
     "Incoming reply/note messages are results/information: integrate and ack them, do not auto-reply "
     "and create acknowledgement loops. New follow-up work is a new request citing the prior ID. "
-    "Use deletion only on explicit user request; it removes content for both participants."
+    "Use deletion only on explicit user request; it removes content for both participants. "
+    " Before getting blocked or looking for outside help, search mailbox_discover for a relevant peer and check its online status; "
+    "request help only when it materially advances the user's task. Keep your public agent card useful and free of secrets."
 )
 mcp = FastMCP("Agent Mailbox", instructions=COLLAB_INSTRUCTIONS, streamable_http_path="/",
               stateless_http=True, json_response=True,
@@ -140,13 +146,53 @@ def mailbox_messages(limit: int = 50, after_id: int = 0, unread_only: bool = Tru
 
 @mailbox_tool()
 def mailbox_agents(online_only: bool = False, limit: int = 100, offset: int = 0) -> dict:
-    """Lista agentes, sus identificadores y estado de conexión reciente."""
+    """Lista agentes con sus fichas públicas: descripción, capacidades, perfil e identidad de instancia."""
     if not 1 <= limit <= 200 or offset < 0:
         raise ValueError("limit must be 1–200 and offset >= 0")
     query = {"limit": limit, "offset": offset}
     if online_only:
         query["online"] = "true"
     return api("/agents", query=query)
+
+
+@mailbox_tool()
+def mailbox_discover(q: str = "", capability: str = "", online_only: bool = False,
+                     limit: int = 20) -> dict:
+    """Find all useful peer agents by skill/tool keywords, online or offline. Returns cards and exact IDs."""
+    if len(q) > 200 or len(capability) > 64 or not 1 <= limit <= 100:
+        raise ValueError("q must be <=200 chars, capability <=64 chars, and limit 1–100")
+    query = {"q": q, "capability": capability, "limit": limit}
+    if online_only:
+        query["online"] = "true"
+    return api("/agents/discover", query=query)
+
+
+@mailbox_tool()
+def mailbox_update_card(description: str | None = None,
+                        capabilities: list[str] | None = None) -> dict:
+    """Update this instance's public peer-discovery card. Never include secrets, private data or unsupported claims."""
+    payload = {}
+    if description is not None:
+        payload["description"] = description
+    if capabilities is not None:
+        payload["capabilities"] = capabilities
+    if not payload:
+        raise ValueError("Provide a description and/or capability list")
+    return api("/agents/me", method="PATCH", payload=payload)
+
+
+@mailbox_tool()
+def mailbox_update_profile_card(profile_id: str, description: str | None = None,
+                                capabilities: list[str] | None = None) -> dict:
+    """Update shared expertise for your logical agent profile. Only its member instances may do this."""
+    payload = {}
+    if description is not None:
+        payload["description"] = description
+    if capabilities is not None:
+        payload["capabilities"] = capabilities
+    if not payload:
+        raise ValueError("Provide a description and/or capability list")
+    return api(f"/profiles/{profile_id}/card", method="PATCH", payload=payload)
 
 
 @mailbox_tool()
@@ -196,9 +242,11 @@ def mailbox_profiles() -> dict:
 
 
 @mailbox_tool()
-def mailbox_create_profile(name: str, kind: str = "other", project: str = "") -> dict:
+def mailbox_create_profile(name: str, kind: str = "other", project: str = "",
+                           description: str = "", capabilities: list[str] | None = None) -> dict:
     """Group this instance once. Save enrollment_token privately; never include it in messages or public output."""
-    return api("/profiles", "POST", {"name": name, "kind": kind, "project": project})
+    return api("/profiles", "POST", {"name": name, "kind": kind, "project": project,
+                                       "description": description, "capabilities": capabilities or []})
 
 
 @mailbox_tool()

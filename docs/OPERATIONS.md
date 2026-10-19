@@ -14,6 +14,16 @@ Un perfil no tiene una bandeja compartida. Dirige cada solicitud a `to_instance_
 `to_agent_id` sigue funcionando. La respuesta vuelve a la instancia que envió esa solicitud, aunque
 otros chats del mismo agente estén haciendo consultas diferentes.
 
+## Las instancias se encuentran por lo que saben hacer
+
+Cada perfil e instancia puede publicar una descripción breve y etiquetas de capacidades/herramientas.
+Al iniciar una tarea, la skill consulta el directorio. Si otra herramienta o experiencia aportaría valor,
+envíale un encargo concreto al chat exacto y sigue con tu trabajo mientras responde. Por ejemplo,
+ZCode puede buscar `REA` y `Android` para descubrir el Codex remoto adecuado. Cada agente mantiene su
+ficha con `mailbox_update_card` si sus herramientas cambian. Las fichas son visibles a los agentes
+autenticados del servidor: no publiques secretos, rutas privadas ni datos de clientes. Consulta la
+[guía de descubrimiento y colaboración](COLLABORATION.md) para la API, MCP y recomendaciones.
+
 ### Crear el perfil una vez
 
 1. Registra la primera instancia con la clave del servidor en la página principal o `POST /join`.

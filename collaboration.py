@@ -53,7 +53,9 @@ class CollaborationStore:
             return
         with self.database() as db:
             additions = {
-                "agents": {"profile_id": "TEXT", "instance_name": "TEXT NOT NULL DEFAULT ''"},
+                "agents": {"profile_id": "TEXT", "instance_name": "TEXT NOT NULL DEFAULT ''",
+                           "description": "TEXT NOT NULL DEFAULT ''",
+                           "capabilities_json": "TEXT NOT NULL DEFAULT '[]'"},
                 "messages": {"subject": "TEXT NOT NULL DEFAULT ''", "thread_id": "INTEGER",
                              "message_type": "TEXT NOT NULL DEFAULT 'request'",
                              "status": "TEXT NOT NULL DEFAULT 'queued'", "status_note": "TEXT NOT NULL DEFAULT ''",
@@ -89,9 +91,10 @@ class CollaborationStore:
                 return json.loads(row[0]) if row else None
         return self.client.collection("profiles").document(profile_id).get(timeout=15).to_dict()
 
-    def create_profile(self, identifier, name, kind, project):
+    def create_profile(self, identifier, name, kind, project, description="", capabilities=None):
         token = secrets.token_urlsafe(32)
-        profile = dict(id=str(uuid4()), name=name, kind=kind, project=project, created_at=time.time(),
+        profile = dict(id=str(uuid4()), name=name, kind=kind, project=project, description=description,
+                       capabilities=capabilities or [], created_at=time.time(),
                        enrollment_hash=hashlib.sha256(token.encode()).hexdigest())
         if hasattr(self, "database"):
             with self.database() as db:
@@ -99,6 +102,9 @@ class CollaborationStore:
                 agent = db.execute("SELECT * FROM agents WHERE id = ?", (identifier,)).fetchone()
                 if not agent or agent["profile_id"]:
                     raise HTTPException(409, "Instance is already grouped or no longer exists")
+                description = description or agent["description"]
+                capabilities = capabilities or json.loads(agent["capabilities_json"] or "[]")
+                profile.update(description=description, capabilities=capabilities)
                 db.execute("INSERT INTO profiles VALUES (?, ?)", (profile["id"], json.dumps(profile)))
                 db.execute("UPDATE agents SET profile_id = ?, instance_name = name WHERE id = ?",
                            (profile["id"], identifier))
@@ -109,10 +115,30 @@ class CollaborationStore:
                 agent = ref.get(transaction=transaction).to_dict()
                 if not agent or agent.get("profile_id"):
                     raise HTTPException(409, "Instance is already grouped or no longer exists")
+                profile.update(description=description or agent.get("description", ""),
+                               capabilities=capabilities or agent.get("capabilities", []))
                 transaction.create(self.client.collection("profiles").document(profile["id"]), profile)
                 transaction.update(ref, {"profile_id": profile["id"], "instance_name": agent["name"]})
             create(self.client.transaction(max_attempts=5))
         return profile, token
+
+    def update_profile_card(self, profile_id, fields):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT data_json FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+                if not row:
+                    raise HTTPException(404, "Profile not found")
+                profile = json.loads(row[0])
+                profile.update(fields)
+                db.execute("UPDATE profiles SET data_json = ? WHERE id = ?",
+                           (json.dumps(profile, ensure_ascii=False), profile_id))
+                return profile
+        ref = self.client.collection("profiles").document(profile_id)
+        snapshot = ref.get(timeout=15)
+        if not snapshot.exists:
+            raise HTTPException(404, "Profile not found")
+        ref.update(fields, timeout=15)
+        return {**snapshot.to_dict(), **fields}
 
     def authorize_profile(self, profile_id, token):
         profile = self.profile_get(profile_id)
@@ -140,7 +166,8 @@ class CollaborationStore:
             remove(self.client.transaction(max_attempts=5))
 
     def enroll_profile_instance(self, profile_id, row):
-        row = {**row, "profile_id": profile_id, "instance_name": row["name"]}
+        row = {**row, "profile_id": profile_id, "instance_name": row["name"],
+               "description": row.get("description", ""), "capabilities": row.get("capabilities", [])}
         def verify(existing):
             if existing and (existing.get("profile_id") != profile_id or existing["token_hash"] != row["token_hash"]):
                 raise HTTPException(409, "Native session identity conflict")
@@ -153,9 +180,10 @@ class CollaborationStore:
                 verify(dict(old) if old else None)
                 if old:
                     return False
-                columns = ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "profile_id", "instance_name")
+                columns = ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "profile_id", "instance_name", "description", "capabilities_json")
                 db.execute(f"INSERT INTO agents ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
-                           tuple(row[key] for key in columns))
+                           tuple(json.dumps(row["capabilities"], ensure_ascii=False) if key == "capabilities_json" else row[key]
+                                 for key in columns))
             return True
         @self.firestore.transactional
         def enroll(transaction):

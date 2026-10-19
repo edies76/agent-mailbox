@@ -39,7 +39,8 @@ class SQLiteStore(CollaborationStore):
                 CREATE TABLE IF NOT EXISTS agents (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
                     project TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL,
-                    created_at REAL NOT NULL, last_seen REAL NOT NULL
+                    created_at REAL NOT NULL, last_seen REAL NOT NULL,
+                    description TEXT NOT NULL DEFAULT '', capabilities_json TEXT NOT NULL DEFAULT '[]'
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,17 +86,38 @@ class SQLiteStore(CollaborationStore):
 
     def register(self, row):
         with self.database() as db:
-            db.execute("INSERT INTO agents (id, name, kind, project, token_hash, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       tuple(row[k] for k in ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen")))
+            db.execute("INSERT INTO agents (id, name, kind, project, token_hash, created_at, last_seen, description, capabilities_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                       tuple(row.get(k, "") for k in ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "description")) +
+                       (json.dumps(row.get("capabilities", []), ensure_ascii=False),))
+
+    @staticmethod
+    def agent_output(row):
+        if not row:
+            return None
+        result = dict(row)
+        result["capabilities"] = json.loads(result.pop("capabilities_json", "[]"))
+        return result
 
     def all_agents(self):
         with self.database() as db:
-            return [dict(row) for row in db.execute("SELECT * FROM agents ORDER BY created_at, id")]
+            return [self.agent_output(row) for row in db.execute("SELECT * FROM agents ORDER BY created_at, id")]
 
     def get_agent(self, identifier):
         with self.database() as db:
             row = db.execute("SELECT * FROM agents WHERE id = ?", (identifier,)).fetchone()
-        return dict(row) if row else None
+        return self.agent_output(row)
+
+    def update_agent_card(self, identifier, fields):
+        with self.database() as db:
+            if "description" in fields:
+                db.execute("UPDATE agents SET description = ? WHERE id = ?", (fields["description"], identifier))
+            if "capabilities" in fields:
+                db.execute("UPDATE agents SET capabilities_json = ? WHERE id = ?",
+                           (json.dumps(fields["capabilities"], ensure_ascii=False), identifier))
+            row = db.execute("SELECT * FROM agents WHERE id = ?", (identifier,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Agent not found")
+        return self.agent_output(row)
 
     def unregister(self, identifier):
         """Revoke an agent and permanently erase its messages and attachments."""
@@ -274,6 +296,14 @@ class FirestoreStore(CollaborationStore):
 
     def register(self, row):
         self.agents.document(row["id"]).create(row, timeout=15)
+
+    def update_agent_card(self, identifier, fields):
+        ref = self.agents.document(identifier)
+        snapshot = ref.get(timeout=15)
+        if not snapshot.exists:
+            raise HTTPException(404, "Agent not found")
+        ref.update(fields, timeout=15)
+        return {**snapshot.to_dict(), **fields}
 
     def all_agents(self):
         rows = [doc.to_dict() for doc in self.agents.stream(timeout=15)]

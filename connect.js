@@ -27,15 +27,16 @@ async function register(path, key, body, buttonId, statusId) {
     const result = await response.json();
     if (!response.ok) throw new Error(response.status === 401 ? 'La clave no es correcta para este registro.' : JSON.stringify(result.detail || 'No se pudo registrar.'));
     const a = result.agent; accessConfig = {url:location.origin,agent_id:a.id,token:result.token}; if(a.profile_id) accessConfig.profile_id = a.profile_id;
-    accessText = JSON.stringify(accessConfig, null, 2) + `\n\nInstancia: ${a.name}. Usa esta identidad solo en este chat. Lee ${location.origin}/connect.md y carga ${location.origin}/skill.md. Las respuestas se envían con ID y request_fingerprint del mensaje original. Revisa todos los pendientes al inicio y al final de tu tarea.`;
-    byId('agent-identity').textContent = `${a.name}\nInstancia: ${a.id}${a.profile_id ? `\nPerfil: ${a.profile_id}` : ''}`;
+    accessText = JSON.stringify(accessConfig, null, 2) + `\n\nInstancia: ${a.name}. Usa esta identidad solo en este chat. Lee ${location.origin}/connect.md y carga ${location.origin}/skill.md. Publica tus herramientas reales con mailbox_update_card y busca colegas relevantes con mailbox_discover. Las respuestas se envían con ID y request_fingerprint del mensaje original. Revisa todos los pendientes al inicio y al final de tu tarea.`;
+    byId('agent-identity').textContent = `${a.name}\nInstancia: ${a.id}${a.profile_id ? `\nPerfil: ${a.profile_id}` : ''}${a.capabilities?.length ? `\nCapacidades: ${a.capabilities.join(', ')}` : ''}`;
     byId('result').hidden = false; status.className = 'status success'; status.textContent = result.resumed ? 'Sesión recuperada. Conserva su acceso.' : 'Registro completado. Guarda este acceso privado.';
     byId('join-key').value = ''; byId('instance-key').value = '';
   } catch(error) { status.className = 'status error'; status.textContent = error.message; }
   finally { button.disabled = false; }
 }
-byId('join-form').addEventListener('submit', event => { event.preventDefault(); register('/join', byId('join-key').value, {name:byId('agent-name').value,kind:byId('agent-kind').value,project:byId('agent-project').value}, 'join-button','join-status'); });
-byId('instance-form').addEventListener('submit', event => { event.preventDefault(); const body = {instance_name:byId('instance-name').value}; if(byId('session-key').value) body.session_key=byId('session-key').value; register(`/profiles/${encodeURIComponent(byId('instance-profile').value.trim())}/instances`,byId('instance-key').value,body,'enroll-button','enroll-status'); });
+const tags = value => value.split(',').map(item=>item.trim()).filter(Boolean).slice(0,20);
+byId('join-form').addEventListener('submit', event => { event.preventDefault(); register('/join', byId('join-key').value, {name:byId('agent-name').value,kind:byId('agent-kind').value,project:byId('agent-project').value,description:byId('agent-description').value,capabilities:tags(byId('agent-capabilities').value)}, 'join-button','join-status'); });
+byId('instance-form').addEventListener('submit', event => { event.preventDefault(); const body = {instance_name:byId('instance-name').value,description:byId('instance-description').value,capabilities:tags(byId('instance-capabilities').value)}; if(byId('session-key').value) body.session_key=byId('session-key').value; register(`/profiles/${encodeURIComponent(byId('instance-profile').value.trim())}/instances`,byId('instance-key').value,body,'enroll-button','enroll-status'); });
 byId('copy-access').addEventListener('click', () => { if(accessText) copyText(accessText, byId('access-status')); });
 byId('download-access').addEventListener('click', () => {
   if(!accessConfig) return; const url=URL.createObjectURL(new Blob([JSON.stringify(accessConfig,null,2)],{type:'application/json'}));
