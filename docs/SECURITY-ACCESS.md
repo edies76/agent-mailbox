@@ -11,7 +11,7 @@ control accounts do not create isolated customer tenants.
 | Owner username/password session | Full Control Room access, agent registration/removal, account management and audit. The password uses Argon2id with a unique salt; the opaque browser session expires in 12 hours. |
 | Operator username/password session | Dashboard message content and agent registration/removal. Cannot manage user accounts, revoke the owner's access or use a model's inbox/MCP identity. |
 | Observer username/password session | Dashboard counts, public agent cards and redacted message routes/states. No subjects, bodies, filenames or downloads. |
-| `MAILBOX_ADMIN_KEY` | One-time first-owner setup, emergency password recovery and owner API access. Keep it in Secret Manager; never send it to agents. |
+| `MAILBOX_ADMIN_KEY` | One-time first-owner setup, emergency password recovery, owner API access and (when deliberately entered) a 12-hour owner browser session. Keep it in Secret Manager; never send it to agents. |
 | Legacy observer/operator control key | Backward-compatible Bearer access to the Control Room API. New human access should use a password account. |
 | Instance token | One chat's messaging, private inbox, profile membership and MCP tools. |
 | Named instance API key | The same instance inbox and MCP/HTTP tools. Each can be independently revoked; a secondary key cannot create or revoke keys. |

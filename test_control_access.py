@@ -302,6 +302,30 @@ class AccountSessionTests(unittest.TestCase):
         self.assertEqual(recovered["user"]["role"], "owner")
         self.request("GET", "/dashboard/data", self.admin)
 
+    def test_previous_control_key_can_exchange_for_a_revocable_browser_session(self):
+        legacy = self.request("POST", "/dashboard/users", self.admin,
+                              {"name": "Old observer", "role": "observer"}, 201)
+        cookies = http.cookiejar.CookieJar()
+        browser = build_opener(HTTPCookieProcessor(cookies))
+        result = self.browser_request(browser, "/auth/key-login", "POST",
+                                      {"access_key": legacy["access_key"]})
+        self.assertEqual(result["user"]["role"], "observer")
+        self.assertEqual(result["auth_method"], "access_key")
+        self.assertNotIn(legacy["access_key"], json.dumps(result))
+        dashboard = self.browser_request(browser, "/dashboard/data")
+        self.assertFalse(dashboard["permissions"]["can_read_message_content"])
+        self.assertFalse(dashboard["permissions"]["can_manage_agents"])
+
+        self.request("DELETE", f"/dashboard/users/{legacy['user']['id']}", self.admin)
+        self.browser_request(browser, "/dashboard/data", expected=401)
+
+        owner_session = self.browser_request(browser, "/auth/key-login", "POST",
+                                             {"access_key": self.admin})
+        self.assertEqual(owner_session["user"]["role"], "owner")
+        self.assertNotIn(self.admin, json.dumps(owner_session))
+        owner_dashboard = self.browser_request(browser, "/dashboard/data")
+        self.assertTrue(owner_dashboard["permissions"]["can_manage_users"])
+
 
 if __name__ == "__main__":
     unittest.main()

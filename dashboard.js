@@ -1,6 +1,7 @@
 (() => {
   const byId = id => document.getElementById(id);
   let currentUser = null;
+  let setupRequired = false;
   let timer;
   let view = null;
   let newAgentAccess = null;
@@ -32,14 +33,17 @@
   }
   async function showLogin(){
     clearInterval(timer);currentUser=null;document.body.classList.add('auth-locked');
-    try{const status=await api('/auth/status');byId('setup-form').hidden=!status.setup_required;byId('login-form').hidden=status.setup_required;}
-    catch{byId('setup-form').hidden=true;byId('login-form').hidden=false;}
+    try{const status=await api('/auth/status');setupRequired=status.setup_required;byId('setup-form').hidden=!setupRequired;byId('login-form').hidden=setupRequired;}
+    catch{setupRequired=false;byId('setup-form').hidden=true;byId('login-form').hidden=false;}
+    byId('access-key-form').hidden=true;
     byId('login').hidden=false;byId('connection').textContent='Inicia sesión';
   }
+  function showAccessKeyLogin(){byId('login-form').hidden=true;byId('setup-form').hidden=true;byId('access-key-form').hidden=false;byId('access-key').focus();}
+  function showPasswordLogin(){byId('access-key-form').hidden=true;byId('setup-form').hidden=!setupRequired;byId('login-form').hidden=setupRequired;}
   async function load() {
     try {
-      const session=await api('/auth/session');currentUser=session.user;
-      const data=await api('/dashboard/data'); view=data; render(data); byId('login').hidden=true;document.body.classList.remove('auth-locked');byId('connection').textContent=`Conectado · ${currentUser.username}`;
+      const session=await api('/auth/session');currentUser={...session.user,auth_method:session.auth_method};
+      const data=await api('/dashboard/data'); view=data; render(data); byId('login').hidden=true;document.body.classList.remove('auth-locked');byId('connection').textContent=`Conectado · ${currentUser.username}`;byId('change-password').hidden=currentUser.auth_method!=='password';
       if(data.permissions.can_manage_users){loadAccounts();loadLegacyControlUsers();} else byId('key-panel').hidden=true;
     } catch(error) {
       if(error.status===401){await showLogin();}
@@ -121,6 +125,8 @@
   document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>byId(button.dataset.close).close()));
   byId('agent-filter').addEventListener('input',()=>view&&renderAgents(view.agents,view.permissions));byId('agent-state').addEventListener('change',()=>view&&renderAgents(view.agents,view.permissions));byId('event-filter').addEventListener('change',()=>view&&renderMessages(view.messages,view.agents,view.permissions));
   byId('login-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;byId('login-error').textContent='';try{await api('/auth/login','POST',{username:byId('account-username').value,password:byId('account-password').value});byId('account-password').value='';await load();if(byId('login').hidden){clearInterval(timer);timer=setInterval(load,15000);}}catch(error){byId('login-error').textContent=error.message;}finally{button.disabled=false;}});
+  byId('use-access-key').onclick=showAccessKeyLogin;byId('setup-use-access-key').onclick=showAccessKeyLogin;byId('use-password-login').onclick=showPasswordLogin;
+  byId('access-key-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;byId('access-key-error').textContent='';try{await api('/auth/key-login','POST',{access_key:byId('access-key').value});byId('access-key').value='';await load();if(byId('login').hidden){clearInterval(timer);timer=setInterval(load,15000);}}catch(error){byId('access-key-error').textContent=error.message;}finally{button.disabled=false;}});
   byId('setup-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;byId('setup-error').textContent='';try{await api('/auth/setup','POST',{setup_key:byId('setup-key').value,username:byId('setup-username').value,password:byId('setup-password').value});byId('setup-key').value='';byId('setup-password').value='';await load();if(byId('login').hidden){clearInterval(timer);timer=setInterval(load,15000);}}catch(error){byId('setup-error').textContent=error.message;}finally{button.disabled=false;}});
   byId('logout').addEventListener('click',async()=>{try{await api('/auth/logout','POST',{});}catch{}view=null;await showLogin();});
   let resizeFrame;new ResizeObserver(()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(()=>view&&renderMessages(view.messages,view.agents,view.permissions));}).observe(byId('map'));

@@ -54,6 +54,10 @@ Content-Type: application/json
 
 Un usuario que aún puede entrar cambia su propia contraseña desde el menú del Control Room. El cambio revoca las demás sesiones y renueva la sesión actual.
 
+## Entrar con una clave anterior
+
+Si antes usabas una clave Bearer de propietario, operador u observador, selecciona **Entrar con una clave de usuario anterior** en `/dashboard` y pégala una vez. El servidor la intercambia por una cookie de sesión de navegador con el mismo rol. No guarda la clave en `sessionStorage` ni la cambia por otra; el usuario y propietario pueden revocarla como antes. El campo no acepta tokens de agente.
+
 ## Límites del modelo
 
 Un servidor pertenece a una persona o equipo y comparte un directorio de agentes. Los buzones permanecen aislados por token. Las cuentas de operador y observador controlan el panel, no crean organizaciones ni aíslan clientes distintos dentro de un mismo servidor. Para un SaaS público con usuarios ajenos entre sí se necesitarían espacios multi-tenant, cuotas, recuperación verificada de contraseña, políticas de retención y controles de abuso.

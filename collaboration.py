@@ -75,6 +75,14 @@ class CollaborationStore:
             db.execute("CREATE TABLE IF NOT EXISTS control_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, "
                        "action TEXT NOT NULL, target_id TEXT NOT NULL, created_at REAL NOT NULL)")
             db.execute("CREATE INDEX IF NOT EXISTS control_user_hash_idx ON control_users(token_hash)")
+            db.execute("""CREATE TABLE IF NOT EXISTS control_sessions (
+                id TEXT PRIMARY KEY, control_user_id TEXT, identity_type TEXT NOT NULL,
+                username TEXT NOT NULL, role TEXT NOT NULL, credential_hash TEXT,
+                token_hash TEXT UNIQUE NOT NULL, csrf_hash TEXT NOT NULL,
+                created_at REAL NOT NULL, expires_at REAL NOT NULL, last_seen REAL NOT NULL,
+                revoked_at REAL
+            )""")
+            db.execute("CREATE INDEX IF NOT EXISTS control_session_hash_idx ON control_sessions(token_hash)")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS account_users (
                     id TEXT PRIMARY KEY, username TEXT NOT NULL, username_norm TEXT UNIQUE NOT NULL,
@@ -414,6 +422,65 @@ class CollaborationStore:
         seen = time.time()
         documents[0].reference.update({"last_seen": seen}, timeout=15)
         return row | {"last_seen": seen}
+
+    def create_control_session(self, row):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("""INSERT INTO control_sessions
+                    (id,control_user_id,identity_type,username,role,credential_hash,token_hash,csrf_hash,
+                     created_at,expires_at,last_seen,revoked_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL)""",
+                    tuple(row.get(key) for key in ("id", "control_user_id", "identity_type", "username", "role",
+                                                   "credential_hash", "token_hash", "csrf_hash", "created_at",
+                                                   "expires_at", "last_seen")))
+            return row
+        self.client.collection("control_sessions").document(row["id"]).create(row, timeout=15)
+        return row
+
+    def control_session_by_hash(self, token_hash, now):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT * FROM control_sessions WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+                                 (token_hash, now)).fetchone()
+                if not row:
+                    return None
+                result = dict(row)
+                if row["identity_type"] == "control_user":
+                    user = db.execute("SELECT name,role,revoked_at FROM control_users WHERE id = ?",
+                                      (row["control_user_id"],)).fetchone()
+                    if not user or user["revoked_at"] is not None:
+                        return None
+                    result.update(username=user["name"], role=user["role"])
+                    db.execute("UPDATE control_users SET last_seen = ? WHERE id = ?", (now, row["control_user_id"]))
+                db.execute("UPDATE control_sessions SET last_seen = ? WHERE id = ?", (now, row["id"]))
+                return result
+        rows = list(self.where(self.client.collection("control_sessions"), "token_hash", "==", token_hash)
+                    .limit(1).stream(timeout=15))
+        if not rows:
+            return None
+        row = rows[0].to_dict()
+        if row.get("revoked_at") is not None or row.get("expires_at", 0) <= now:
+            return None
+        if row.get("identity_type") == "control_user":
+            user_ref = self.client.collection("control_users").document(row["control_user_id"])
+            user_snapshot = user_ref.get(timeout=15)
+            if not user_snapshot.exists:
+                return None
+            user = user_snapshot.to_dict()
+            if user.get("revoked_at") is not None:
+                return None
+            row.update(username=user["name"], role=user["role"])
+            user_ref.update({"last_seen": now}, timeout=15)
+        rows[0].reference.update({"last_seen": now}, timeout=15)
+        return row
+
+    def revoke_control_session(self, session_id, revoked_at):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("UPDATE control_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                           (revoked_at, session_id))
+        else:
+            self.client.collection("control_sessions").document(session_id).update({"revoked_at": revoked_at}, timeout=15)
 
     def all_control_users(self):
         if hasattr(self, "database"):

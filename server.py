@@ -138,6 +138,11 @@ class AccountLogin(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class AccessKeyLogin(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    access_key: str = Field(min_length=16, max_length=256)
+
+
 class TeamAccountCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
@@ -324,6 +329,19 @@ def create_app():
             response.delete_cookie(name, path="/", secure=secure, httponly="session" in name,
                                    samesite="strict")
 
+    def web_session_by_hash(token_hash, now):
+        account_session = store.account_session_by_hash(token_hash, now)
+        if account_session:
+            return account_session | {"session_type": "account", "auth_method": "password"}
+        control_session = store.control_session_by_hash(token_hash, now)
+        if not control_session:
+            return None
+        if (control_session.get("identity_type") == "owner_key" and
+                not secrets.compare_digest(control_session.get("credential_hash", ""),
+                                           hashlib.sha256(hub_key.encode()).hexdigest())):
+            return None
+        return control_session | {"session_type": "control", "auth_method": "access_key"}
+
     @app.middleware("http")
     async def private_response_headers(request, call_next):
         response = await call_next(request)
@@ -335,10 +353,10 @@ def create_app():
 
     @app.middleware("http")
     async def account_csrf_guard(request, call_next):
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in {"/auth/login", "/auth/setup"} and not request.headers.get("authorization"):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in {"/auth/login", "/auth/setup", "/auth/key-login"} and not request.headers.get("authorization"):
             session_token = request_session_token(request)
             if session_token:
-                session = store.account_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
+                session = web_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
                 csrf_header = request.headers.get("x-csrf-token", "")
                 csrf_cookie = request.cookies.get(csrf_cookie_name(request), "") or request.cookies.get("agent-mailbox-csrf", "")
                 if (not session or not csrf_header or not csrf_cookie or
@@ -532,11 +550,13 @@ def create_app():
         if credentials is None:
             session_token = request_session_token(request)
             if session_token:
-                session = store.account_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
+                session = web_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
                 if session:
-                    common = {"id": session["user_id"], "username": session["username"],
+                    subject_id = session.get("user_id") or session.get("control_user_id") or "owner-key"
+                    common = {"id": subject_id, "username": session["username"],
                               "name": session["username"], "role": session.get("role", "owner"),
-                              "account_session_id": session["id"], "csrf_hash": session["csrf_hash"]}
+                              "account_session_id": session["id"], "csrf_hash": session["csrf_hash"],
+                              "auth_method": session["auth_method"]}
                     return ({"admin": True} | common if common["role"] == "owner" else
                             {"admin": False, "control_user": True} | common)
             raise HTTPException(401, "Account session required", headers={"WWW-Authenticate": "Bearer"})
@@ -579,13 +599,19 @@ def create_app():
         address = request.client.host if request.client else "unknown"
         return hmac.new(hub_key.encode(), f"{username_norm}|{address}".encode(), hashlib.sha256).hexdigest()
 
-    def current_account_session(request):
+    def current_web_session(request):
         session_token = request_session_token(request)
         if not session_token:
             raise HTTPException(401, "Sign in to continue")
-        session = store.account_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
+        session = web_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
         if not session:
             raise HTTPException(401, "Account session expired; sign in again")
+        return session
+
+    def current_account_session(request):
+        session = current_web_session(request)
+        if session.get("session_type") != "account":
+            raise HTTPException(403, "This action requires a username/password session")
         return session
 
     def establish_account_session(user, request, status_code=200):
@@ -599,6 +625,26 @@ def create_app():
         store.create_account_session(session)
         response = JSONResponse({"user": {"id": user["id"], "username": user["username"], "role": user.get("role", "owner")},
                                  "expires_at": session["expires_at"]}, status_code=status_code,
+                                headers={"Cache-Control": "no-store"})
+        set_session_cookies(response, request, session_token, csrf_token)
+        return response
+
+    def establish_control_session(control_identity, request):
+        now = time.time()
+        session_token, csrf_token = secrets.token_urlsafe(40), secrets.token_urlsafe(32)
+        session = {"id": str(uuid4()), "control_user_id": control_identity.get("id"),
+                   "identity_type": control_identity["identity_type"],
+                   "username": control_identity["username"], "role": control_identity["role"],
+                   "credential_hash": control_identity.get("credential_hash"),
+                   "token_hash": hashlib.sha256(session_token.encode()).hexdigest(),
+                   "csrf_hash": hashlib.sha256(csrf_token.encode()).hexdigest(),
+                   "created_at": now, "expires_at": now + ACCOUNT_SESSION_SECONDS,
+                   "last_seen": now, "revoked_at": None}
+        store.create_control_session(session)
+        response = JSONResponse({"user": {"id": control_identity.get("id", "owner-key"),
+                                           "username": control_identity["username"],
+                                           "role": control_identity["role"]},
+                                 "auth_method": "access_key", "expires_at": session["expires_at"]},
                                 headers={"Cache-Control": "no-store"})
         set_session_cookies(response, request, session_token, csrf_token)
         return response
@@ -643,10 +689,26 @@ def create_app():
         account["last_login_at"] = seen
         return establish_account_session(account, request)
 
+    @app.post("/auth/key-login")
+    def legacy_access_key_login(body: AccessKeyLogin, request: Request):
+        digest = hashlib.sha256(body.access_key.encode()).hexdigest()
+        if secrets.compare_digest(body.access_key.encode(), hub_key.encode()):
+            identity = {"identity_type": "owner_key", "username": "Propietario",
+                        "role": "owner", "credential_hash": digest}
+        else:
+            user = store.control_user_by_hash(digest)
+            if not user:
+                raise HTTPException(401, "Clave de usuario incorrecta, revocada o incompatible")
+            identity = {"identity_type": "control_user", "id": user["id"],
+                        "username": user["name"], "role": user["role"]}
+        return establish_control_session(identity, request)
+
     @app.get("/auth/session")
     def account_session_info(request: Request):
-        session = current_account_session(request)
-        return JSONResponse({"user": {"id": session["user_id"], "username": session["username"]},
+        session = current_web_session(request)
+        return JSONResponse({"user": {"id": session.get("user_id") or session.get("control_user_id") or "owner-key",
+                                       "username": session["username"], "role": session.get("role", "owner")},
+                             "auth_method": session["auth_method"],
                              "expires_at": session["expires_at"]}, headers={"Cache-Control": "no-store"})
 
     @app.post("/auth/password")
@@ -674,8 +736,11 @@ def create_app():
 
     @app.post("/auth/logout")
     def account_logout(request: Request):
-        session = current_account_session(request)
-        store.revoke_account_session(session["id"], time.time())
+        session = current_web_session(request)
+        if session.get("session_type") == "account":
+            store.revoke_account_session(session["id"], time.time())
+        else:
+            store.revoke_control_session(session["id"], time.time())
         response = JSONResponse({"logged_out": True}, headers={"Cache-Control": "no-store"})
         clear_session_cookies(response, request)
         return response

@@ -136,7 +136,7 @@ persistent instructions enforce checks during available turns, not while a proce
 | GET | `/agents/discover?q=REA&capability=Android&online=true` | Search peer descriptions and capability/tool tags |
 | PATCH | `/agents/me` | Update this instance's public peer card |
 | GET, POST, DELETE | `/agents/me/api-keys`, `/agents/me/api-keys/ID` | List, issue and revoke named MCP/HTTP keys |
-| GET, POST | `/auth/status`, `/auth/setup`, `/auth/login`, `/auth/session` | Initial owner setup and password-based web session |
+| GET, POST | `/auth/status`, `/auth/setup`, `/auth/login`, `/auth/key-login`, `/auth/session` | Initial owner setup, password login, legacy-key exchange, and web session |
 | POST | `/auth/password`, `/auth/logout`, `/auth/recover` | Change password, end session, or recover with the owner emergency key |
 | GET, POST, DELETE | `/dashboard/accounts`, `/dashboard/accounts/ID` | Owner-managed operator/observer username-password accounts |
 | DELETE | `/agents/me`, `/agents/ID` | Self retirement or operator removal |

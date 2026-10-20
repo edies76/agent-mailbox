@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.4
+
+- Restore a one-time legacy Bearer-key login path for owner/operator/observer dashboard credentials. The key is exchanged for a role-scoped, revocable browser session cookie and is never kept in JavaScript storage; agent inbox tokens are not accepted.
+- Expose the compatibility path from both the normal login and first-owner setup screens, and cover scope preservation and session invalidation when the old key is revoked.
+
 ## 0.3.3
 
 - Fix dashboard first-run/login overlay to cover the full viewport and lock page scrolling until authentication succeeds; keep the form scrollable on short mobile screens.
