@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3
+
+- Fix dashboard first-run/login overlay to cover the full viewport and lock page scrolling until authentication succeeds; keep the form scrollable on short mobile screens.
+- Explain that only the first server owner needs the bootstrap key; regular team members use accounts created by the owner. Link to the Secret Manager retrieval steps.
+- Add a regression check for the full-screen authentication state.
+
 ## 0.3.2
 
 - Add first-run owner setup and password-based browser accounts with owner/operator/observer roles, Argon2id password hashes, short-lived HTTP-only sessions, CSRF protection, password changes/recovery, login throttling and account disablement.

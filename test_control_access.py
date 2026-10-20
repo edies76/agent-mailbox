@@ -109,6 +109,20 @@ class ControlAccessTests(unittest.TestCase):
         self.assertIn("ChatGPT web requiere OAuth", home)
         self.assertIn("Conectar un cliente MCP", home)
 
+    def test_dashboard_auth_screen_covers_viewport_and_locks_background_scroll(self):
+        from urllib.request import urlopen
+        with urlopen(self.url + "/dashboard", timeout=10) as response:
+            page = response.read().decode("utf-8")
+        with urlopen(self.url + "/app.css", timeout=10) as response:
+            css = response.read().decode("utf-8")
+        with urlopen(self.url + "/dashboard.js", timeout=10) as response:
+            script = response.read().decode("utf-8")
+        self.assertIn('class="login-overlay" id="login" hidden', page)
+        self.assertIn("body.auth-locked{overflow:hidden}", css)
+        self.assertIn(".login-overlay{position:fixed;inset:0", css)
+        self.assertIn("classList.add('auth-locked')", script)
+        self.assertIn("classList.remove('auth-locked')", script)
+
     def test_public_origin_overrides_the_proxy_internal_scheme(self):
         from urllib.request import urlopen
         self.stop_server()

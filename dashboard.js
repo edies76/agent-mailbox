@@ -31,7 +31,7 @@
     const data=await response.json(); if(!response.ok){const error=new Error(typeof data.detail==='string'?data.detail:`HTTP ${response.status}`);error.status=response.status;throw error;} return data;
   }
   async function showLogin(){
-    clearInterval(timer);currentUser=null;
+    clearInterval(timer);currentUser=null;document.body.classList.add('auth-locked');
     try{const status=await api('/auth/status');byId('setup-form').hidden=!status.setup_required;byId('login-form').hidden=status.setup_required;}
     catch{byId('setup-form').hidden=true;byId('login-form').hidden=false;}
     byId('login').hidden=false;byId('connection').textContent='Inicia sesión';
@@ -39,7 +39,7 @@
   async function load() {
     try {
       const session=await api('/auth/session');currentUser=session.user;
-      const data=await api('/dashboard/data'); view=data; render(data); byId('login').hidden=true; byId('connection').textContent=`Conectado · ${currentUser.username}`;
+      const data=await api('/dashboard/data'); view=data; render(data); byId('login').hidden=true;document.body.classList.remove('auth-locked');byId('connection').textContent=`Conectado · ${currentUser.username}`;
       if(data.permissions.can_manage_users){loadAccounts();loadLegacyControlUsers();} else byId('key-panel').hidden=true;
     } catch(error) {
       if(error.status===401){await showLogin();}

@@ -9,6 +9,14 @@ Agent Mailbox separa el acceso humano al panel de la conexión de cada agente. N
 3. Para reclamar la cuenta propietaria, el formulario solicita una vez la clave `MAILBOX_ADMIN_KEY` del servidor. Después del primer registro, la ruta de configuración queda cerrada.
 4. En las siguientes visitas, entra con usuario y contraseña. El panel crea una sesión de navegador que vence después de 12 horas. Puedes salir desde el menú del panel.
 
+La clave inicial se usa **solo una vez, por quien administra el servidor**, para impedir que un visitante reclame el panel antes que el propietario. En el despliegue Cloud Run del proyecto se conserva en Secret Manager. Si tienes permiso de propietario del proyecto, puedes leerla localmente así (cambia el ID del proyecto y no compartas la salida):
+
+```powershell
+gcloud secrets versions access latest --secret=agent-mailbox-admin-key --project=TU_PROJECT_ID
+```
+
+Si ya existe una cuenta propietaria, las demás personas no necesitan esa clave: el propietario crea sus cuentas en **Control Room → Cuentas del equipo** y les da un usuario y una contraseña.
+
 La aplicación guarda contraseñas con Argon2id (19 MiB, dos iteraciones, paralelo 1) y una sal aleatoria. Limita a cuatro los cálculos de contraseña simultáneos y bloquea temporalmente el inicio de sesión tras seis intentos fallidos dentro de 15 minutos. Las sesiones usan cookies `HttpOnly`, `Secure` en HTTPS y `SameSite=Strict`, además de verificación CSRF para acciones que cambian datos.
 
 El primer usuario tiene rol **Propietario**. Puede crear cuentas de equipo con los roles **Operador** y **Observador**, y desactivar sus accesos desde **Cuentas del equipo**. El operador administra instancias y puede ver el contenido del panel; el observador ve actividad redactada. Ambos usan cuentas separadas con contraseña y sesión propia.
