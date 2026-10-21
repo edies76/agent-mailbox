@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.5
+
+- Add one-command Windows and macOS/Linux local editions backed by a private SQLite file, with a no-install-key first-owner claim restricted to a matching loopback origin.
+- Keep local keys and data separate from inherited cloud environment settings; document when local agents work directly and when remote agents require a stable HTTPS tunnel or hosted deployment.
+- Add local-vs-hosted account setup and network-boundary coverage.
+
 ## 0.3.4
 
 - Restore a one-time legacy Bearer-key login path for owner/operator/observer dashboard credentials. The key is exchanged for a role-scoped, revocable browser session cookie and is never kept in JavaScript storage; agent inbox tokens are not accepted.

@@ -83,7 +83,11 @@ local credential files.
 
 ## Local mode
 
-For Windows development, run `start.ps1`; it creates local admin/join keys and a SQLite database
-under ignored paths. The local dashboard and API are available at `http://127.0.0.1:8795`.
-Keep `.local/` and `data/` private and backed up as appropriate.
+For a one-command Windows install, run `setup-local.ps1`. It creates the Python environment, installs
+dependencies, and starts a loopback-only SQLite server at `http://127.0.0.1:8795`. The first account
+can be created without an installation key only from a loopback browser on this local mode; the
+hosted Firestore deployment remains protected by the owner bootstrap key. Data and local emergency
+keys stay in ignored `data/` and `.local/` folders. Agents on the same PC can connect directly. A
+cloud agent cannot reach loopback; see the [local edition guide](docs/LOCAL-EDITION.md) for that
+boundary and remote-access options.
 

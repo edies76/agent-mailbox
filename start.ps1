@@ -5,6 +5,9 @@ $pythonExe = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $pythonExe)) {
     throw 'Primero ejecuta: python -m venv .venv; .\.venv\Scripts\python.exe -m pip install -r requirements.txt'
 }
+if (-not $env:MAILBOX_STORAGE) { $env:MAILBOX_STORAGE = 'sqlite' }
+if ($env:MAILBOX_STORAGE -eq 'sqlite') { $env:MAILBOX_LOCAL_FIRST_RUN = '1' }
+else { $env:MAILBOX_LOCAL_FIRST_RUN = '0' }
 if (-not $env:MAILBOX_ADMIN_KEY) {
     $secretDirectory = Join-Path $PSScriptRoot '.local'
     $secretFile = Join-Path $secretDirectory 'admin-key'

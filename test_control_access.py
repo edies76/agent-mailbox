@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
-from urllib.request import HTTPCookieProcessor, Request, build_opener
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 import test_mailbox as http_tests
 from adapters.mailbox_spool import initialize_bank, mirror
@@ -232,6 +232,9 @@ class AccountSessionTests(unittest.TestCase):
         browser = build_opener(HTTPCookieProcessor(cookies))
         status = self.browser_request(browser, "/auth/status")
         self.assertTrue(status["setup_required"])
+        self.assertFalse(status["local_setup_available"])
+        self.browser_request(browser, "/auth/setup", "POST", {
+            "username": "MailboxOwner", "password": "local-password-that-is-long-42"}, expected=401)
         setup = self.browser_request(browser, "/auth/setup", "POST", {
             "setup_key": self.admin, "username": "MailboxOwner", "password": "local-password-that-is-long-42"}, expected=201)
         self.assertEqual(setup["user"]["username"], "MailboxOwner")
@@ -301,6 +304,55 @@ class AccountSessionTests(unittest.TestCase):
             "username": "MailboxOwner", "password": "owner-password-recovered-and-long-44"})
         self.assertEqual(recovered["user"]["role"], "owner")
         self.request("GET", "/dashboard/data", self.admin)
+
+
+class LocalBootstrapTests(unittest.TestCase):
+    setUpClass = classmethod(http_tests.MailboxTests.setUpClass.__func__)
+    tearDownClass = classmethod(http_tests.MailboxTests.tearDownClass.__func__)
+    start_server = classmethod(http_tests.MailboxTests.start_server.__func__)
+    stop_server = classmethod(http_tests.MailboxTests.stop_server.__func__)
+    request = http_tests.MailboxTests.request
+
+    @classmethod
+    def setUpClass(cls):
+        with patch.dict(os.environ, {"MAILBOX_STORAGE": "sqlite", "MAILBOX_LOCAL_FIRST_RUN": "1"}):
+            http_tests.MailboxTests.setUpClass.__func__(cls)
+
+    def setup_request(self, body, origin=None, expected=201):
+        headers = {"Content-Type": "application/json"}
+        if origin:
+            headers["Origin"] = origin
+        request = Request(self.url + "/auth/setup", data=json.dumps(body).encode(), headers=headers, method="POST")
+        try:
+            with urlopen(request, timeout=20) as response:
+                status, result = response.status, json.load(response)
+        except HTTPError as error:
+            with error:
+                status, result = error.code, json.load(error)
+        self.assertEqual(status, expected, result)
+        return result
+
+    def browser_request(self, opener, path, method="GET", body=None, headers=None, expected=200):
+        request = Request(self.url + path, data=json.dumps(body).encode() if body is not None else None,
+                          headers={"Content-Type": "application/json", **(headers or {})}, method=method)
+        try:
+            with opener.open(request, timeout=20) as response:
+                status, data = response.status, json.load(response)
+        except HTTPError as error:
+            with error:
+                status, data = error.code, json.load(error)
+        self.assertEqual(status, expected, data)
+        return data
+
+    def test_only_a_matching_loopback_origin_can_claim_the_local_owner(self):
+        body = {"username": "LocalOwner", "password": "local-only-password-long-43"}
+        with urlopen(self.url + "/auth/status", timeout=10) as response:
+            status = json.load(response)
+        self.assertTrue(status["setup_required"])
+        self.assertTrue(status["local_setup_available"])
+        self.setup_request(body, origin="https://remote.example", expected=401)
+        self.setup_request(body, expected=401)
+        self.assertTrue(self.setup_request(body, origin=self.url)["user"]["username"] == "LocalOwner")
 
     def test_previous_control_key_can_exchange_for_a_revocable_browser_session(self):
         legacy = self.request("POST", "/dashboard/users", self.admin,

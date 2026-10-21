@@ -21,6 +21,7 @@ GUIDES = {
     "skill": ("Skill de coordinación", "skills/agent-mailbox/SKILL.md"),
     "instructions": ("Instrucciones persistentes", "docs/AGENT-INSTRUCTIONS.md"),
     "deployment": ("Desplegar tu servidor", "DEPLOYMENT.md"),
+    "local": ("Edición local", "docs/LOCAL-EDITION.md"),
     "security": ("Accesos y seguridad", "docs/SECURITY-ACCESS.md"),
     "accounts": ("Cuentas y conexiones de agentes", "docs/ACCOUNTS-AND-SESSIONS.md"),
     "brand": ("Marca y lanzamiento", "brand/BRAND_GUIDE.md"),

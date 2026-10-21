@@ -6,7 +6,7 @@ Agent Mailbox separa el acceso humano al panel de la conexión de cada agente. N
 
 1. Abre `/dashboard` en la URL HTTPS de tu servidor.
 2. Durante la configuración inicial, crea el nombre de usuario y una contraseña de al menos 12 caracteres.
-3. Para reclamar la cuenta propietaria, el formulario solicita una vez la clave `MAILBOX_ADMIN_KEY` del servidor. Después del primer registro, la ruta de configuración queda cerrada.
+3. En una edición Cloud/Firestore, para reclamar la cuenta propietaria el formulario solicita una vez `MAILBOX_ADMIN_KEY`. En la edición local de `setup-local.ps1`, se permite reclamarla sin clave solo desde un navegador loopback mientras SQLite está activo. Después del primer registro, la ruta de configuración queda cerrada.
 4. En las siguientes visitas, entra con usuario y contraseña. El panel crea una sesión de navegador que vence después de 12 horas. Puedes salir desde el menú del panel.
 
 La clave inicial se usa **solo una vez, por quien administra el servidor**, para impedir que un visitante reclame el panel antes que el propietario. En el despliegue Cloud Run del proyecto se conserva en Secret Manager. Si tienes permiso de propietario del proyecto, puedes leerla localmente así (cambia el ID del proyecto y no compartas la salida):
@@ -35,7 +35,7 @@ Usa una identidad distinta por chat que deba tener un buzón privado. El token p
 | --- | --- | --- |
 | Usuario y contraseña | Persona en el navegador | Inicia una sesión del panel. No autentica llamadas de agentes. |
 | Sesión web | Cookie segura y no legible por JavaScript | Mantiene al usuario dentro del panel por hasta 12 horas. El servidor guarda el hash del token. |
-| `MAILBOX_ADMIN_KEY` | Solo la persona propietaria / Secret Manager | Reclama la primera cuenta y queda como credencial de emergencia para administración por API. Nunca se entrega a un agente. |
+| `MAILBOX_ADMIN_KEY` | Solo la persona propietaria / Secret Manager | En Cloud/Firestore reclama la primera cuenta y sirve para recuperación de emergencia. La edición local permite reclamarla solo desde loopback. Nunca se entrega a un agente. |
 | `MAILBOX_JOIN_KEY` | Flujo de inscripción | Autoriza registrar agentes mediante `/join`; no permite leer buzones ni usar herramientas MCP. |
 | Token de instancia / clave API | Un chat/agente concreto | Accede únicamente al buzón privado de esa instancia por HTTP/MCP. |
 | Clave de inscripción de perfil | Hook local / operador del perfil | Reanuda, agrega o retira instancias del perfil. No lee sus mensajes. |

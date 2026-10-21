@@ -256,7 +256,7 @@ class CollaborationTests(unittest.TestCase):
         self.assertEqual(result["reply"]["to_agent_id"], self.a_id)
 
     def test_human_guides_render_and_preserve_public_docs(self):
-        for path in ("/workspace", "/guide/operations", "/guide/skill", "/guide/prompt", "/guide/mcp", "/guide/accounts", "/guide/overview"):
+        for path in ("/workspace", "/guide/operations", "/guide/skill", "/guide/prompt", "/guide/mcp", "/guide/accounts", "/guide/local", "/guide/overview"):
             with urlopen(self.url + path, timeout=10) as response:
                 text = response.read().decode("utf-8")
                 self.assertIn("text/html", response.headers["Content-Type"])

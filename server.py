@@ -6,6 +6,7 @@ import binascii
 import os
 import re
 import hmac
+import ipaddress
 import threading
 import secrets
 import time
@@ -15,6 +16,7 @@ from contextvars import Token
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 from uuid import uuid4, uuid5, UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request
@@ -127,7 +129,7 @@ class ControlUserCreate(BaseModel):
 
 class OwnerSetup(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    setup_key: str = Field(min_length=32, max_length=256)
+    setup_key: str = Field(default="", max_length=256)
     username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
     password: str = Field(min_length=12, max_length=256)
 
@@ -282,6 +284,7 @@ def create_app():
     if online_seconds < 1:
         raise RuntimeError("MAILBOX_ONLINE_SECONDS must be positive.")
     backend = os.environ.get("MAILBOX_STORAGE", "sqlite")
+    local_first_run = os.environ.get("MAILBOX_LOCAL_FIRST_RUN") == "1" and backend == "sqlite"
     if backend == "firestore":
         store = FirestoreStore(os.environ.get("GOOGLE_CLOUD_PROJECT"),
                                os.environ.get("MAILBOX_FIRESTORE_DATABASE", "agent-mailbox"))
@@ -313,6 +316,39 @@ def create_app():
 
     def request_session_token(request):
         return request.cookies.get(session_cookie_name(request)) or request.cookies.get("agent-mailbox-session") or request.cookies.get("__Host-agent-mailbox-session")
+
+    def local_first_owner_host(request):
+        if not local_first_run or not request.client:
+            return False
+        try:
+            if not ipaddress.ip_address(request.client.host).is_loopback:
+                return False
+        except ValueError:
+            return False
+        host_header = request.headers.get("host", "")
+        host_name = urlsplit("//" + host_header).hostname or ""
+        if host_name.lower() == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(host_name).is_loopback
+        except ValueError:
+            return False
+
+    def local_first_owner_request(request):
+        if not local_first_owner_host(request):
+            return False
+        origin = request.headers.get("origin", "")
+        host_header = request.headers.get("host", "")
+        try:
+            parsed_origin = urlsplit(origin)
+            origin_host = parsed_origin.hostname or ""
+            origin_is_loopback = origin_host.lower() == "localhost" or ipaddress.ip_address(origin_host).is_loopback
+        except ValueError:
+            origin_is_loopback = False
+            parsed_origin = urlsplit("")
+        return bool(origin and host_header and origin_is_loopback and
+                    parsed_origin.scheme == request.url.scheme and
+                    parsed_origin.netloc.casefold() == host_header.casefold())
 
     def set_session_cookies(response, request, session_token, csrf_token):
         secure = secure_web_cookies(request)
@@ -650,15 +686,18 @@ def create_app():
         return response
 
     @app.get("/auth/status")
-    def account_status():
+    def account_status(request: Request):
         exists = store.owner_account_exists()
-        return JSONResponse({"setup_required": not exists}, headers={"Cache-Control": "no-store"})
+        return JSONResponse({"setup_required": not exists,
+                             "local_setup_available": not exists and local_first_owner_host(request)},
+                            headers={"Cache-Control": "no-store"})
 
     @app.post("/auth/setup", status_code=201)
     def setup_owner_account(body: OwnerSetup, request: Request):
         if store.owner_account_exists():
             raise HTTPException(409, "The first owner account is already set up")
-        if not secrets.compare_digest(body.setup_key.encode(), hub_key.encode()):
+        has_setup_key = bool(body.setup_key) and secrets.compare_digest(body.setup_key.encode(), hub_key.encode())
+        if not has_setup_key and not local_first_owner_request(request):
             raise HTTPException(401, "Invalid one-time setup secret")
         now = time.time()
         username = body.username.strip()

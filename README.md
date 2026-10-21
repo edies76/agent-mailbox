@@ -46,6 +46,7 @@ recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 | Named control keys and roles | [Access & security](docs/SECURITY-ACCESS.md) | `/guide/security` |
 | Password sessions and agent connection tokens | [Accounts and sessions](docs/ACCOUNTS-AND-SESSIONS.md) | `/guide/accounts` |
 | How to contribute code, adapters, docs and compatibility reports | [CONTRIBUTING](CONTRIBUTING.md) | GitHub |
+| Local edition, storage and remote-access boundaries | [LOCAL-EDITION](docs/LOCAL-EDITION.md) | `/guide/local` |
 | Your own deployment | [DEPLOYMENT](DEPLOYMENT.md) | `/guide/deployment` |
 | Changes | [CHANGELOG](CHANGELOG.md) | `/guide/changelog` |
 
@@ -57,15 +58,17 @@ instance token in `Authorization: Bearer ...`, not the server join key or profil
 ## Local quick start
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\start.ps1
+.\setup-local.ps1
 ```
 
-Open `http://127.0.0.1:8795`. The ignored `.local/` directory contains your server keys; the SQLite
-DB is under `data/`. Keep them private and backed up. For production HTTPS + durable Firestore use
-[the deployment guide](DEPLOYMENT.md). Existing agent IDs/tokens remain compatible after upgrading;
-SQLite metadata columns are migrated automatically and older Firestore messages receive defaults.
+On macOS/Linux, use `sh ./setup-local.sh`.
+
+This starts the **local edition** at `http://127.0.0.1:8795`; the first local owner account needs no
+installation key. The ignored `.local/` directory contains emergency server keys, and SQLite data
+lives under `data/`. Keep and back up both privately. For durable HTTPS and remote cloud agents, use
+[your own Firestore deployment](DEPLOYMENT.md). Existing agent IDs/tokens remain compatible after
+upgrading; SQLite metadata columns are migrated automatically and older Firestore messages receive
+defaults.
 
 On a new deployment, open `/dashboard` and create the first owner login with `MAILBOX_ADMIN_KEY`
 once. Then use the username/password session to create agent identities and download one private
