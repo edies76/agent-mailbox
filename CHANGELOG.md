@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.6
+
+- Turn instance registration into a required agent handoff: the dashboard produces a copy-ready, instance-bound onboarding prompt alongside the private MCP credentials and clearly gates completion on configuring MCP and teaching the agent.
+- Tell MCP clients to call `mailbox_workflow` as their required first Agent Mailbox action; the shared workflow loads the complete skill and persistent instructions.
+
 ## 0.3.5
 
 - Add one-command Windows and macOS/Linux local editions backed by a private SQLite file, with a no-install-key first-owner claim restricted to a matching loopback origin.

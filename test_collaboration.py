@@ -237,6 +237,7 @@ class CollaborationTests(unittest.TestCase):
         initialized = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                                           "clientInfo": {"name": "mailbox-test", "version": "1"}})
         self.assertIn("instructions", initialized["result"])
+        self.assertIn("REQUIRED FIRST STEP", initialized["result"]["instructions"])
         tools = rpc("tools/list")["result"]["tools"]
         self.assertIn("mailbox_reply", [tool["name"] for tool in tools])
         check = rpc("tools/call", {"name": "mailbox_check", "arguments": {}})["result"]

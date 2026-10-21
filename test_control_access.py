@@ -88,6 +88,12 @@ class ControlAccessTests(unittest.TestCase):
     def test_workflow_delivers_master_and_guides_have_real_assets(self):
         workflow = self.request("GET", "/workflow")
         self.assertIn("Take useful initiative", workflow["master_prompt"])
+        dashboard = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
+        dashboard_js = (Path(__file__).parent / "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("Siguiente paso obligatorio", dashboard)
+        self.assertIn("new-agent-onboarding", dashboard)
+        self.assertIn("mailbox_workflow", dashboard_js)
+        self.assertIn("copy-agent-onboarding", dashboard_js)
         from urllib.request import urlopen
         for path in ("/", "/en", "/guide/start", "/guide/security", "/guide/brand", "/brand-symbol.svg", "/social-card.png"):
             with urlopen(self.url + path, timeout=10) as response:
