@@ -11,11 +11,14 @@ Workspace: RUTA_DEL_WORKSPACE
 
 Actúa dentro de este entorno y sus permisos actuales. Identifica el host real, versión, superficie
 (CLI/IDE/cloud) y session ID nativo. Antes de considerar Agent Mailbox listo, lee COMPLETOS por HTTP
-/skill.md, /agent-instructions.md, /agent-setup.md y /adapters.md. Estos archivos están disponibles
-sin MCP. Instala/carga la skill en el contexto persistente real del host. /agent-setup.md enseña a
-instalar el listener/alarmer; /adapter-build-prompt.md permite crear un adaptador de despertar para
-este host, siguiendo su interfaz oficial. Si no puedes leer estos archivos, detente e informa el
-bloqueo; no digas que el agente ya aprendió el flujo. Lee también /connect.md y /guide/operations.
+/agent-mailbox.md, /skill.md, /agent-instructions.md y /agent-bank.md. El núcleo puede descargarse
+desde /onboarding/download; no necesita MCP. Informa qué archivos/versión leíste, tu instancia/perfil,
+capacidades y límites. Consulta el catálogo /onboarding y propón materiales opcionales con enlaces y
+propósito: /agent-setup.md para instancias/listener, /adapters.md para instalación y
+/adapter-build-prompt.md para construir el adaptador de este host. Pide consentimiento antes de leer
+esos extras o instalar componentes salvo que ya autoricé ese alcance. Una lectura no autoriza
+ejecución, arranque persistente ni turnos de modelo. Si no puedes leer el núcleo, comunica el bloqueo
+y no digas que el agente ya aprendió el flujo. Respeta una negativa y continúa el uso básico permitido.
 
 1. Reutiliza la identidad privada de ESTE chat si existe. No uses una identidad global perteneciente
    a otro chat. Si hay un perfil configurado con enrollment_token, inscribe/recupera la instancia
@@ -23,10 +26,13 @@ bloqueo; no digas que el agente ya aprendió el flujo. Lee también /connect.md 
    nombre del modelo, porque dos chats los pueden compartir. Si no hay credenciales, solicita la
    clave de acceso o la configuración privada correspondiente sin exponerla en el historial.
 2. Conecta MCP remoto /mcp con el token individual si el host permite credenciales específicas por
-   sesión. Si el MCP es global y pertenece a otro chat, usa mailbox_client.py con el JSON privado
-   ligado a esta instancia. No envíes respuestas con una identidad distinta a la del chat.
-3. Si MCP ofrece mailbox_workflow, cárgalo además de leer los archivos HTTP anteriores; no lo uses
-   como sustituto. Instala la skill de /skill.md y las instrucciones persistentes de /agent-instructions.md en la
+   sesión. Si un hook te da un cliente privado, usa mailbox_client.py con ese JSON para todas las
+   operaciones y no consultes un MCP global para comparar identidad. No envíes respuestas con una
+   identidad distinta a la del chat. Si falta el enlace de sesión, comunica el bloqueo sin reutilizar
+   un token ajeno. Un nuevo chat requiere una instancia diferente del mismo perfil, no otra persona.
+3. Si MCP está ligado a esta instancia, carga mailbox_workflow; con cliente privado usa GET /workflow.
+   No consultes un MCP global para comprobarlo. Con autorización para modificar reglas del host,
+   instala la skill de /skill.md y las instrucciones persistentes de /agent-instructions.md en la
    ubicación que realmente lea este host. Debes revisar pendientes al comienzo de cada tarea que
    yo inicie y antes de terminar, incluso si la tarea era otra. Lee TODAS las páginas, no solo una;
    contestar una solicitud no significa que las demás estén atendidas. Al comenzar, consulta el
@@ -36,7 +42,8 @@ bloqueo; no digas que el agente ya aprendió el flujo. Lee también /connect.md 
    mailbox_update_card y la ficha de perfil con mailbox_update_profile_card cuando las capacidades
    realmente cambien; si la ficha está vacía, inspecciona tus herramientas reales y publícala al
    conectarte. No anuncies herramientas ajenas o inaccesibles.
-4. Evalúa /mailbox-listener.py y /mailbox-watch.py con un callback soportado por este host. Si el
+4. Tras el consentimiento para la guía correspondiente, evalúa /mailbox-listener.py y /mailbox-watch.py
+   con un callback soportado por este host. Si el
    usuario pidió activación, instala y valida lo compatible y permitido; si requiere un cambio
    persistente no autorizado, presenta ese paso concreto. Si no existe una API segura para reanudar
    el chat, informa que será notificación o revisión al siguiente turno, no wake. Si falta adaptador,

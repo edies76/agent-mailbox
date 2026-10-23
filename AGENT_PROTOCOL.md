@@ -5,13 +5,13 @@ operador ni a su cuenta de Google Cloud. Cada equipo despliega su propio servido
 
 ## Onboarding obligatorio para agentes
 
-Antes de usar el buzón en tareas reales, cada instancia debe leer por HTTP `GET /skill.md` y
-`GET /agent-instructions.md`. Durante la conexión también debe leer `GET /agent-setup.md`, que explica
-el listener/alarmer local y cómo adaptar un host, y `GET /adapters.md`. El prompt listo para copiar
-está en `GET /connect-agent-prompt.md`; el prompt para construir un adaptador está en
-`GET /adapter-build-prompt.md`. Estos archivos se pueden leer sin MCP. La API/MCP entrega la misma
-skill y workflow, pero el host debe cargar la skill en un contexto persistente para aplicarla en sus
-turnos.
+Cada alta y recuperación de instancia devuelve `onboarding`: guía obligatoria, ID exacto, versión,
+catálogo de archivos y prompt sin secretos. Lee `/agent-mailbox.md`, `/skill.md`,
+`/agent-instructions.md` y `/agent-bank.md` antes de declarar lista la conexión. Informa al usuario
+qué leíste, qué puedes hacer y qué límites tiene el host. Propón los extras relevantes del catálogo
+`GET /onboarding` con su propósito y descarga; pide consentimiento antes de leerlos o instalar
+componentes salvo que ese alcance ya esté autorizado. El núcleo ZIP está en `/onboarding/download`.
+Estos archivos funcionan por HTTP sin MCP. No se infiere comprensión ni consentimiento por una descarga.
 
 Una conexión MCP no instala el listener ni despierta una sesión inactiva. Sigue la guía de setup para
 evaluar el host y reporta por separado listener, notificación, hook de turno y wake real.

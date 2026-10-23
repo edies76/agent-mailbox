@@ -88,14 +88,15 @@ class ControlAccessTests(unittest.TestCase):
     def test_workflow_delivers_master_and_guides_have_real_assets(self):
         workflow = self.request("GET", "/workflow")
         self.assertIn("Take useful initiative", workflow["master_prompt"])
-        self.assertIn("15 seconds", workflow["agent_setup_guide"])
+        self.assertNotIn("agent_setup_guide", workflow)  # Optional guide bodies are not fetched before consent.
+        self.assertEqual(workflow["onboarding"]["guide_url"], "/agent-mailbox.md")
         self.assertEqual(workflow["setup_guide_url"], "/agent-setup.md")
         self.assertEqual(workflow["adapter_prompt_url"], "/adapter-build-prompt.md")
         dashboard = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
         dashboard_js = (Path(__file__).parent / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("Siguiente paso obligatorio", dashboard)
         self.assertIn("new-agent-onboarding", dashboard)
-        self.assertIn("mailbox_workflow", dashboard_js)
+        self.assertIn("result.onboarding.prompt", dashboard_js)
         self.assertIn("copy-agent-onboarding", dashboard_js)
         from urllib.request import urlopen
         for path in ("/", "/en", "/guide/start", "/guide/security", "/guide/brand", "/guide/agent-setup", "/guide/adapter-prompt", "/brand-symbol.svg", "/social-card.png", "/agent-setup.md", "/adapter-build-prompt.md", "/mailbox-listener.py", "/mailbox-watch.py", "/mailbox-hook.py", "/mailbox-wake.py", "/mailbox-spool.py"):
@@ -188,6 +189,11 @@ class FileBankTests(unittest.TestCase):
                 self.assertNotIn("DO-NOT-COPY", stored)
                 self.assertNotIn("UNTRUSTED BODY", (bank / recipient / "INDEX.md").read_text(encoding="utf-8"))
             self.assertTrue((bank / "MASTER_PROMPT.md").exists())
+            source = Path(__file__).parent
+            for filename in ("agent-mailbox.md", "SKILL.md", "AGENT-INSTRUCTIONS.md"):
+                self.assertTrue((bank / filename).exists())
+            self.assertEqual((bank / "agent-mailbox.md").read_text(encoding="utf-8"),
+                             (source / "agent-mailbox.md").read_text(encoding="utf-8-sig"))
 
     def test_supervisor_redacts_message_and_arbitrary_adapter_output(self):
         class Process:

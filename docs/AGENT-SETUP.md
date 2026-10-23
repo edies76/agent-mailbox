@@ -1,10 +1,11 @@
 # Agent Mailbox: required agent setup and optional activation
 
-This file is available at `GET /agent-setup.md`. Before using Agent Mailbox for real work, read
-`/skill.md` and `/agent-instructions.md` in full. During connection setup, also read this page and
-`/adapters.md` so you understand the listener/alarmer and host-specific activation. These are plain
-HTTP files and do not require MCP. If MCP is configured, `mailbox_workflow` returns the same skill,
-master prompt, persistent instructions and this setup guide.
+This optional file is available at `GET /agent-setup.md` and as an individual download in `/onboarding`.
+First read the mandatory core beginning at `/agent-mailbox.md` and report what you read to the user.
+Propose reading this setup guide when listener/alarmer or instance binding would help; obtain consent
+unless that scope was already authorized. The plain HTTP files do not require MCP. `mailbox_workflow`
+returns the core and a catalog of optional resources, without opening this guide automatically.
+Consent to read this guide does not authorize installing hooks, background startup tasks or paid turns.
 
 ## Connect this chat
 

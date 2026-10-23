@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, AliasChoices, ValidationError
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
 from stores import FirestoreStore, SQLiteStore
+from onboarding import catalog as onboarding_catalog, core_archive, handoff as onboarding_handoff, resource_file, resource_content
 
 MAX_MESSAGE_ID = 2**63 - 1
 MAX_AGENT_API_KEYS = 25
@@ -432,8 +433,34 @@ def create_app():
         ("/mailbox-client.py", "mailbox_client.py", "text/x-python"),
         ("/agent-instructions.md", "docs/AGENT-INSTRUCTIONS.md", "text/plain"),
         ("/agent-bank.md", "docs/AGENT-MAILBOX-MASTER-PROMPT.md", "text/plain"),
+        ("/agent-mailbox.md", "agent-mailbox.md", "text/plain"),
     ]:
         app.add_api_route(url, public_file(filename, mime), methods=["GET"], include_in_schema=False)
+
+    @app.get("/onboarding")
+    def onboarding_manifest():
+        return JSONResponse(onboarding_catalog(), headers={"Cache-Control": "no-store"})
+
+    @app.get("/onboarding/download", include_in_schema=False)
+    def onboarding_download():
+        return Response(core_archive(), media_type="application/zip", headers={
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": 'attachment; filename="agent-mailbox-onboarding.zip"'})
+
+    @app.get("/onboarding/files/{resource_id}", include_in_schema=False)
+    def onboarding_resource(resource_id: str):
+        path = resource_file(resource_id)
+        if path is None:
+            raise HTTPException(404, "Onboarding resource not found")
+        return FileResponse(path, filename=path.name, media_type="application/octet-stream",
+                            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/onboarding/resources/{resource_id}")
+    def onboarding_resource_content(resource_id: str):
+        result = resource_content(resource_id)
+        if result is None:
+            raise HTTPException(404, "Onboarding resource not found")
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
     @app.get("/guide", include_in_schema=False)
     def guides_home():
@@ -474,6 +501,11 @@ def create_app():
                 return wait_mail(identifier, int(query.get("after_id", 0)), int(query.get("timeout", 25)))
             if path == "/workflow" and method == "GET":
                 return workflow_bundle()
+            if path.startswith("/onboarding/resources/") and method == "GET":
+                result = resource_content(path.rsplit("/", 1)[1])
+                if result is None:
+                    raise HTTPException(404, "Onboarding resource not found")
+                return result
             if path == "/inbox/summary" and method == "GET":
                 return inbox_summary_for(identifier)
             if path == "/outbox" and method == "GET":
@@ -855,7 +887,8 @@ def create_app():
                    description=body.description, capabilities=body.capabilities,
                    token_hash=hashlib.sha256(token.encode()).hexdigest(), created_at=now, last_seen=now)
         store.register(row)
-        return {"agent": public_agent(row, now), "token": token}
+        agent = public_agent(row, now)
+        return {"agent": agent, "token": token, "onboarding": onboarding_handoff(agent)}
 
     def public_profile(row):
         return {key: row.get(key, [] if key == "capabilities" else "") for key in
@@ -902,7 +935,8 @@ def create_app():
         return {"version": APP_VERSION, "skill": (root / "skills/agent-mailbox/SKILL.md").read_text(encoding="utf-8"),
                 "master_prompt": (root / "docs/AGENT-MAILBOX-MASTER-PROMPT.md").read_text(encoding="utf-8"),
                 "persistent_instructions": (root / "docs/AGENT-INSTRUCTIONS.md").read_text(encoding="utf-8"),
-                "agent_setup_guide": (root / "docs/AGENT-SETUP.md").read_text(encoding="utf-8"),
+                "entrypoint": (root / "agent-mailbox.md").read_text(encoding="utf-8"),
+                "onboarding": onboarding_catalog(),
                 "setup_guide_url": "/agent-setup.md", "adapter_prompt_url": "/adapter-build-prompt.md",
                 "guide_url": "/guide/start", "scope": "task boundaries while the host has a model turn"}
 
@@ -1158,7 +1192,7 @@ def create_app():
         result = create_registration(body)
         if identity.get("control_user"):
             store.record_control_event(identity["id"], "agent_registered", result["agent"]["id"])
-        return result
+        return JSONResponse(result, status_code=201, headers={"Cache-Control": "no-store"})
 
     @app.get("/stats")
     def stats(identity: Identity):
@@ -1224,8 +1258,9 @@ def create_app():
                    description=body.description, capabilities=body.capabilities,
                    token_hash=hashlib.sha256(token.encode()).hexdigest())
         created = store.enroll_profile_instance(profile_id, row)
-        return JSONResponse({"agent": public_agent(store.get_agent(identifier), time.time()),
-                             "token": token, "resumed": not created}, status_code=201,
+        agent = public_agent(store.get_agent(identifier), time.time())
+        return JSONResponse({"agent": agent, "token": token, "resumed": not created,
+                             "onboarding": onboarding_handoff(agent)}, status_code=201,
                             headers={"Cache-Control": "no-store"})
 
     @app.delete("/profiles/{profile_id}/instances/{instance_id}")

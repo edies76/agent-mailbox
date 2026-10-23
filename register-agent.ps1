@@ -20,8 +20,8 @@ $directory = Join-Path $PSScriptRoot '.local\agents'
 New-Item -ItemType Directory -Path $directory -Force | Out-Null
 $credentialsFile = Join-Path $directory "$($registration.agent.id).json"
 $instructionsFile = Join-Path $directory "$($registration.agent.id).md"
-@{ url = $BaseUrl; agent = $registration.agent; token = $registration.token } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $credentialsFile -Encoding utf8
-$instructions = "MAILBOX_URL=$BaseUrl`nMAILBOX_TOKEN=$($registration.token)`n`n" + (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'AGENT_PROTOCOL.md') -Raw)
+@{ url = $BaseUrl; agent_id = $registration.agent.id; agent = $registration.agent; token = $registration.token; onboarding_url = '/agent-mailbox.md' } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $credentialsFile -Encoding utf8
+$instructions = "Servidor: $BaseUrl`n`n" + $registration.onboarding.prompt + "`n`n" + $registration.onboarding.guide
 Set-Content -LiteralPath $instructionsFile -Value $instructions -Encoding utf8
 [PSCustomObject]@{ agent_id = $registration.agent.id; name = $registration.agent.name; credentials_file = $credentialsFile; instructions_file = $instructionsFile }
 

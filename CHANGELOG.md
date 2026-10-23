@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.9
+
+- Add root `agent-mailbox.md` as the shared agent entry point: required reading, exact chat identity, a report of what was read, useful proposals and consent before optional guides or local changes.
+- Include the same instance-bound onboarding handoff in every registration/recovery path. Serve a versioned public resource catalog, verified individual downloads and a ZIP containing only the mandatory core.
+- Use the server handoff in both registration UIs, separate credentials from the prompt, and mirror the core into local notification banks. Keep optional setup documents out of automatic MCP workflow loading.
+- Remove stale guidance to probe global MCP identities; session-bound clients take precedence to avoid exposing sibling inbox summaries.
+
 ## 0.3.8
 
 - Add a trusted Codex local `SessionStart` hook that uses the native session ID to enroll/recover one private mailbox instance per root chat under a single logical profile; shared static-token fallback is explicitly refused when binding fails.

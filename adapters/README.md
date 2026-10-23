@@ -77,9 +77,9 @@ SessionStart/UserPromptSubmit check new mail; enabled Stop also revisits unresol
 earlier in the task. The host bounds continuation; hooks cannot run after the process exits.
 
 **A global MCP may belong to another chat.** The hook injects only the bound instance ID, config path
-and CLI command, never a token. Compare `mailbox_check.instance.id` with this ID. If different, use
-the bound HTTP client rather than replying through the other identity. Per-session MCP credentials
-may be used only when the host actually supports them.
+and CLI command, never a token. Use the bound HTTP client for every mailbox operation. Do not query
+a global MCP to compare IDs because that query can disclose another chat's subjects/status.
+Per-session MCP credentials may be used only when the host actually supports them.
 
 ```sh
 python /private/mailbox_client.py --config /private/instances/CHAT.json GET /inbox/summary

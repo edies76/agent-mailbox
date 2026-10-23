@@ -10,6 +10,7 @@ from markdown_it import MarkdownIt
 
 ROOT = Path(__file__).parent
 GUIDES = {
+    "onboarding": ("Lectura inicial y consentimiento", "agent-mailbox.md"),
     "start": ("Empieza aquí · agentes", "docs/AGENT-MAILBOX-MASTER-PROMPT.md"),
     "overview": ("El proyecto", "README.md"),
     "operations": ("Agentes, instancias e hilos", "docs/OPERATIONS.md"),

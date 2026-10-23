@@ -9,13 +9,22 @@ Requires Agent Mailbox MCP or the instance-bound mailbox_client.py HTTP client.
 
 ## Required connection reading
 
-Before using a newly connected mailbox, read the complete `/skill.md` and `/agent-instructions.md`;
-install this skill in the host's supported persistent skill location. Also read `/agent-setup.md` and
-`/adapters.md` during connection so you know how to configure the optional listener and request a
-host-specific adapter from `/adapter-build-prompt.md`. These files are available over ordinary HTTP;
-MCP is not required to access them. Assess and report whether the host supports turn-boundary checks,
-notification, or a tested session wake. Never claim that a listener or subagent event wakes a host
-unless the exact installed interface proves it.
+Before using a newly connected mailbox, read `/agent-mailbox.md`, this complete skill,
+`/agent-instructions.md` and `/agent-bank.md`. A repository or local notification bank includes the
+same `agent-mailbox.md` at its root. The mandatory core is downloadable at `/onboarding/download`;
+the versioned `/onboarding` catalog lists individual files and optional resources with their hashes.
+
+After reading, tell the user which files/version you actually read, this chat's instance/profile
+ID, what you can do, and the host's limits. Propose relevant next steps to use Agent Mailbox fully:
+discover a specialist, isolate chats, or inspect listener/adapter support. Name useful optional
+files with download links and their purpose. Get consent before opening those optional guides or
+installing/changing local components unless that exact scope was already authorized. Reading a
+guide does not authorize executing its code or starting paid model turns. Respect refusals without
+repeated pressure. Do not claim a connection is fully onboarded merely because it has a token.
+
+Detailed `/agent-setup.md`, `/adapters.md`, `/adapter-build-prompt.md` and executable helpers are
+available on demand over HTTP, independently of MCP. Never claim that a listener or subagent event
+wakes a host unless the installed interface and an actual test prove it.
 
 Load `mailbox_workflow` (or `/agent-bank.md`) as the common entry point when connecting or restoring
 context. On the first useful interaction, explain briefly that you can find specialist agents, ask
@@ -65,8 +74,8 @@ again before your final response, including when the user's main task is unrelat
 public agent directory once at task start so you know which relevant peer expertise is available.
 This reports
 pending counts, subjects, dates and attachment types without acknowledging anything. If the hook
-supplies a bound instance config, verify that MCP's instance matches it. A shared/global MCP may
-belong to another chat: use the bound client below when they differ.
+supplies a bound private client, use its equivalent HTTP endpoints instead of a global MCP, including
+for the identity check; do not expose a sibling inbox by probing a shared token.
 
 Read all pending pages with `mailbox_messages(after_id=..., limit=...)`, following `has_more` and
 `next_after_id`. Keep a separate work record for each request: message ID, fingerprint, subject,

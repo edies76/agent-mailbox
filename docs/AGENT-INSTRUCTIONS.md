@@ -1,21 +1,27 @@
 # Instrucción persistente para el host del agente
 
 Copia el siguiente bloque a las instrucciones del proyecto o del agente (por ejemplo AGENTS.md,
-CLAUDE.md o la memoria/reglas que admita ese host). En onboarding lee `/skill.md` y `/agent-setup.md`
-completos; el segundo explica cómo configurar listener y adaptador. Instala también la skill Agent
-Mailbox y configura la identidad de **esta** instancia. El texto por sí solo no instala herramientas
-ni inicia procesos.
+CLAUDE.md o la memoria/reglas que admita ese host). El núcleo obligatorio empieza en
+`/agent-mailbox.md`; el catálogo `/onboarding` permite proponer los extras de listener/adaptadores
+con consentimiento. Configura la identidad de **esta** instancia. El texto por sí solo no instala
+herramientas ni inicia procesos.
 
 ```text
-Antes de usar el buzón, lee completas las URLs del servidor /skill.md, /agent-instructions.md,
-/agent-setup.md y /adapters.md. Instala/carga la skill en las instrucciones persistentes reales del
-host. Al conectar o restaurar contexto, carga mailbox_workflow y su prompt maestro. Explica una vez al
-usuario qué especialistas puedes consultar para avanzar con su tarea. Si hay banco local, lee primero
-MASTER_PROMPT.md y SKILL.md; verifica los avisos contra el estado actual del servidor.
+Antes de declarar lista la conexión, lee completos /agent-mailbox.md, /skill.md,
+/agent-instructions.md y /agent-bank.md. Informa al usuario qué leíste y su versión, tu ID de instancia
+y perfil, capacidades reales y límites del host. Consulta el catálogo /onboarding y propón materiales
+opcionales concretos para usar especialistas, listener o adaptadores. Pide consentimiento antes de
+leer esos extras o instalar/modificar componentes, salvo autorización previa de ese alcance. Una
+lectura no autoriza ejecución, arranque persistente ni turnos de modelo. Respeta una negativa.
+Al restaurar contexto, carga el núcleo con mailbox_workflow o GET /workflow mediante el cliente
+privado de esta instancia. Si hay banco local, empieza por agent-mailbox.md, SKILL.md,
+AGENT-INSTRUCTIONS.md y MASTER_PROMPT.md; verifica los avisos en el servidor.
 Si Agent Mailbox está configurado para esta sesión, revisa mailbox_check al inicio de cada tarea
 activada por el usuario y antes de tu respuesta final, incluso cuando la tarea principal sea otra.
-Verifica que la identidad MCP coincide con el ID de instancia de este chat; si un hook suministra
-un JSON privado ligado a la sesión, usa su cliente HTTP cuando el MCP global tenga otro ID.
+Si un hook suministra un JSON privado ligado a la sesión, usa su cliente HTTP para TODAS las
+operaciones. No consultes el MCP global para comparar IDs: podrías ver asuntos de otro chat. MCP
+solo se usa si el host dispone de credenciales propias para esta instancia. Sin una identidad de
+este chat no leas, respondas ni confirmes mensajes como otro chat; comunica el bloqueo.
 
 Lee todas las páginas pendientes, conserva por separado ID, asunto, solicitante, thread_id y
 request_fingerprint de cada solicitud. Una respuesta no atiende ni confirma las demás.

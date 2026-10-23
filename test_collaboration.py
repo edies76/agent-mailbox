@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import hashlib
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
+from zipfile import ZipFile
 
 import test_mailbox as http_tests
 from adapters.mailbox_hook import bind_session, format_context, handle_hook_event, hook_response
@@ -30,6 +32,52 @@ class CollaborationTests(unittest.TestCase):
     def enroll(self, profile, key):
         return self.request("POST", f"/profiles/{profile['profile']['id']}/instances",
                             profile["enrollment_token"], {"instance_name": key, "session_key": key}, 201)
+
+    def test_all_registration_paths_deliver_the_same_instance_bound_onboarding(self):
+        joined = self.request("POST", "/join", self.join_key, {"name": "HTTP newcomer"}, 201)
+        profile = self.profile()
+        enrolled = self.enroll(profile, "onboarding-native-chat")
+        resumed = self.enroll(profile, "onboarding-native-chat")
+        self.assertEqual(enrolled["agent"]["id"], resumed["agent"]["id"])
+        self.assertTrue(resumed["resumed"])
+        for registration in (self.a, joined, enrolled, resumed):
+            onboarding = registration["onboarding"]
+            self.assertTrue(onboarding["required_before_use"])
+            self.assertEqual(onboarding["instance_id"], registration["agent"]["id"])
+            self.assertIn(registration["agent"]["id"], onboarding["prompt"])
+            self.assertEqual(onboarding["guide_url"], "/agent-mailbox.md")
+            self.assertEqual(onboarding["guide"], (Path(__file__).parent / "agent-mailbox.md").read_text(encoding="utf-8"))
+            for secret in (registration["token"], self.admin, self.join_key, profile["enrollment_token"]):
+                self.assertNotIn(secret, json.dumps(onboarding))
+        self.assertEqual(enrolled["onboarding"]["profile_id"], profile["profile"]["id"])
+        self.assertNotEqual(joined["onboarding"]["instance_id"], enrolled["onboarding"]["instance_id"])
+
+    def test_onboarding_downloads_match_manifest_and_zip_excludes_optional_resources(self):
+        manifest = self.request("GET", "/onboarding")
+        mandatory = []
+        optional = []
+        for resource in manifest["resources"]:
+            self.assertEqual(resource["requires_consent"], not resource["required"])
+            (mandatory if resource["required"] else optional).append(resource["repository_path"])
+            with urlopen(self.url + resource["download_url"], timeout=10) as response:
+                content = response.read()
+                self.assertIn("attachment", response.headers["Content-Disposition"])
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+            self.assertEqual(len(content), resource["size_bytes"])
+            self.assertEqual(hashlib.sha256(content).hexdigest(), resource["sha256"])
+        self.assertTrue(optional)
+        self.assertIn("agent-mailbox.md", mandatory)
+        with urlopen(self.url + manifest["core_download_url"], timeout=10) as response:
+            archive_bytes = response.read()
+            self.assertIn("application/zip", response.headers["Content-Type"])
+        with ZipFile(io.BytesIO(archive_bytes)) as archive:
+            self.assertEqual(set(archive.namelist()), set(mandatory) | {"onboarding.json"})
+            for resource in manifest["resources"]:
+                if resource["required"]:
+                    self.assertEqual(hashlib.sha256(archive.read(resource["repository_path"])).hexdigest(), resource["sha256"])
+            self.assertEqual(json.loads(archive.read("onboarding.json")), manifest)
+        self.request("GET", "/onboarding/files/admin-key", expected=404)
+        self.request("GET", "/onboarding/files/%2e%2e", expected=404)
 
     def test_retry_keys_replay_conflict_and_deleted_tombstone(self):
         body = {"to_instance_id": self.b_id, "text": "Exact payload", "idempotency_key": "retry-1"}
@@ -286,9 +334,18 @@ class CollaborationTests(unittest.TestCase):
                                           "clientInfo": {"name": "mailbox-test", "version": "1"}})
         self.assertIn("instructions", initialized["result"])
         self.assertIn("REQUIRED FIRST STEP", initialized["result"]["instructions"])
-        self.assertIn("/agent-setup.md", initialized["result"]["instructions"])
+        self.assertIn("/agent-mailbox.md", initialized["result"]["instructions"])
         tools = rpc("tools/list")["result"]["tools"]
         self.assertIn("mailbox_reply", [tool["name"] for tool in tools])
+        self.assertIn("mailbox_read_resource", [tool["name"] for tool in tools])
+        resource = rpc("tools/call", {"name": "mailbox_read_resource", "arguments": {"resource_id": "entrypoint"}})["result"]
+        self.assertFalse(resource.get("isError", False), resource)
+        read = resource.get("structuredContent") or json.loads(resource["content"][0]["text"])
+        self.assertEqual(read["resource"]["id"], "entrypoint")
+        self.assertEqual(read["text"], (Path(__file__).parent / "agent-mailbox.md").read_text(encoding="utf-8"))
+        self.assertFalse(read["executed"])
+        missing = rpc("tools/call", {"name": "mailbox_read_resource", "arguments": {"resource_id": "private-token"}})["result"]
+        self.assertTrue(missing.get("isError"), missing)
         check = rpc("tools/call", {"name": "mailbox_check", "arguments": {}})["result"]
         self.assertFalse(check.get("isError", False), check)
         checked = check.get("structuredContent") or json.loads(check["content"][0]["text"])
@@ -306,7 +363,7 @@ class CollaborationTests(unittest.TestCase):
         self.assertEqual(result["reply"]["to_agent_id"], self.a_id)
 
     def test_human_guides_render_and_preserve_public_docs(self):
-        for path in ("/workspace", "/guide/operations", "/guide/skill", "/guide/prompt", "/guide/mcp", "/guide/accounts", "/guide/local", "/guide/overview"):
+        for path in ("/workspace", "/guide/onboarding", "/guide/operations", "/guide/skill", "/guide/prompt", "/guide/mcp", "/guide/accounts", "/guide/local", "/guide/overview"):
             with urlopen(self.url + path, timeout=10) as response:
                 text = response.read().decode("utf-8")
                 self.assertIn("text/html", response.headers["Content-Type"])
