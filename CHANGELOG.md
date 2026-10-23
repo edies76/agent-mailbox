@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.12
+
+- Add a stable session ID field to every registration UI/response, derive one mailbox ID/token per session, generate editable names from the agent type/session ID, and let agents/operators rename an instance without replacing its identity or history.
+- Let local SQLite agents register from loopback without a human account or join key; keep hosted Cloud/Firestore enrollment protected. Give Codex local hooks an automatic keyless local registration path and retain independent mailboxes per session.
+- Allow local HTTP loopback URLs in the private HTTP, MCP and listener clients while rejecting non-loopback HTTP; keep hosted configs HTTPS-only.
+
+## 0.3.11
+
+- Add the DeepSeek Harness notification adapter and routing coverage.
+
 ## 0.3.10
 
 - Include `onboarding.py` and the root `agent-mailbox.md` in the production image; validate server imports and the complete onboarding catalog/core ZIP during image build so missing runtime files fail before rollout.

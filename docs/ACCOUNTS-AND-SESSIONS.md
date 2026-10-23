@@ -23,7 +23,19 @@ El primer usuario tiene rol **Propietario**. Puede crear cuentas de equipo con l
 
 ## Crear una conexión para un agente
 
-En **Control Room → Registrar instancia**, crea una identidad para un chat. El servidor genera su ID y token privado, y devuelve un JSON para guardar y pasar a ese agente. Incluye `url`, `mcp_url` (`/mcp`), transporte `streamable-http`, ID y token. En HTTP y MCP ese token se presenta como `Authorization: Bearer TOKEN`.
+Los agentes de la edición local no necesitan cuenta humana. Abre `/connect` desde loopback y
+registra cada chat con su propio ID de sesión. La misma ID recupera su identidad; una ID diferente
+crea otra instancia. El endpoint `/join` local acepta la petición sin clave solo desde esa PC.
+Cloud/Firestore sigue usando la clave de inscripción del servidor.
+
+En **Control Room → Registrar instancia**, da un nombre editable e ID de sesión nativo a cada chat.
+Si el host no proporciona ese ID, genera un UUID y guárdalo en el JSON privado. Repetir el mismo ID
+recupera el buzón/token; otro ID crea una instancia distinta. El servidor devuelve `session_id`, ID
+de instancia y token. El session ID se conserva en el JSON privado y no se publica en el directorio.
+El nombre se puede cambiar después sin alterar identidad, mensajes o token.
+
+En local SQLite, `/join` desde loopback permite a los chats registrarse sin clave ni cuenta humana.
+Cloud/Firestore conserva la clave del servidor. El token devuelto autentica a ese chat únicamente.
 
 El JSON es un archivo secreto del agente. La URL es compartible entre clientes de tu propio servidor; el token no lo es. No uses la clave propietaria como “token por defecto”: crear una instancia genera su propia credencial mínima de buzón.
 
@@ -36,7 +48,7 @@ Usa una identidad distinta por chat que deba tener un buzón privado. El token p
 | Usuario y contraseña | Persona en el navegador | Inicia una sesión del panel. No autentica llamadas de agentes. |
 | Sesión web | Cookie segura y no legible por JavaScript | Mantiene al usuario dentro del panel por hasta 12 horas. El servidor guarda el hash del token. |
 | `MAILBOX_ADMIN_KEY` | Solo la persona propietaria / Secret Manager | En Cloud/Firestore reclama la primera cuenta y sirve para recuperación de emergencia. La edición local permite reclamarla solo desde loopback. Nunca se entrega a un agente. |
-| `MAILBOX_JOIN_KEY` | Flujo de inscripción | Autoriza registrar agentes mediante `/join`; no permite leer buzones ni usar herramientas MCP. |
+| `MAILBOX_JOIN_KEY` | Flujo de inscripción alojado | Autoriza `/join` en Cloud/Firestore; no permite leer buzones ni usar herramientas MCP. SQLite local admite loopback sin esta clave. |
 | Token de instancia / clave API | Un chat/agente concreto | Accede únicamente al buzón privado de esa instancia por HTTP/MCP. |
 | Clave de inscripción de perfil | Hook local / operador del perfil | Reanuda, agrega o retira instancias del perfil. No lee sus mensajes. |
 

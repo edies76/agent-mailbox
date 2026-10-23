@@ -7,6 +7,7 @@ cursor and invokes the host-specific on_message_command from its private config.
 import argparse
 import glob
 import hashlib
+import ipaddress
 import json
 import os
 import signal
@@ -15,10 +16,32 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 _event_stream = None
 _event_lock = threading.Lock()
 _windows_job = None
+
+
+def valid_mailbox_url(value):
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname or ""
+        _ = parsed.port
+    except ValueError:
+        return False
+    if not hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return False
+    if parsed.scheme == "https":
+        return True
+    if parsed.scheme != "http":
+        return False
+    if hostname.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 class WindowsJob:
@@ -80,8 +103,8 @@ def read_instance(path):
     for key in ("agent_id", "token", "url"):
         if not isinstance(data.get(key), str) or not data[key].strip():
             raise ValueError(f"instance config {path} lacks {key}")
-    if not data["url"].startswith("https://"):
-        raise ValueError(f"instance config {path} must use HTTPS")
+    if not valid_mailbox_url(data["url"]):
+        raise ValueError(f"instance config {path} must use HTTPS or loopback-only HTTP")
     return data
 
 

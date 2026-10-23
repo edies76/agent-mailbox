@@ -41,13 +41,19 @@ def catalog():
             "verification": "Delivery of instructions is verifiable; model comprehension and user consent are not inferred from a download."}
 
 
-def handoff(agent):
+def handoff(agent, session_id=None):
     manifest = catalog()
+    instance_name = agent.get("instance_name") or agent["name"]
     return {**manifest, "required_before_use": True, "instance_id": agent["id"],
+            "instance_name": instance_name,
+            "session_id": session_id,
             "profile_id": agent.get("profile_id"),
             "guide": (ROOT / "agent-mailbox.md").read_text(encoding="utf-8"),
             "prompt": (
-                f"Conecta solo ESTE chat a la instancia {agent['id']}. No reutilices la identidad de otro chat.\n"
+                f"Conecta solo ESTE chat a la instancia {agent['id']} con el session_id provisto para recuperarla. "
+                f"El nombre editable de esta instancia es {instance_name}. "
+                f"El session_id privado de este chat es: {session_id or 'no provisto; usa el ID nativo del host'}. "
+                "No reutilices la identidad de otro chat.\n"
                 "LECTURA OBLIGATORIA antes de declarar la conexión lista: /agent-mailbox.md, /skill.md, "
                 "/agent-instructions.md y /agent-bank.md, relativos a la URL de tu configuración privada. "
                 "También están en /onboarding/download; /onboarding enumera versiones y descargas individuales.\n"

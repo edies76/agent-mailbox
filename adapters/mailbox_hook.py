@@ -7,6 +7,7 @@ already returned and the host is idle.
 """
 
 import argparse
+import ipaddress
 import json
 import os
 import sys
@@ -19,38 +20,60 @@ from urllib.request import Request, urlopen
 
 def read_config(path):
     data = json.loads(Path(path).expanduser().read_text(encoding="utf-8-sig"))
-    required = ("url", "profile_id", "enrollment_token") if data.get("profile_id") and data.get("enrollment_token") else ("url", "token", "agent_id")
+    required = (("url",) if data.get("local_registration") else
+                ("url", "profile_id", "enrollment_token") if data.get("profile_id") and data.get("enrollment_token") else
+                ("url", "token", "agent_id"))
     for key in required:
         if not isinstance(data.get(key), str) or not data[key].strip():
             raise ValueError(f"Missing {key!r} in the private mailbox config")
-    if not data["url"].startswith("https://"):
-        raise ValueError("Mailbox URL must use HTTPS")
+    parsed = urlsplit(data["url"])
+    try:
+        hostname = parsed.hostname or ""
+        _ = parsed.port
+        local_http = parsed.scheme == "http" and (hostname.casefold() == "localhost" or
+                     ipaddress.ip_address(hostname).is_loopback)
+    except ValueError:
+        local_http = False
+    if not hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or not (parsed.scheme == "https" or local_http):
+        raise ValueError("Mailbox URL must use HTTPS or loopback-only HTTP")
     return data
 
 
 def bind_session(config, config_path, host, session_id, workspace=None):
     """One native chat maps to one stable private mailbox, even after a host restart."""
-    if not config.get("enrollment_token"):
+    if not config.get("enrollment_token") and not config.get("local_registration"):
         return config
     if not session_id:
         raise ValueError("Profile mode requires a real native session ID; refusing shared fallback")
     key = host + ":" + str(session_id)
     suffix = hashlib.sha256(key.encode()).hexdigest()[:24]
-    directory = Path(config_path).expanduser().parent / "instances" / config["profile_id"]
+    identity_group = config.get("profile_id", "local")
+    directory = Path(config_path).expanduser().parent / "instances" / identity_group
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / (suffix + ".json")
     if destination.exists():
         result = read_config(destination)
     else:
-        request = Request(config["url"].rstrip("/") + f"/profiles/{config['profile_id']}/instances",
-                          method="POST", headers={"Authorization": "Bearer " + config["enrollment_token"],
-                                                  "Content-Type": "application/json"},
-                          data=json.dumps({"instance_name": f"{config.get('instance_prefix', host)} · {suffix[:8]}",
-                                           "session_key": key, "project": workspace or config.get("project", "")}).encode())
+        enrollment_url = config["url"].rstrip("/") + (
+            "/join" if config.get("local_registration") else f"/profiles/{config['profile_id']}/instances")
+        enrollment_body = {"name": f"{config.get('instance_prefix', host)} · {suffix[:8]}",
+                           "kind": config.get("kind", host), "project": workspace or config.get("project", ""),
+                           "session_key": key}
+        if not config.get("local_registration"):
+            enrollment_body["instance_name"] = enrollment_body.pop("name")
+        headers = {"Content-Type": "application/json"}
+        if not config.get("local_registration"):
+            headers["Authorization"] = "Bearer " + config["enrollment_token"]
+        request = Request(enrollment_url, method="POST", headers=headers,
+                          data=json.dumps(enrollment_body).encode())
         with urlopen(request, timeout=8) as response:
             registered = json.load(response)
-        result = {"url": config["url"], "agent_id": registered["agent"]["id"], "token": registered["token"],
-                  "profile_id": config["profile_id"]}
+        result = {"url": config["url"], "agent_id": registered["agent"]["id"], "token": registered["token"]}
+        result["session_id"] = key
+        if config.get("local_registration"):
+            result["local_registration"] = True
+        if registered["agent"].get("profile_id"):
+            result["profile_id"] = registered["agent"]["profile_id"]
         fd, temporary = tempfile.mkstemp(dir=directory, suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -60,7 +83,7 @@ def bind_session(config, config_path, host, session_id, workspace=None):
             if os.path.exists(temporary):
                 os.unlink(temporary)
     changed = False
-    for option in ("on_message_command", "mailbox_bank_dir", "transport", "client_script"):
+    for option in ("on_message_command", "mailbox_bank_dir", "transport", "client_script", "local_registration"):
         if option in config and result.get(option) != config[option]:
             result[option] = config[option]
             changed = True
@@ -79,7 +102,7 @@ def bind_session(config, config_path, host, session_id, workspace=None):
         pass
     client_script = config.get("client_script")
     if not client_script and host == "codex" and os.environ.get("PLUGIN_ROOT"):
-        client_script = str(Path(os.environ["PLUGIN_ROOT"]) / "mailbox_client.py")
+            client_script = str(Path(os.environ["PLUGIN_ROOT"]) / "mailbox_client.py")
     if not client_script:
         client_script = str(Path(config_path).expanduser().parent / "mailbox_client.py")
     result.update(auto_continue_on_stop=config.get("auto_continue_on_stop", False),
@@ -195,8 +218,9 @@ def handle_hook_event(host, payload, config_path):
     if event not in ("SessionStart", "UserPromptSubmit", "Stop"):
         return None
     config = read_config(config_path)
-    if host == "codex" and not (config.get("profile_id") and config.get("enrollment_token")):
-        raise ValueError("Codex requires private profile enrollment config; refusing shared static-token fallback")
+    if host == "codex" and not (config.get("local_registration") or
+                                 (config.get("profile_id") and config.get("enrollment_token"))):
+        raise ValueError("Codex requires a local registration or private profile config; refusing shared static-token fallback")
     session_id = payload.get("session_id") or payload.get("sessionId")
     workspace = config.get("project") if host == "codex" else payload.get("cwd")
     config = bind_session(config, config_path, host, session_id, workspace)
@@ -215,12 +239,22 @@ def main():
     parser = argparse.ArgumentParser(description="Inject mailbox messages at supported agent lifecycle hooks.")
     parser.add_argument("--host", choices=("zcode", "claude", "codex"), required=True)
     parser.add_argument("--config",
-                        help="Private mailbox JSON; Codex defaults to AGENT_MAILBOX_PROFILE_CONFIG or ~/.agent-mailbox/codex-profile.json")
+                        help="Private mailbox JSON; Codex defaults to a keyless local URL or AGENT_MAILBOX_PROFILE_CONFIG")
     args = parser.parse_args()
     if not args.config:
         if args.host == "codex":
             args.config = os.environ.get("AGENT_MAILBOX_PROFILE_CONFIG") or str(
                 Path.home() / ".agent-mailbox" / "codex-profile.json")
+            default_path = Path(args.config).expanduser()
+            if not default_path.exists() and not os.environ.get("AGENT_MAILBOX_PROFILE_CONFIG"):
+                default_path.parent.mkdir(parents=True, exist_ok=True)
+                default_path.write_text(json.dumps({"url": os.environ.get("AGENT_MAILBOX_URL", "http://127.0.0.1:8795"),
+                                                    "local_registration": True, "kind": "codex",
+                                                    "instance_prefix": "Codex local"}, indent=2), encoding="utf-8")
+                try:
+                    os.chmod(default_path, 0o600)
+                except OSError:
+                    pass
         else:
             args.config = os.environ.get("AGENT_MAILBOX_CONFIG")
     event = None

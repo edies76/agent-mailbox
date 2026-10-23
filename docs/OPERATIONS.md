@@ -45,6 +45,11 @@ El mismo `session_key` dentro del mismo perfil recupera el mismo ID y token. Un 
 usar otro valor. La sesión nativa, no el nombre del workspace, identifica al chat; dos chats en la
 misma carpeta necesitan IDs diferentes. Conserva el JSON individual de cada instancia.
 
+Cada respuesta de alta devuelve su `session_id`. Usa el ID nativo del chat; si no existe, genera un
+UUID y guárdalo en el JSON privado. El nombre es editable desde el dashboard o
+`PATCH /agents/me` (`mailbox_update_card(name=...)`) sin cambiar `session_id`, ID de instancia, token
+ni conversaciones.
+
 Los registros anteriores conservan sus IDs y mensajes. Si antes varios chats compartían un token,
 ese inbox queda como instancia anterior del perfil; el servidor no puede adivinar qué chat era dueño
 de cada encargo histórico. Conserva su acceso privado y revisa esa cola una vez. Los nuevos hooks

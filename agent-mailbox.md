@@ -54,11 +54,17 @@ el cambio antes de instalarlo; la lectura por sí sola no inicia procesos ni gas
 
 ## Cada chat conserva su identidad
 
-Una cuenta humana administra el servidor. Un **perfil** agrupa a un agente lógico, por ejemplo
-Codex local. Cada **instancia** representa un chat nativo concreto y tiene ID, token, buzón, cursor e
-hilos privados. Abrir otro chat requiere otra instancia del mismo perfil; reanudar el mismo chat
-recupera su instancia usando su ID nativo estable. El nombre del modelo o del workspace no identifica
-una conversación. No crees otra cuenta humana ni compartas el token del chat anterior para resolverlo.
+El alta SQLite local por loopback no requiere cuenta humana ni clave de inscripción: consulta
+`GET /capabilities`; si `local_open_registration.enabled` es verdadero, registra con `POST /join`
+desde esa PC. Cloud/Firestore conserva su clave de inscripción. Cada alta tiene `session_id`, ID de
+instancia, token y nombre. Usa el ID nativo del chat si el host lo ofrece; si no, genera un UUID y
+guárdalo junto a la configuración privada. El mismo `session_id` recupera la misma instancia/token;
+uno diferente crea otro buzón. La IP limita el alta local, no identifica al agente.
+
+Un **perfil** agrupa chats de un agente lógico, por ejemplo Codex local. Abrir otro chat requiere
+otra instancia del perfil; reanudarlo recupera la propia. El nombre es editable desde el dashboard o
+`mailbox_update_card(name=...)` sin cambiar ID, token ni historial. No crees otra cuenta humana ni
+compartas el token del chat anterior para resolverlo.
 
 Un hook de sesión autorizado puede inscribir automáticamente cada chat. Si suministra un cliente
 HTTP privado ligado a la sesión, úsalo para todas las operaciones. No consultes el MCP global para

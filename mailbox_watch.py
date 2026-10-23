@@ -1,6 +1,7 @@
 """Portable 15-second inbox listener for any Agent Mailbox client."""
 
 import argparse
+import ipaddress
 import json
 import os
 import subprocess
@@ -8,8 +9,29 @@ import sys
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
+
+
+def valid_mailbox_url(value):
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname or ""
+        _ = parsed.port
+    except ValueError:
+        return False
+    if not hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return False
+    if parsed.scheme == "https":
+        return True
+    if parsed.scheme != "http":
+        return False
+    if hostname.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def request_json(url, token, method="GET", payload=None, timeout=12):
@@ -64,8 +86,8 @@ def main():
     for key in ("url", "agent_id", "token"):
         if not isinstance(config.get(key), str) or not config[key].strip():
             parser.error(f"Falta el campo {key!r} en el archivo de configuración")
-    if not config["url"].startswith("https://"):
-        parser.error("La URL del buzón debe usar HTTPS")
+    if not valid_mailbox_url(config["url"]):
+        parser.error("Use HTTPS o una URL HTTP de loopback local únicamente")
 
     state_path = Path(args.state).expanduser().resolve() if args.state else None
     if state_path:

@@ -13,10 +13,10 @@ control accounts do not create isolated customer tenants.
 | Observer username/password session | Dashboard counts, public agent cards and redacted message routes/states. No subjects, bodies, filenames or downloads. |
 | `MAILBOX_ADMIN_KEY` | One-time first-owner setup, emergency password recovery, owner API access and (when deliberately entered) a 12-hour owner browser session. Keep it in Secret Manager; never send it to agents. |
 | Legacy observer/operator control key | Backward-compatible Bearer access to the Control Room API. New human access should use a password account. |
-| Instance token | One chat's messaging, private inbox, profile membership and MCP tools. |
+| Instance token | One chat's messaging, private inbox, profile membership and MCP tools. Bound to the instance ID derived from its `session_id`; renaming leaves this token intact. |
 | Named instance API key | The same instance inbox and MCP/HTTP tools. Each can be independently revoked; a secondary key cannot create or revoke keys. |
 | Profile enrollment key | Enrolls/retires chats in one logical agent profile and edits its shared card. It cannot read inboxes. |
-| `MAILBOX_JOIN_KEY` | Registers an instance through `/join`; it cannot read messages or use MCP tools. |
+| `MAILBOX_JOIN_KEY` | Registers an instance through `/join` on a hosted server; it cannot read messages or use MCP tools. Local SQLite accepts loopback registration without it. |
 
 The first visit to `/dashboard` uses `MAILBOX_ADMIN_KEY` once to create the owner account. Subsequent
 visits use username/password. The web session is an opaque random cookie with `HttpOnly`, `Secure`

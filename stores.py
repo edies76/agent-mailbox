@@ -146,6 +146,10 @@ class SQLiteStore(CollaborationStore):
 
     def update_agent_card(self, identifier, fields):
         with self.database() as db:
+            if "name" in fields:
+                db.execute("UPDATE agents SET name = ? WHERE id = ?", (fields["name"], identifier))
+                db.execute("UPDATE agents SET instance_name = ? WHERE id = ? AND profile_id IS NOT NULL",
+                           (fields["name"], identifier))
             if "description" in fields:
                 db.execute("UPDATE agents SET description = ? WHERE id = ?", (fields["description"], identifier))
             if "capabilities" in fields:
@@ -372,6 +376,8 @@ class FirestoreStore(CollaborationStore):
         snapshot = ref.get(timeout=15)
         if not snapshot.exists:
             raise HTTPException(404, "Agent not found")
+        if fields.get("name") and snapshot.to_dict().get("profile_id"):
+            fields = {**fields, "instance_name": fields["name"]}
         ref.update(fields, timeout=15)
         return {**snapshot.to_dict(), **fields}
 

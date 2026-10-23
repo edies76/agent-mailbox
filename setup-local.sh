@@ -10,13 +10,13 @@ mkdir -p .local data
 if [ ! -s .local/admin-key ]; then
   .venv/bin/python -c 'from pathlib import Path; import secrets; Path(".local/admin-key").write_text(secrets.token_urlsafe(32), encoding="utf-8")'
 fi
-if [ ! -s .local/join-key ]; then
-  .venv/bin/python -c 'from pathlib import Path; import secrets; Path(".local/join-key").write_text(secrets.token_urlsafe(16), encoding="utf-8")'
+if [ ! -s .local/instance-seed ]; then
+  .venv/bin/python -c 'from pathlib import Path; import secrets; Path(".local/instance-seed").write_text(secrets.token_urlsafe(48), encoding="utf-8")'
 fi
 export MAILBOX_ADMIN_KEY="$(cat .local/admin-key)"
-export MAILBOX_JOIN_KEY="$(cat .local/join-key)"
+export MAILBOX_LOCAL_INSTANCE_SEED="$(cat .local/instance-seed)"
 export MAILBOX_STORAGE=sqlite
 export MAILBOX_LOCAL_FIRST_RUN=1
 export MAILBOX_DB=data/mailbox.sqlite3
-unset MAILBOX_PUBLIC_URL MAILBOX_MCP_ALLOWED_HOSTS
+unset MAILBOX_JOIN_KEY MAILBOX_PUBLIC_URL MAILBOX_MCP_ALLOWED_HOSTS
 exec .venv/bin/python -m uvicorn server:create_app --factory --host 127.0.0.1 --port "${PORT:-8795}"

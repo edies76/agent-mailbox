@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
-from uuid import uuid4, uuid5, UUID
+from uuid import uuid4, uuid5, UUID, NAMESPACE_URL
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -92,6 +92,7 @@ class AgentRegistration(BaseModel):
     project: str = Field(default="", max_length=300)
     description: str = Field(default="", max_length=500)
     capabilities: list[str] = Field(default_factory=list, max_length=20)
+    session_key: str | None = Field(default=None, min_length=1, max_length=200)
 
     @field_validator("capabilities")
     @classmethod
@@ -109,6 +110,7 @@ class AgentRegistration(BaseModel):
 
 class AgentCardPatch(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
     capabilities: list[str] | None = Field(default=None, max_length=20)
 
@@ -118,8 +120,20 @@ class AgentCardPatch(BaseModel):
         return AgentRegistration.unique_capabilities(values) if values is not None else values
 
 
-class ProfileCardPatch(AgentCardPatch):
-    pass
+class ProfileCardPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    description: str | None = Field(default=None, max_length=500)
+    capabilities: list[str] | None = Field(default=None, max_length=20)
+
+    @field_validator("capabilities")
+    @classmethod
+    def unique_capabilities(cls, values):
+        return AgentRegistration.unique_capabilities(values) if values is not None else values
+
+
+class AgentRename(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=100)
 
 
 class ControlUserCreate(BaseModel):
@@ -286,6 +300,10 @@ def create_app():
         raise RuntimeError("MAILBOX_ONLINE_SECONDS must be positive.")
     backend = os.environ.get("MAILBOX_STORAGE", "sqlite")
     local_first_run = os.environ.get("MAILBOX_LOCAL_FIRST_RUN") == "1" and backend == "sqlite"
+    local_instance_seed = os.environ.get("MAILBOX_LOCAL_INSTANCE_SEED") or hub_key
+    if local_first_run and len(local_instance_seed) < 32:
+        raise RuntimeError("MAILBOX_LOCAL_INSTANCE_SEED must contain at least 32 random characters.")
+    local_instance_lock = threading.Lock()
     if backend == "firestore":
         store = FirestoreStore(os.environ.get("GOOGLE_CLOUD_PROJECT"),
                                os.environ.get("MAILBOX_FIRESTORE_DATABASE", "agent-mailbox"))
@@ -350,6 +368,12 @@ def create_app():
         return bool(origin and host_header and origin_is_loopback and
                     parsed_origin.scheme == request.url.scheme and
                     parsed_origin.netloc.casefold() == host_header.casefold())
+
+    def local_keyless_registration_request(request):
+        if not local_first_run or not local_first_owner_host(request):
+            return False
+        # Native local clients omit Origin; browsers must use the exact loopback origin.
+        return not request.headers.get("origin") or local_first_owner_request(request)
 
     def set_session_cookies(response, request, session_token, csrf_token):
         secure = secure_web_cookies(request)
@@ -881,14 +905,29 @@ def create_app():
         return {"agents": matches[:limit], "total": len(matches), "query": text,
                 "capability": capability, "scope": "authenticated server directory; descriptions and capabilities are peer supplied"}
 
-    def create_registration(body):
-        identifier, token, now = str(uuid4()), secrets.token_urlsafe(32), time.time()
-        row = dict(id=identifier, name=body.name, kind=body.kind, project=body.project,
-                   description=body.description, capabilities=body.capabilities,
-                   token_hash=hashlib.sha256(token.encode()).hexdigest(), created_at=now, last_seen=now)
-        store.register(row)
+    def create_registration(body, registration_seed):
+        session_key = body.session_key or secrets.token_urlsafe(24)
+        namespace = uuid5(NAMESPACE_URL, "agent-mailbox-registration:" +
+                          hashlib.sha256(registration_seed.encode()).hexdigest())
+        identifier = str(uuid5(namespace, session_key))
+        token = hmac.new(registration_seed.encode(), identifier.encode(), hashlib.sha256).hexdigest()
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        with local_instance_lock:
+            existing = store.get_agent(identifier)
+            if existing:
+                if not secrets.compare_digest(existing.get("token_hash", ""), token_hash):
+                    raise HTTPException(409, "Session ID is already bound to another credential.")
+                agent = public_agent(existing, time.time())
+                return {"agent": agent, "token": token, "session_id": session_key,
+                        "resumed": True, "onboarding": onboarding_handoff(agent, session_key)}
+            now = time.time()
+            row = dict(id=identifier, name=body.name, kind=body.kind, project=body.project,
+                       description=body.description, capabilities=body.capabilities,
+                       token_hash=token_hash, created_at=now, last_seen=now)
+            store.register(row)
         agent = public_agent(row, now)
-        return {"agent": agent, "token": token, "onboarding": onboarding_handoff(agent)}
+        return {"agent": agent, "token": token, "session_id": session_key, "resumed": False,
+                "onboarding": onboarding_handoff(agent, session_key)}
 
     def public_profile(row):
         return {key: row.get(key, [] if key == "capabilities" else "") for key in
@@ -1156,13 +1195,20 @@ def create_app():
                                                                   "X-Content-Type-Options": "nosniff"})
 
     @app.post("/join", status_code=201)
-    def join(body: AgentRegistration, credentials: Credential):
-        if not join_key:
+    def join(body: AgentRegistration, request: Request, credentials: Credential):
+        local_open = local_keyless_registration_request(request)
+        if credentials is not None:
+            if not join_key or not secrets.compare_digest(credentials.credentials.encode(), join_key.encode()):
+                raise HTTPException(401, "Clave de acceso incorrecta o ausente", headers={"WWW-Authenticate": "Bearer"})
+            registration_seed = hub_key
+        elif local_open:
+            registration_seed = local_instance_seed
+        elif not join_key:
             raise HTTPException(503, "Self-registration is not configured")
-        if credentials is None or not secrets.compare_digest(credentials.credentials.encode(), join_key.encode()):
+        else:
             raise HTTPException(401, "Clave de acceso incorrecta o ausente", headers={"WWW-Authenticate": "Bearer"})
-        result = create_registration(body)
-        # The shared key is only checked here; it never authenticates mailbox access.
+        result = create_registration(body, registration_seed)
+        # A shared join key authorizes registration only; each chat gets its own bearer token.
         from fastapi.responses import JSONResponse
         return JSONResponse({**result, "instructions_url": "/connect.md"}, status_code=201,
                             headers={"Cache-Control": "no-store"})
@@ -1175,6 +1221,9 @@ def create_app():
     @app.get("/capabilities")
     def capabilities():
         return {"version": APP_VERSION, "profiles": True, "private_instance_inboxes": True,
+                "local_open_registration": {"enabled": local_first_run, "requires_user_account": False,
+                                            "requires_join_key": False,
+                                            "scope": "loopback client and local host only"},
                 "bound_replies": True, "transactional_final_reply": True, "idempotent_delivery": True,
                 "control_roles": ["owner", "operator", "observer"], "local_file_bank": True,
                 "peer_discovery": {"enabled": True, "agent_card_description_chars": 500,
@@ -1189,7 +1238,7 @@ def create_app():
     def register(body: AgentRegistration, identity: Identity):
         if not can_manage_agents(identity):
             raise HTTPException(403, "Agent registration requires an owner or operator key")
-        result = create_registration(body)
+        result = create_registration(body, local_instance_seed if local_first_run else hub_key)
         if identity.get("control_user"):
             store.record_control_event(identity["id"], "agent_registered", result["agent"]["id"])
         return JSONResponse(result, status_code=201, headers={"Cache-Control": "no-store"})
@@ -1247,11 +1296,9 @@ def create_app():
     @app.post("/profiles/{profile_id}/instances", status_code=201)
     def enroll_instance(profile_id: str, body: InstanceRegistration, credentials: Credential):
         profile = store.authorize_profile(profile_id, credentials.credentials if credentials else "")
-        if body.session_key:
-            identifier = str(uuid5(UUID(profile_id), body.session_key))
-            token = hmac.new(credentials.credentials.encode(), identifier.encode(), hashlib.sha256).hexdigest()
-        else:
-            identifier, token = str(uuid4()), secrets.token_urlsafe(32)
+        session_key = body.session_key or secrets.token_urlsafe(24)
+        identifier = str(uuid5(UUID(profile_id), session_key))
+        token = hmac.new(credentials.credentials.encode(), identifier.encode(), hashlib.sha256).hexdigest()
         now = time.time()
         row = dict(id=identifier, name=body.instance_name, kind=profile["kind"],
                    project=body.project or profile["project"], created_at=now, last_seen=now,
@@ -1260,7 +1307,8 @@ def create_app():
         created = store.enroll_profile_instance(profile_id, row)
         agent = public_agent(store.get_agent(identifier), time.time())
         return JSONResponse({"agent": agent, "token": token, "resumed": not created,
-                             "onboarding": onboarding_handoff(agent)}, status_code=201,
+                             "session_id": session_key,
+                             "onboarding": onboarding_handoff(agent, session_key)}, status_code=201,
                             headers={"Cache-Control": "no-store"})
 
     @app.delete("/profiles/{profile_id}/instances/{instance_id}")
@@ -1322,11 +1370,24 @@ def create_app():
     @app.patch("/agents/me")
     def update_my_card(body: AgentCardPatch, identity: Identity):
         fields = body.model_dump(exclude_unset=True)
-        fields = {key: value if value is not None else ("" if key == "description" else [])
+        if fields.get("name", "") is None:
+            fields.pop("name", None)
+        fields = {key: value if value is not None else ([] if key == "capabilities" else "")
                   for key, value in fields.items()}
         if not fields:
             raise HTTPException(422, "Provide description and/or capabilities")
         row = store.update_agent_card(agent_id(identity), fields)
+        return public_agent(row, time.time())
+
+    @app.patch("/dashboard/agents/{identifier}")
+    def rename_dashboard_agent(identifier: Annotated[str, Path(min_length=1, max_length=100,
+                                                                pattern=r"^[A-Za-z0-9_-]+$")],
+                               body: AgentRename, identity: Identity):
+        if not can_manage_agents(identity):
+            raise HTTPException(403, "Agent renaming requires an owner or operator account")
+        row = store.update_agent_card(identifier, {"name": body.name})
+        if identity.get("control_user"):
+            store.record_control_event(identity["id"], "agent_renamed", identifier)
         return public_agent(row, time.time())
 
     @app.delete("/agents/me")

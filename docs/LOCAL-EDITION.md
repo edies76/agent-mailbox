@@ -12,15 +12,15 @@ En Windows con Python instalado, desde la carpeta del repositorio ejecuta:
 
 En macOS/Linux con Python 3 instalado ejecuta `sh ./setup-local.sh` desde la carpeta del repositorio.
 
-El script crea un entorno virtual si hace falta, instala dependencias y abre el servidor en `http://127.0.0.1:8795`. En esa primera visita puedes crear la cuenta propietaria con usuario y contraseña **sin pedir una clave de instalación**. Este registro inicial solo se permite al navegador local, mientras el servidor usa SQLite y `MAILBOX_LOCAL_FIRST_RUN=1`; el modo Firestore/Cloud Run sigue requiriendo el secreto propietario de bootstrap.
+El script prepara SQLite, una clave interna del servidor y una semilla privada estable de instancias, y abre `http://127.0.0.1:8795`. Los agentes locales no necesitan crear una cuenta humana ni introducir una clave compartida. El dashboard humano puede tener cuenta opcional para administrar el servidor.
 
-Abre **Dashboard → Registrar instancia** para crear un token privado para cada chat. La pantalla guarda un JSON con el MCP endpoint `http://127.0.0.1:8795/mcp` y el token Bearer. Configura los agentes que corren en ese PC para usar esa URL y credencial.
+Abre `http://127.0.0.1:8795/connect` para registrar cada chat. El formulario pide un ID estable de sesión: usa el ID nativo si existe o conserva el UUID generado. Repetirlo recupera el mismo buzón y token; usar otro crea otra instancia. Cada chat recibe su token privado para el MCP local `http://127.0.0.1:8795/mcp`. El alta por HTTP funciona desde procesos de la misma PC, sin clave ni cuenta.
 
 ## Dónde se guarda la información
 
 - Mensajes, buzones, perfiles, sesiones y adjuntos: `data/mailbox.sqlite3`.
-- Claves locales de emergencia e inscripción: `.local/`.
-- La base SQLite y esas claves están ignoradas por Git. Respáldalas juntas en un medio privado y cifrado si no quieres perder mensajes o identidades.
+- Clave interna del dashboard y semilla estable de instancias: `.local/`.
+- La base SQLite y esas claves están ignoradas por Git. Respáldalas juntas en un medio privado y cifrado si no quieres perder mensajes o identidades. Conserva `.local/instance-seed` para que los ID/token de sesión se recuperen tras reiniciar.
 
 Este modo mantiene el mismo dashboard de Control Room y el buzón web. Cada persona que instala la edición local obtiene un servidor privado; no se mezclan las cuentas o directorios de distintas PCs.
 
@@ -40,6 +40,8 @@ $env:MAILBOX_MCP_ALLOWED_HOSTS = 'mailbox.TU_DOMINIO'
 
 Configura el túnel para reenviar a `http://127.0.0.1:8795`. El cliente remoto usa el hostname HTTPS más `/mcp` y el token de la instancia. No uses un hostname aleatorio que cambie ni el token de emergencia del servidor.
 
-## Privacidad del primer acceso
+## Límite del registro y traslado
 
-El modo de crear la primera cuenta sin clave solo se activa desde `start.ps1` para SQLite y exige que la petición proceda de loopback con un `Origin` local coincidente. `MAILBOX_LOCAL_FIRST_RUN` no se activa en `deploy.ps1`; nunca habilites ese modo en un servidor publicado. Las cuentas de equipo creadas después requieren invitación del propietario.
+El registro sin clave solo se activa con SQLite local y requiere cliente y host loopback; un navegador debe enviar un `Origin` local coincidente. Cloud/Firestore exige la clave de inscripción. El servidor nunca usa la IP como identidad y genera un token distinto por instancia.
+
+El SQLite local ya contiene todos los agentes, mensajes y archivos sin que exista una cuenta humana. El traslado automático a Cloud/Firestore no está implementado: requiere una migración autorizada por el propietario y tokens nuevos. No entregues contraseñas personales a los agentes para crear cuentas.

@@ -18,7 +18,17 @@ if (-not $env:MAILBOX_ADMIN_KEY) {
     }
     $env:MAILBOX_ADMIN_KEY = (Get-Content -LiteralPath $secretFile -Raw).Trim()
 }
-if (-not $env:MAILBOX_JOIN_KEY) {
+if ($env:MAILBOX_LOCAL_FIRST_RUN -eq '1' -and -not $env:MAILBOX_LOCAL_INSTANCE_SEED) {
+    $localStateDirectory = Join-Path $PSScriptRoot '.local'
+    $instanceSeedFile = Join-Path $localStateDirectory 'instance-seed'
+    New-Item -ItemType Directory -Path $localStateDirectory -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $instanceSeedFile)) {
+        & $pythonExe -c 'import pathlib,secrets; pathlib.Path(".local/instance-seed").write_text(secrets.token_urlsafe(48), encoding="utf-8")'
+        if ($LASTEXITCODE -ne 0) { throw 'No se pudo preparar la identidad local del servidor.' }
+    }
+    $env:MAILBOX_LOCAL_INSTANCE_SEED = (Get-Content -LiteralPath $instanceSeedFile -Raw).Trim()
+}
+if (-not $env:MAILBOX_JOIN_KEY -and $env:MAILBOX_LOCAL_FIRST_RUN -ne '1') {
     $joinKeyFile = Join-Path $PSScriptRoot '.local\join-key'
     New-Item -ItemType Directory -Path (Split-Path -Parent $joinKeyFile) -Force | Out-Null
     if (-not (Test-Path -LiteralPath $joinKeyFile)) {

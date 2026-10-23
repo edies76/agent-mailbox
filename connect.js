@@ -3,6 +3,28 @@ const byId = id => document.getElementById(id);
 let accessText = '', onboardingText = '', accessConfig = null;
 byId('mcp-url').textContent = `${location.origin}/mcp`;
 fetch('/health').then(r => r.json()).then(v => document.querySelectorAll('[data-version]').forEach(el => el.textContent = `v${v.version}`)).catch(() => {});
+let agentNameTouched=false;
+function suggestAgentName(){if(!agentNameTouched){const kind=byId('agent-kind').selectedOptions[0].textContent;byId('agent-name').value=`${kind} · ${byId('agent-session-id').value.slice(0,8)}`;}}
+function createSessionId() { const value=crypto.randomUUID(); agentNameTouched=false; sessionStorage.setItem('agent-mailbox-session-key',value); byId('agent-session-id').value=value; suggestAgentName(); }
+byId('agent-name').addEventListener('input',()=>{agentNameTouched=true;});
+byId('agent-kind').addEventListener('change',suggestAgentName);
+byId('agent-session-id').addEventListener('input',suggestAgentName);
+try { if (!sessionStorage.getItem('agent-mailbox-session-key')) createSessionId(); else { byId('agent-session-id').value=sessionStorage.getItem('agent-mailbox-session-key'); suggestAgentName(); } } catch {}
+byId('new-session-id').addEventListener('click', createSessionId);
+function createProfileSessionId(){const value=crypto.randomUUID();sessionStorage.setItem('agent-mailbox-profile-session-key',value);byId('session-key').value=value;}
+let profileNameTouched=false;
+function suggestProfileName(){if(!profileNameTouched)byId('instance-name').value=`Agent · ${byId('session-key').value.slice(0,8)}`;}
+const createProfileSession=()=>{profileNameTouched=false;createProfileSessionId();suggestProfileName();};
+try { if (!sessionStorage.getItem('agent-mailbox-profile-session-key')) createProfileSession(); else {byId('session-key').value=sessionStorage.getItem('agent-mailbox-profile-session-key');suggestProfileName();} } catch {}
+byId('new-profile-session').addEventListener('click',createProfileSession);
+byId('instance-name').addEventListener('input',()=>{profileNameTouched=true;});
+byId('session-key').addEventListener('input',suggestProfileName);
+fetch('/capabilities').then(r => r.json()).then(v => {
+  const local = Boolean(v.local_open_registration?.enabled);
+  byId('join-key-field').hidden = local;
+  byId('join-key').required = !local;
+  byId('local-open-registration-hint').hidden = !local;
+}).catch(() => {});
 async function copyText(text, output) {
   try { await navigator.clipboard.writeText(text); output.textContent = 'Copiado.'; }
   catch { output.textContent = 'No se pudo copiar. Usa la opción de guardar o selecciona el texto.'; }
@@ -23,23 +45,24 @@ async function register(path, key, body, buttonId, statusId) {
   const button = byId(buttonId), status = byId(statusId); button.disabled = true;
   status.className = 'status'; status.textContent = 'Preparando identidad…'; accessConfig = null; accessText = ''; onboardingText = ''; byId('result').hidden = true;
   try {
-    const response = await fetch(path, { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},body:JSON.stringify(body) });
+    const headers = {'Content-Type':'application/json'}; if (key) headers.Authorization = `Bearer ${key}`;
+    const response = await fetch(path, { method:'POST', headers, body:JSON.stringify(body) });
     const result = await response.json();
     if (!response.ok) throw new Error(response.status === 401 ? 'La clave no es correcta para este registro.' : JSON.stringify(result.detail || 'No se pudo registrar.'));
-    const a = result.agent; accessConfig = {url:location.origin,agent_id:a.id,token:result.token}; if(a.profile_id) accessConfig.profile_id = a.profile_id;
+    const a = result.agent; accessConfig = {url:location.origin,agent_id:a.id,session_id:result.session_id,token:result.token}; if(a.profile_id) accessConfig.profile_id = a.profile_id;
     accessConfig.onboarding_url = '/agent-mailbox.md'; accessConfig.onboarding_manifest_url = '/onboarding';
     accessText = JSON.stringify(accessConfig, null, 2);
-    onboardingText = `Servidor: ${location.origin}\n\n${result.onboarding.prompt}`;
+    onboardingText = `Servidor: ${location.origin}\nID de sesión: ${result.session_id}\n\n${result.onboarding.prompt}`;
     byId('onboarding-prompt').value = onboardingText;
-    byId('agent-identity').textContent = `${a.name}\nInstancia: ${a.id}${a.profile_id ? `\nPerfil: ${a.profile_id}` : ''}${a.capabilities?.length ? `\nCapacidades: ${a.capabilities.join(', ')}` : ''}`;
+    byId('agent-identity').textContent = `${a.name}\nInstancia: ${a.id}\nSesión: ${result.session_id}${a.profile_id ? `\nPerfil: ${a.profile_id}` : ''}${a.capabilities?.length ? `\nCapacidades: ${a.capabilities.join(', ')}` : ''}`;
     byId('result').hidden = false; status.className = 'status success'; status.textContent = result.resumed ? 'Sesión recuperada. Conserva su acceso.' : 'Registro completado. Guarda este acceso privado.';
     byId('join-key').value = ''; byId('instance-key').value = '';
   } catch(error) { status.className = 'status error'; status.textContent = error.message; }
   finally { button.disabled = false; }
 }
 const tags = value => value.split(',').map(item=>item.trim()).filter(Boolean).slice(0,20);
-byId('join-form').addEventListener('submit', event => { event.preventDefault(); register('/join', byId('join-key').value, {name:byId('agent-name').value,kind:byId('agent-kind').value,project:byId('agent-project').value,description:byId('agent-description').value,capabilities:tags(byId('agent-capabilities').value)}, 'join-button','join-status'); });
-byId('instance-form').addEventListener('submit', event => { event.preventDefault(); const body = {instance_name:byId('instance-name').value,description:byId('instance-description').value,capabilities:tags(byId('instance-capabilities').value)}; if(byId('session-key').value) body.session_key=byId('session-key').value; register(`/profiles/${encodeURIComponent(byId('instance-profile').value.trim())}/instances`,byId('instance-key').value,body,'enroll-button','enroll-status'); });
+byId('join-form').addEventListener('submit', event => { event.preventDefault(); sessionStorage.setItem('agent-mailbox-session-key',byId('agent-session-id').value); register('/join', byId('join-key').value, {name:byId('agent-name').value,kind:byId('agent-kind').value,project:byId('agent-project').value,session_key:byId('agent-session-id').value,description:byId('agent-description').value,capabilities:tags(byId('agent-capabilities').value)}, 'join-button','join-status'); });
+byId('instance-form').addEventListener('submit', event => { event.preventDefault(); sessionStorage.setItem('agent-mailbox-profile-session-key',byId('session-key').value); const body = {instance_name:byId('instance-name').value,session_key:byId('session-key').value,description:byId('instance-description').value,capabilities:tags(byId('instance-capabilities').value)}; register(`/profiles/${encodeURIComponent(byId('instance-profile').value.trim())}/instances`,byId('instance-key').value,body,'enroll-button','enroll-status'); });
 byId('copy-access').addEventListener('click', () => { if(accessText) copyText(accessText, byId('access-status')); });
 byId('download-access').addEventListener('click', () => {
   if(!accessConfig) return; const url=URL.createObjectURL(new Blob([JSON.stringify(accessConfig,null,2)],{type:'application/json'}));

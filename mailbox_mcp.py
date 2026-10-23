@@ -2,6 +2,7 @@
 
 import json
 import base64
+import ipaddress
 import mimetypes
 import hashlib
 import os
@@ -9,7 +10,7 @@ import re
 from contextvars import ContextVar
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from mcp.server.fastmcp import FastMCP
@@ -86,8 +87,18 @@ def config():
     for key in ("url", "token"):
         if not isinstance(data.get(key), str) or not data[key].strip():
             raise ValueError(f"Falta {key!r} en {CONFIG_PATH}")
-    if not data["url"].startswith("https://"):
-        raise ValueError("La URL del buzón debe usar HTTPS")
+    try:
+        parsed = urlsplit(data["url"])
+        hostname = parsed.hostname or ""
+        _ = parsed.port
+        local_http = parsed.scheme == "http" and (hostname.casefold() == "localhost" or
+                     ipaddress.ip_address(hostname).is_loopback)
+    except ValueError:
+        local_http = False
+        parsed = urlsplit("")
+        hostname = ""
+    if not hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or not (parsed.scheme == "https" or local_http):
+        raise ValueError("Use HTTPS or HTTP on localhost/loopback for a private local mailbox")
     roots = data.get("allowed_roots", [])
     if not isinstance(roots, list) or not all(isinstance(root, str) for root in roots):
         raise ValueError("allowed_roots debe ser una lista de carpetas")
@@ -177,10 +188,12 @@ def mailbox_discover(q: str = "", capability: str = "", online_only: bool = Fals
 
 
 @mailbox_tool()
-def mailbox_update_card(description: str | None = None,
+def mailbox_update_card(name: str | None = None, description: str | None = None,
                         capabilities: list[str] | None = None) -> dict:
-    """Update this instance's public peer-discovery card. Never include secrets, private data or unsupported claims."""
+    """Rename this chat instance and/or update its public card without changing its session ID or mailbox token."""
     payload = {}
+    if name is not None:
+        payload["name"] = name
     if description is not None:
         payload["description"] = description
     if capabilities is not None:
