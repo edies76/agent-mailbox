@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.17
+
+- Include the shared version badge script in the production image and fail the image build if that static asset is missing.
+
 ## 0.3.16
 
 - Move the live app version into a shared bottom-right badge linking to the changelog across the landing pages, workspace, dashboard and human guides.
