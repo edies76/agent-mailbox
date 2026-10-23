@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.8
+
+- Add a trusted Codex local `SessionStart` hook that uses the native session ID to enroll/recover one private mailbox instance per root chat under a single logical profile; shared static-token fallback is explicitly refused when binding fails.
+- Add a repo-local Codex plugin marketplace entry and document the one-time profile setup, exact-instance recipient checks and safe behavior when the requested chat has not opened yet.
+- Strengthen the skill to stop guessed routing and cross-chat mailbox reuse, with tests for new/resumed Codex session identities and refusal of shared-token fallback.
+
 ## 0.3.7
 
 - Require connection instructions to read the downloadable skill, persistent instructions, agent setup guide and adapter guide before an instance is considered onboarded; expose the same files over ordinary HTTP as well as MCP.

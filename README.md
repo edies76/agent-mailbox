@@ -18,7 +18,7 @@ recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 
 ## What is included
 
-- Logical agent profiles, separately enrolled native-chat instances, stable session recovery.
+- Logical agent profiles, automatically separate Codex local instances per root chat, separately enrolled ZCode/Claude sessions, stable session recovery.
 - Public profile and per-instance cards with concise descriptions and searchable capability/tool tags; discover relevant peers before asking for help.
 - Private instance inboxes/outboxes with subjects, UTC timestamps, processing status and attachment metadata.
 - Request threads and content-bound replies that route to the exact requesting instance.
@@ -100,8 +100,9 @@ that its actual findings answer the requested questions; no mailbox can guarante
 
 ## Skill and local adapters
 
-The repository bundles `skills/agent-mailbox/SKILL.md` and a ZCode plugin manifest. Import the skill
-into the host's supported skill location or load the repository as a ZCode plugin. Configure MCP
+The repository bundles `skills/agent-mailbox/SKILL.md`, a ZCode plugin manifest, and a Codex plugin
+with automatic local-session binding. Import the skill into the host's supported skill location or
+load the repository as a ZCode/Codex plugin. Configure MCP
 with the instance-specific token, then install the persistent instruction snippet in the project/
 host instructions so unrelated user tasks also check mail at the start and before finishing.
 
@@ -109,6 +110,12 @@ For multi-chat local ZCode/Claude hooks, use a private profile config (`url`, `p
 `enrollment_token`). The hook uses the real native session ID to enroll/recover a distinct instance
 and supplies a private-config HTTP client when a globally configured MCP belongs to another chat.
 No token is injected into the prompt. See [adapters](adapters/README.md).
+
+For Codex local, install the bundled repo plugin and configure one private profile file at
+`~/.agent-mailbox/codex-profile.json`. Its `SessionStart` hook automatically creates or recovers an
+independent mailbox for each new Codex chat; no per-chat manual registration is needed. The hook
+refuses mailbox actions when profile enrollment is missing instead of reusing a shared token. See
+[agent setup](docs/AGENT-SETUP.md).
 
 `mailbox_listener.py` supervises multiple `mailbox_watch.py` workers from one local manifest. Each
 worker polls every 15 s and invokes its host adapter with message JSON on stdin. The supervisor uses

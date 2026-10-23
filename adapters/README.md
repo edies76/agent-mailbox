@@ -58,8 +58,10 @@ approvals, or infer a safe wake target.
 
 ## Profile mode: separate native chats
 
-A global static token makes every chat poll the same inbox. For multiple ZCode/Claude chats, create
-a profile in the web inbox or `POST /profiles`, then keep its enrollment key in private configuration:
+A global static token makes every chat poll the same inbox. Create one logical profile and keep its
+enrollment key in private configuration. For multiple ZCode/Claude chats, the lifecycle hook enrolls
+each native session. For Codex local, the bundled plugin's `SessionStart` hook does the same using
+Codex's native `session_id`:
 
 ```json
 {"url":"https://YOUR-SERVICE.run.app","profile_id":"PROFILE_ID","enrollment_token":"PRIVATE_PROFILE_KEY","instance_prefix":"ZCode","auto_continue_on_stop":true}
@@ -96,7 +98,7 @@ same docs are readable by humans on the server under `/guide`.
 | Host | Adapter | Behavior and limit |
 | --- | --- | --- |
 | ZCode | Lifecycle hook | Injects at `SessionStart` and `UserPromptSubmit`; optionally continues once from `Stop` when a message is pending. ZCode documents no `SubagentStop` hook, and a hook cannot call the model directly. It cannot wake an already-idle task. |
-| Codex CLI/app | `codex queue` | Queues a prompt into the chosen existing session. This is the closest native wake adapter for a running or idle local Codex session. The session must have Agent Mailbox MCP configured to reply and acknowledge. |
+| Codex CLI/app (local) | `SessionStart` profile binding + `codex queue` | The bundled Codex plugin uses native `session_id` to enroll/recover one private instance per root chat. A separate listener callback can queue into the exact saved session. Plugin hooks require review/trust in `/hooks`; the profile enrollment config must exist first. |
 | Claude Code | CLI resume or lifecycle hook | `claude --resume … --print …` starts a follow-up in the saved session; hooks can inject at `UserPromptSubmit`/`Stop`. Hooks require a running turn, while the CLI adapter starts a new turn. |
 | Grok Build | Headless session resume | `grok --resume … -p …` starts a follow-up in the saved session. Grok's `SubagentStop` hook is passive, so the runner uses the headless session interface for mailbox delivery. |
 | Cline | ClineCore SDK | `clinecore_wake.mjs` sends to a ClineCore-managed session. It does not attach to the Cline VS Code extension's private runtime. |
@@ -128,6 +130,13 @@ The prompt requests the installed product and version before changing configurat
 honest: distinguish **MCP connection** (the agent can call mailbox tools during a turn), **listener**
 (a process polls the mailbox), **notification** (the host learns a message arrived), and **wake**
 (the host starts/resumes a model turn). These are four separate capabilities.
+
+The Codex local `SessionStart` plugin hook receives the stable root session ID. It auto-enrolls that
+ID in the configured mailbox profile and recovers the same instance when the session resumes. Codex
+subagent hooks carry the parent session ID, so subagents do not become unrelated root-chat inboxes.
+The hook is not a cloud webhook and does not wake Codex web or a closed remote job. See the
+[official Codex hook reference](https://learn.chatgpt.com/docs/hooks) for current event/trust behavior
+and the [plugin packaging guide](https://developers.openai.com/plugins/build/plugins).
 
 No host exposes a single shared “wake me with arbitrary text” API. In particular, a subagent-finished
 event is local to that host: ZCode does not currently expose one, and a hook that observes a child

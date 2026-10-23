@@ -60,7 +60,7 @@ def bind_session(config, config_path, host, session_id, workspace=None):
             if os.path.exists(temporary):
                 os.unlink(temporary)
     changed = False
-    for option in ("on_message_command", "mailbox_bank_dir", "transport"):
+    for option in ("on_message_command", "mailbox_bank_dir", "transport", "client_script"):
         if option in config and result.get(option) != config[option]:
             result[option] = config[option]
             changed = True
@@ -73,9 +73,18 @@ def bind_session(config, config_path, host, session_id, workspace=None):
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
+    try:
+        os.chmod(destination, 0o600)
+    except OSError:
+        pass
+    client_script = config.get("client_script")
+    if not client_script and host == "codex" and os.environ.get("PLUGIN_ROOT"):
+        client_script = str(Path(os.environ["PLUGIN_ROOT"]) / "mailbox_client.py")
+    if not client_script:
+        client_script = str(Path(config_path).expanduser().parent / "mailbox_client.py")
     result.update(auto_continue_on_stop=config.get("auto_continue_on_stop", False),
                   hook_state=str(destination.with_suffix(".state.json")), bound_config_path=str(destination),
-                  client_script=str(Path(config_path).expanduser().parent / "mailbox_client.py"))
+                  client_script=str(client_script))
     return result
 
 
@@ -98,10 +107,9 @@ def format_context(messages, config=None):
     ]
     if config and config.get("bound_config_path"):
         blocks.append("This native chat is bound to instance " + config["agent_id"] + ". "
-                      "A globally configured MCP may belong to another chat. Unless mailbox_check confirms this exact instance, "
-                      "use this private-config client for all mailbox operations: "
+                      "Always use this private-config client for ALL mailbox reads, sends, replies and acknowledgements: "
                       + json.dumps(["python", config["client_script"], "--config", config["bound_config_path"]])
-                      + " followed by METHOD /path. POST/PATCH take JSON from stdin or --body-file. Never print the token.")
+                      + " followed by METHOD /path. POST/PATCH take JSON from stdin or --body-file. Never call a global MCP token to check identity; it may reveal a sibling chat's inbox. Use MCP only if the host binds credentials specifically to this instance. Never print the token.")
     if config and config.get("mailbox_bank_dir"):
         bank = Path(config["mailbox_bank_dir"]).expanduser()
         blocks.append("Trusted local coordination guide: " + str(bank / "MASTER_PROMPT.md") +
@@ -182,37 +190,58 @@ def hook_response(host, event, payload, messages, config):
     return None
 
 
+def handle_hook_event(host, payload, config_path):
+    event = payload.get("hook_event_name") or payload.get("hookEventName")
+    if event not in ("SessionStart", "UserPromptSubmit", "Stop"):
+        return None
+    config = read_config(config_path)
+    if host == "codex" and not (config.get("profile_id") and config.get("enrollment_token")):
+        raise ValueError("Codex requires private profile enrollment config; refusing shared static-token fallback")
+    session_id = payload.get("session_id") or payload.get("sessionId")
+    workspace = config.get("project") if host == "codex" else payload.get("cwd")
+    config = bind_session(config, config_path, host, session_id, workspace)
+    if event == "Stop" and (not config.get("auto_continue_on_stop", False) or payload.get("stop_hook_active")):
+        return None
+    messages = get_pending(config)
+    messages = filter_new_messages(config, config_path, session_id, messages,
+                                   reset=event in ("SessionStart", "UserPromptSubmit", "Stop"))
+    return hook_response(host, event, payload, messages, config)
+
+
 def main():
     for stream in (sys.stdin, sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Inject mailbox messages at supported agent lifecycle hooks.")
-    parser.add_argument("--host", choices=("zcode", "claude"), required=True)
-    parser.add_argument("--config", default=os.environ.get("AGENT_MAILBOX_CONFIG"),
-                        help="Private mailbox JSON; defaults to AGENT_MAILBOX_CONFIG")
+    parser.add_argument("--host", choices=("zcode", "claude", "codex"), required=True)
+    parser.add_argument("--config",
+                        help="Private mailbox JSON; Codex defaults to AGENT_MAILBOX_PROFILE_CONFIG or ~/.agent-mailbox/codex-profile.json")
     args = parser.parse_args()
     if not args.config:
-        print("AGENT_MAILBOX_CONFIG or --config is required", file=sys.stderr)
+        if args.host == "codex":
+            args.config = os.environ.get("AGENT_MAILBOX_PROFILE_CONFIG") or str(
+                Path.home() / ".agent-mailbox" / "codex-profile.json")
+        else:
+            args.config = os.environ.get("AGENT_MAILBOX_CONFIG")
+    event = None
+    if not args.config:
+        print("Private profile config or --config is required", file=sys.stderr)
         return 0
     try:
         payload = json.load(sys.stdin)
         event = payload.get("hook_event_name") or payload.get("hookEventName")
-        if event not in ("SessionStart", "UserPromptSubmit", "Stop"):
-            return 0
-        config = read_config(args.config)
-        config = bind_session(config, args.config, args.host, payload.get("session_id") or payload.get("sessionId"), payload.get("cwd"))
-        if event == "Stop" and (not config.get("auto_continue_on_stop", False) or payload.get("stop_hook_active")):
-            return 0
-        messages = get_pending(config)
-        messages = filter_new_messages(
-            config, args.config, payload.get("session_id") or payload.get("sessionId"), messages,
-            reset=event in ("SessionStart", "UserPromptSubmit", "Stop"),
-        )
-        output = hook_response(args.host, event, payload, messages, config)
+        output = handle_hook_event(args.host, payload, args.config)
         if output is not None:
             sys.stdout.write(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
         return 0
     except Exception as error:  # Fail open; an unavailable mailbox must not block normal work.
+        if args.host == "codex" and event == "SessionStart":
+            warning = ("Agent Mailbox could not bind a private instance to this Codex session. Do not send, "
+                       "reply, or acknowledge through a global MCP token because it may belong to another chat. "
+                       "Tell the user the exact instance setup failure and ask them to fix the profile hook/config. "
+                       f"Failure type: {type(error).__name__}.")
+            sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                "additionalContext": warning}}, ensure_ascii=False, separators=(",", ":")))
         print(f"Agent Mailbox hook skipped ({type(error).__name__})", file=sys.stderr)
         return 0
 

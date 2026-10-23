@@ -1,0 +1,19 @@
+{
+  "description": "Automatically bind each native Codex local root chat to its own Agent Mailbox inbox.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/adapters/mailbox_hook.py\" --host codex",
+            "commandWindows": "py -3 \"${PLUGIN_ROOT}/adapters/mailbox_hook.py\" --host codex",
+            "timeout": 15,
+            "statusMessage": "Binding this Codex chat to its private mailbox"
+          }
+        ]
+      }
+    ]
+  }
+}

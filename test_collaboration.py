@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 import test_mailbox as http_tests
-from adapters.mailbox_hook import bind_session, format_context, hook_response
+from adapters.mailbox_hook import bind_session, format_context, handle_hook_event, hook_response
 
 
 class CollaborationTests(unittest.TestCase):
@@ -80,6 +80,7 @@ class CollaborationTests(unittest.TestCase):
             context = result["hookSpecificOutput"]["additionalContext"]
             self.assertIn("native-chat-A", context)
             self.assertIn("private-instance.json", context)
+            self.assertIn("Never call a global MCP token to check identity", context)
             self.assertNotIn("DO-NOT-INJECT", context)
         self.assertIsNone(hook_response("zcode", "Stop", {}, [], config))
 
@@ -115,6 +116,53 @@ class CollaborationTests(unittest.TestCase):
         for instance in (self.a_id, second["agent"]["id"], third["agent"]["id"]):
             self.request("DELETE", f"/profiles/{profile['profile']['id']}/instances/{instance}", profile["enrollment_token"])
         self.request("DELETE", f"/profiles/{profile['profile']['id']}", profile["enrollment_token"])
+
+    def test_codex_session_start_auto_binds_one_independent_instance_per_chat(self):
+        config = {"url": "https://mail.example", "profile_id": "profile-codex",
+                  "enrollment_token": "private-enrollment-token", "instance_prefix": "Codex local"}
+        identities = {}
+
+        def bind(_config, config_path, host, session_id, workspace):
+            identities.setdefault(session_id, "instance-" + session_id)
+            return {**config, "agent_id": identities[session_id], "bound_config_path": "private/" + session_id + ".json",
+                    "client_script": "private/mailbox_client.py"}
+
+        def event(session_id):
+            return {"hook_event_name": "SessionStart", "session_id": session_id, "source": "startup",
+                    "cwd": "C:/private/project"}
+
+        with (patch("adapters.mailbox_hook.read_config", return_value=config),
+              patch("adapters.mailbox_hook.bind_session", side_effect=bind),
+              patch("adapters.mailbox_hook.get_pending", return_value=[]),
+              patch("adapters.mailbox_hook.filter_new_messages", return_value=[])):
+            first = handle_hook_event("codex", event("chat-A"), "private/codex-profile.json")
+            resumed = handle_hook_event("codex", event("chat-A"), "private/codex-profile.json")
+            second = handle_hook_event("codex", event("chat-B"), "private/codex-profile.json")
+        first_context = first["hookSpecificOutput"]["additionalContext"]
+        resumed_context = resumed["hookSpecificOutput"]["additionalContext"]
+        second_context = second["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("instance-chat-A", first_context)
+        self.assertIn("private/chat-A.json", first_context)
+        self.assertEqual(first_context, resumed_context)
+        self.assertIn("instance-chat-B", second_context)
+        self.assertNotEqual(first_context, second_context)
+
+    def test_codex_hook_refuses_shared_static_token_fallback(self):
+        with patch("adapters.mailbox_hook.read_config", return_value={
+                "url": "https://mail.example", "agent_id": "shared", "token": "global-token"}):
+            with self.assertRaisesRegex(ValueError, "refusing shared static-token fallback"):
+                handle_hook_event("codex", {"hook_event_name": "SessionStart", "session_id": "new-chat"},
+                                  "private/shared.json")
+
+    def test_codex_plugin_marketplace_has_reviewable_session_start_hook(self):
+        manifest = json.loads((Path(__file__).parent / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
+        marketplace = json.loads((Path(__file__).parent / ".agents/plugins/marketplace.json").read_text(encoding="utf-8"))
+        hooks = json.loads((Path(__file__).parent / "hooks/hooks.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["name"], "agent-mailbox")
+        self.assertEqual(marketplace["plugins"][0]["source"]["path"], "./")
+        handler = hooks["hooks"]["SessionStart"][0]["hooks"][0]
+        self.assertIn("mailbox_hook.py", handler["command"])
+        self.assertIn("mailbox_hook.py", handler["commandWindows"])
 
     def test_shared_counts_and_opt_in_subject_never_expose_body_or_files(self):
         profile = self.profile()

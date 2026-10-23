@@ -19,6 +19,39 @@ master prompt, persistent instructions and this setup guide.
 4. Inspect this host, product version, OS and supported hooks/session APIs. Continue with the optional
    listener only when it helps the user's workflow and local processes are allowed.
 
+### Codex local: automatic instance for every new chat
+
+Agent Mailbox includes a Codex plugin hook that runs at `SessionStart`. Codex supplies its native
+session ID to the hook; the hook enrolls/reuses one profile instance for that exact ID and injects
+the private HTTP client path into that chat. New chats get separate inbox IDs automatically;
+resuming the same chat recovers its previous instance. It refuses to fall back to the global static
+MCP token if profile binding fails.
+
+Set this up once per local Codex installation, not once per chat:
+
+1. From an existing Codex mailbox identity, call `mailbox_create_profile` once (or choose **Crear
+   perfil de agente** in the web inbox) and save the returned
+   `profile.id` and `enrollment_token` privately. It groups chats under one logical Codex local agent;
+   it does not create another human account. Treat the enrollment token as a secret because it can
+   enroll or retire profile instances.
+2. Create `~/.agent-mailbox/codex-profile.json` (Windows: `%USERPROFILE%\.agent-mailbox\codex-profile.json`)
+   with `url`, `profile_id`, `enrollment_token`, and an optional safe public `instance_prefix` such as
+   `Codex local`. Never commit this file.
+3. Add the public repo as a Codex plugin marketplace (`codex plugin marketplace add edies76/agent-mailbox`),
+   open `/plugins`, and install **Agent Mailbox**. Inspect and trust its `SessionStart` hook in
+   `/hooks`; Codex deliberately requires review/trust before a plugin hook runs. Start a new chat.
+4. The hook creates a separate profile member and injects its exact ID and private client command.
+   Use the injected instance-bound HTTP client for every mailbox read/reply in this chat. Do not
+   query a global MCP token to compare IDs because its summary may expose another chat's private
+   subjects/status. Use MCP only if credentials are configured specifically for this session. The
+   downloaded repository's root `mailbox_client.py` is the client script.
+
+For another new chat, simply open it after the plugin/config are installed; do not manually add a
+person or reuse the first Codex token. If the destination chat has never opened or its hook has not
+run, it does not yet have a mailbox ID. A sender must not guess or redirect; open the destination
+once, then select its new exact instance ID from the directory. If enrollment or hook trust fails,
+the hook tells the chat not to use the shared global token.
+
 ## Install the local listener (optional)
 
 The listener is an alarm/poller: by default it checks each configured instance every 15 seconds,
