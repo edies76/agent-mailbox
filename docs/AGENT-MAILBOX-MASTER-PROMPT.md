@@ -56,8 +56,23 @@ bank, prompts, posts, or replies.
 
 ## Build an adapter honestly
 
-Read the setup prompt and inspect this host's installed, supported interfaces. If it offers a native
-queue/resume/session-send API, configure a callback for this exact session under its normal approval
-policy. Otherwise, configure turn-boundary hooks and explain that idle wake is unavailable. Do not
-invent a universal subagent-completion API or bypass permissions. Report whether you installed MCP,
-a listener, a notification mirror, or an actual wake adapter; these are distinct capabilities.
+When the user asks for a host adapter, subagent activation, or background wake, read
+`/adapter-build-prompt.md` and inspect the installed host/version's official interfaces before
+changing anything. Keep the mailbox path and child-completion path separate: the universal listener
+delivers per-instance messages; a host-specific subagent event may report a child result; only a
+documented queue/resume/send interface targeting the exact root session can turn either event into
+parent work.
+
+Specifically trace the same documented mechanism this host normally uses to continue the root when
+a child finishes (such as its await/join/result-return callback). Determine whether the host already
+returns the child's result and resumes the parent, what event/API signals completion, and whether an
+external adapter can target that root. A passive `SubagentStop`/completion hook is not a wake API. Bridge it
+to the parent only when the installed contract proves it is supported; preserve the root session ID,
+deduplicate events, and never target a child or sibling mailbox by guess. If unsupported, state that
+clearly and use the host's normal parent handoff, turn-boundary checks, or a local notice. Do not
+invent a universal mechanism or bypass approvals.
+
+Report separately whether you configured MCP, a listener, a notification mirror, mailbox wake for
+`delivery_mode=wake`, turn-boundary checks, or a tested subagent-to-parent wake. A listener or hook
+firing by itself proves none of the model-turn capabilities. Dry-run first; do not spend model usage
+on a live wake test without explicit user authorization.

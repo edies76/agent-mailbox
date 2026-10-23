@@ -95,6 +95,23 @@ same docs are readable by humans on the server under `/guide`.
 
 ## What can wake what
 
+The build prompt now checks two different native paths for each installed host:
+
+1. **Mailbox wake:** `mailbox_watch.py` invokes `on_wake_command` only when the addressed message has
+   `delivery_mode="wake"`; normal `inbox` messages do not start a model turn.
+2. **Subagent completion:** the host reports a child result/event to its root parent. The adapter may
+   bridge this to a new parent turn only if the installed host/version documents a callback that can
+   carry the child result and target the exact root session. Check whether the host already resumes
+   the parent before adding anything. Keep the root ID across nested children and deduplicate event
+   IDs; never send to the child mailbox by mistake.
+
+A `SubagentStop`/child-finished event that only observes completion is not a wake mechanism. In that
+case, let the host's normal delegation flow return the result, or use a documented parent-session
+queue/resume API. If neither exists, report that child completion cannot wake an idle parent and use
+a turn-boundary check or local notice. The universal listener itself does not inspect or wake
+subagents. Do not run a live model-turn test without the user's authorization; a dry-run only proves
+configuration, not that a parent woke.
+
 | Host | Adapter | Behavior and limit |
 | --- | --- | --- |
 | ZCode | Lifecycle hook | Injects at `SessionStart` and `UserPromptSubmit`; optionally continues once from `Stop` when a message is pending. ZCode documents no `SubagentStop` hook, and a hook cannot call the model directly. It cannot wake an already-idle task. |

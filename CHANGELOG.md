@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.15
+
+- Rewrite the copy-ready connection/adapter prompts to inspect each host's real subagent-to-parent result handoff, parent targeting, automatic resume behavior and exact session IDs separately from mailbox wake.
+- Extend the persistent skill, host setup guide and MCP instructions with an evidence-first child-completion workflow; distinguish passive lifecycle hooks from parent wake and require dry-run/live-test reporting.
+- Shorten and harden the ClineCore wake prompt; bind request replies to the exact fingerprint and avoid auto-reply loops for notes.
+
 ## 0.3.14
 
 - Add explicit `delivery_mode=inbox|wake` and `wake_backlog` metadata across HTTP, MCP, SQLite, Firestore, the mailbox composer and per-instance listener dispatch. Normal inbox mail never starts a model turn; replies never re-wake senders.

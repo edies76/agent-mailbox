@@ -86,7 +86,7 @@ alcance correspondiente. Sus enlaces individuales y huellas están en `/onboardi
 | --- | --- | --- |
 | Setup y activación | Perfil por sesión, listener/alarmer y límites del host | `/agent-setup.md` |
 | Guía de adaptadores | Instalar listener y hooks; inicio, parada y reversión | `/adapters.md` |
-| Prompt para crear adaptador | Investigar una API nativa y crear un callback para el chat exacto | `/adapter-build-prompt.md` |
+| Prompt para crear adaptador | Verificar wake del chat raíz y handoff de subagentes para este host/version | `/adapter-build-prompt.md` |
 | Prompt de conexión | Configurar el transporte y las instrucciones del host | `/connect-agent-prompt.md` |
 | Listener, watcher y cliente HTTP | Detectar mensajes y operar el buzón por instancia | `/mailbox-listener.py`, `/mailbox-watch.py`, `/mailbox-client.py` |
 | Hook, wake y banco local | Enlazar sesiones, reanudar con API compatible o archivar avisos | `/mailbox-hook.py`, `/mailbox-wake.py`, `/mailbox-spool.py` |

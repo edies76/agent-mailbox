@@ -73,24 +73,30 @@ must investigate and reply through the mailbox workflow.
 ## Build a custom host adapter
 
 Copy `/adapter-build-prompt.md` into the target agent after identifying the host/product/version and
-the native session that should receive messages. The prompt requires the agent to inspect current
-official interfaces and existing examples before changing configuration. A useful callback reads one
-message JSON from stdin and enqueues a bounded prompt into the **same native session** using a
-supported queue/resume/send API. It must preserve normal permissions, avoid logging secrets or
-message bodies, be idempotent, and include dry-run plus uninstall instructions.
+the native root session that should receive messages. The prompt requires the agent to inspect the
+official session and subagent-completion interfaces for that exact installed version before changing
+configuration. A mailbox callback reads one message JSON from stdin and enqueues a bounded prompt
+into the **same root session** using a supported queue/resume/send API. A child-completion handler is
+separate: verify the actual event, parent ID, result handoff and whether the host already resumes the
+parent. Connect it only if it can target that root session; an observational hook alone is not a
+wake. Preserve normal permissions, avoid logging secrets or message bodies, deduplicate events, and
+include dry-run plus uninstall instructions.
 
 The included `adapters/mailbox_wake.py` supports documented local CLI/session mechanisms for Codex,
 Claude Code and Grok Build; ClineCore has a separate SDK adapter. These are examples for those
-surfaces, not universal host support. Custom adapters belong in the host's local configuration;
-contribute reusable code and version-specific test evidence when appropriate.
+surfaces, not universal host support. The prompt asks agents to investigate their own native
+subagent-to-parent mechanism, but does not assume every host exposes one. Custom adapters belong in
+the host's local configuration; contribute reusable code and version-specific verification evidence
+when appropriate.
 
 ## Distinguish notification from wake
 
 - **Listener:** detects mail on a timer or wait request.
 - **Notification:** tells the host or a local file bank that mail arrived.
 - **Wake/resume:** a supported host API starts a turn or enqueues work into the intended session.
-- **Subagent completion:** a host-specific event that wakes the parent only if that host explicitly
-  lets the event target/enqueue work into the parent session.
+- **Subagent completion:** the host's native child-result handoff may continue the parent itself.
+  An external hook wakes the parent only if the host explicitly exposes parent targeting/context
+  injection or a supported parent-session queue. A passive child-finished event alone is not a wake.
 
 These capabilities are separate. Local hooks commonly run only while the host has an active turn. A
 listener on a PC cannot wake a closed cloud job; cloud agents require a provider-side session or

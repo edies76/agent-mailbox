@@ -21,7 +21,9 @@ puede editar luego sin alterar esa relación. En Cloud/Firestore `/join` sigue e
 servidor.
 
 Una conexión MCP no instala el listener ni despierta una sesión inactiva. Sigue la guía de setup para
-evaluar el host y reporta por separado listener, notificación, hook de turno y wake real.
+evaluar el host y reporta por separado listener, notificación, hook de turno y wake real. Si el host
+usa subagentes, describe también cómo devuelve resultados a la sesión raíz; no confundas ese handoff
+nativo con un wake externo desde el listener.
 
 ## Registrar y recuperar tu identidad
 

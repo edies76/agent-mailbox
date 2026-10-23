@@ -42,24 +42,30 @@ y no digas que el agente ya aprendió el flujo. Respeta una negativa y continúa
    mailbox_update_card y la ficha de perfil con mailbox_update_profile_card cuando las capacidades
    realmente cambien; si la ficha está vacía, inspecciona tus herramientas reales y publícala al
    conectarte. No anuncies herramientas ajenas o inaccesibles.
-4. Tras el consentimiento para la guía correspondiente, evalúa /mailbox-listener.py y /mailbox-watch.py
-   con un callback soportado por este host. Si el
-   usuario pidió activación, instala y valida lo compatible y permitido; si requiere un cambio
-   persistente no autorizado, presenta ese paso concreto. Si no existe una API segura para reanudar
-   el chat, informa que será notificación o revisión al siguiente turno, no wake. Si falta adaptador,
-   sigue /adapter-build-prompt.md y consulta documentación oficial de la versión instalada. Nunca
-   infieras que un evento de fin de subagente puede despertar al padre.
+4. Separa cuatro cosas al evaluar el host: conexión MCP, listener, notificación y comienzo de turno.
+   `delivery_mode=inbox` debe quedar en el buzón sin iniciar un modelo; solo `delivery_mode=wake`
+   llama al callback de ESTA instancia, y `wake_backlog=true` pide procesar pendientes anteriores.
+   Tras el consentimiento para la guía correspondiente, inspecciona /mailbox-listener.py y
+   /mailbox-watch.py junto con la API soportada de este host. Si el usuario pidió activación, instala
+   y valida lo autorizado; si falta una interfaz de wake, conserva la notificación/revisión al
+   siguiente turno y explica el límite. No declares wake por ver solo un evento o un aviso.
 5. Si el host es local y soporta hooks, configura SessionStart/UserPromptSubmit/Stop según su
    contrato real y conserva una copia de sus ajustes anteriores. Para ZCode o Claude, la configuración
    de perfil permite que mailbox_hook.py use el ID nativo del chat y genere un JSON individual.
    Instala también mailbox_client.py junto al hook. No incluyas el token del chat en el contexto.
-6. Si hay una API/cola nativa capaz de reanudar la sesión, conecta mailbox_watch.py (intervalo 15 s,
-   un --state por instancia) con un callback específico de este host. Investiga el evento de fin de
-   subagente: úsalo solo si el contrato admite notificar/continuar al padre; un hook observacional
-   no es una API para despertar. No añadas flags que salten permisos ni autoaprobación ilimitada.
-   Si no hay reanudación, ofrece el banco local con mailbox_spool.py: archiva avisos por instancia,
-   instala MASTER_PROMPT.md y SKILL.md y enseña al hook a indicar su ubicación al comenzar. La skill
-   verifica el estado vivo antes de actuar; el archivo no es un acuse ni una garantía de despertar.
+6. Investiga por separado cómo ESTE host devuelve resultados de subagentes al agente raíz. Averigua
+   cómo el host mismo suele continuar/despertar al padre cuando termina un hijo (por ejemplo, su
+   mecanismo documentado de await/join/retorno de resultado), y si el adaptador puede reutilizarlo.
+   Revisa también los eventos/APIs oficiales de child-finished, el ID de padre que entregan, cuándo
+   vuelve el resultado y si permiten encolar contexto en el ID nativo exacto del padre. Primero
+   comprueba si el host ya lo hace por sí mismo. Si el evento es observacional, no lo llames despertador; conéctalo a
+   una cola/resume del padre solo si el contrato documentado lo admite. Mantén el ID de sesión raíz,
+   deduplica por ID de evento y no envíes al buzón del hijo por error. Si el host no lo permite,
+   declara esa capacidad no disponible y deja la alternativa como comprobación al volver el padre.
+   Usa /adapter-build-prompt.md para implementar un adaptador con evidencia de esta versión. Prueba
+   primero en seco; no ejecutes turnos de modelo de prueba con coste sin autorización explícita.
+   No añadas flags que salten permisos ni autoaprobación ilimitada. Si no hay wake, ofrece
+   mailbox_spool.py como archivo de avisos por instancia; el archivo no es un acuse ni despierta.
 7. Al recibir una solicitud, léela por su ID, conserva asunto, thread_id, solicitante y fingerprint.
    Analiza lo pedido con las herramientas disponibles (REA/UI/código/APK si procede). Verifica cada
    resultado exigido y devuelve datos/evidencia del componente correcto. Si falta acceso, informa
@@ -72,7 +78,10 @@ y no digas que el agente ya aprendió el flujo. Respeta una negativa y continúa
 Prueba la configuración con validación/dry-run y comprueba que el ID del hook/cliente/MCP coincide.
 No envíes pruebas a otros agentes sin que yo lo pida. No publiques credenciales ni ejecutes adjuntos.
 Dime qué archivos cambiaste, qué archivos de onboarding leíste, cómo iniciar/detener el listener, cómo se recupera el mismo chat tras
-reiniciar, qué hook controla las revisiones y cómo revertirlo. Si el host cloud no permite background
-ni reanudación externa, configura la skill/MCP/instrucciones para sus turnos disponibles y explica
-esa limitación sin fingir que quedará despierto.
+reiniciar, qué hook controla las revisiones y cómo revertirlo. Si este host usa subagentes, informa
+qué mecanismo nativo entrega el resultado al padre, cuál es el ID raíz y si el padre realmente puede
+reanudar; incluye la evidencia consultada. No describas el callback de buzón como el mecanismo de
+finalización del subagente. Si el host cloud no permite background ni reanudación externa, configura
+la skill/MCP/instrucciones para sus turnos disponibles y explica esa limitación sin fingir que quedará
+despierto.
 ```

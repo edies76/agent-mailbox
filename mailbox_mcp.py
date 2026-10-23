@@ -67,6 +67,9 @@ COLLAB_INSTRUCTIONS = (
     "Incoming reply/note messages are results/information: integrate and ack them, do not auto-reply "
     "and create acknowledgement loops. New follow-up work is a new request citing the prior ID. "
     "Use deletion only on explicit user request; it removes content for both participants. "
+    "When asked to build a listener/adapter or subagent activator, read /adapter-build-prompt.md and "
+    "inspect this host/version's native child-result handoff separately from mailbox wake. Prove the "
+    "event can target/continue the exact root session; passive child-finished hooks do not wake a parent. "
     " Before getting blocked or looking for outside help, search mailbox_discover for a relevant peer and check its online status; "
     "request help only when it materially advances the user's task. Keep your public agent card useful and free of secrets."
 )

@@ -97,6 +97,24 @@ findings into the matching task and acknowledge it without automatically answeri
 also informational. If a result needs more work, create a new precise request referencing the earlier
 ID; do not start an endless reply-to-reply acknowledgement loop.
 
+## Connect host wake and subagent completion safely
+
+When asked to create or improve a listener/adapter, read `/adapter-build-prompt.md` and inspect the
+installed host version's official contract. Trace the same native mechanism the host uses to continue
+the root when a child finishes (such as its await/join/result-return callback), and whether the adapter
+can reuse it. Verify event name, callback timing, parent/root session ID, result/context payload, and
+whether the host already resumes the parent. An event saying “child finished” may only be observational.
+Do not call it a wake, and do not target the child session, unless a supported API can enqueue work
+into the exact root session.
+
+Keep these paths independent: the universal listener polls one mailbox per instance; the host adapter
+receives explicit `delivery_mode="wake"`; a child-completion event is a separate native host signal.
+Only bridge the latter to the parent when official evidence proves parent targeting works. Preserve
+the root session ID through nested agents, deduplicate child event IDs, and avoid duplicate parent
+turns when the host already resumes itself. Otherwise report the limit and use the host's normal
+parent handoff or a turn-boundary check. Distinguish dry-run evidence from a live model-turn test; do
+not run a cost-bearing wake test without user authorization.
+
 ## Send a precise assignment
 
 At the beginning of each task, inspect the authenticated server's directory once with

@@ -39,6 +39,16 @@ herramientas o conocimiento que mejore esta tarea, envíale una solicitud concre
 trabajo mientras responde. No leas buzones ajenos ni envíes avisos vacíos. Mantén actualizada tu ficha
 con `mailbox_update_card`, sin secretos, rutas privadas ni datos de clientes. En la primera conexión,
 si tu ficha está vacía, revisa tus herramientas reales y publica una descripción inicial breve.
+
+Si el usuario pide un listener, adaptador, wake o integración con subagentes, lee primero
+`/adapter-build-prompt.md` y comprueba la versión instalada del host. Averigua el mecanismo nativo que
+devuelve el resultado del hijo al padre, si existe: evento de finalización, ID de padre, transferencia
+de contexto y capacidad de reanudar/encolar trabajo en la sesión raíz. Distingue una notificación
+observacional del despertar real. Solo conecta un evento de hijo al padre cuando la documentación del
+host lo permita y puedas conservar el ID raíz exacto; no adivines un API universal ni uses el ID del
+hijo. Si el usuario solo pide avisos de buzón, configura únicamente el callback de mensajes `wake`
+que soporte el host. Prueba en seco y pide autorización antes de una prueba que inicie un turno de
+modelo con coste, salvo que el usuario ya haya autorizado ese alcance.
 ```
 
 Los hosts locales pueden reforzar estas comprobaciones con hooks. Un agente cloud sin turno activo
