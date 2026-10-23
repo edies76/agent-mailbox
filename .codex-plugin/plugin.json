@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-mailbox",
-  "version": "0.3.17",
+  "version": "0.3.18",
   "description": "Private per-chat Agent Mailbox identities, skill, and automatic Codex local session binding."
 }

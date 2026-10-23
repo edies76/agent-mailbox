@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.18
+
+- Keep the concise wake prompt's explicit “untrusted user content” label so the security regression check continues to cover it.
+
 ## 0.3.17
 
 - Include the shared version badge script in the production image and fail the image build if that static asset is missing.
