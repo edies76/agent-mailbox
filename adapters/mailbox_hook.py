@@ -84,7 +84,8 @@ def bind_session(config, config_path, host, session_id, workspace=None):
             if os.path.exists(temporary):
                 os.unlink(temporary)
     changed = False
-    for option in ("on_message_command", "mailbox_bank_dir", "transport", "client_script", "local_registration"):
+    for option in ("on_message_command", "on_wake_command", "mailbox_bank_dir", "transport",
+                   "client_script", "local_registration"):
         if option in config and result.get(option) != config[option]:
             result[option] = config[option]
             changed = True
@@ -97,8 +98,12 @@ def bind_session(config, config_path, host, session_id, workspace=None):
         if result.get("wake") != wake:
             result["wake"] = wake
             changed = True
-        if result.get("on_message_command") != callback:
-            result["on_message_command"] = callback
+        if any("mailbox_wake.py" in part.casefold() for part in result.get("on_message_command", [])
+               if isinstance(part, str)):
+            result.pop("on_message_command", None)
+            changed = True
+        if result.get("on_wake_command") != callback:
+            result["on_wake_command"] = callback
             changed = True
     if changed:
         fd, temporary = tempfile.mkstemp(dir=directory, suffix=".tmp")

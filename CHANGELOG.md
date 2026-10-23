@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.14
+
+- Add explicit `delivery_mode=inbox|wake` and `wake_backlog` metadata across HTTP, MCP, SQLite, Firestore, the mailbox composer and per-instance listener dispatch. Normal inbox mail never starts a model turn; replies never re-wake senders.
+- Separate listener notification callbacks from wake callbacks, bind Codex wake dispatch to each native session, and compact the injected prompt while preserving exact message identity and private reply routing.
+
 ## 0.3.13
 
 - Repair Codex profile enrollment by sending only fields accepted by the profile-instance endpoint; validate host URLs correctly in the hook.

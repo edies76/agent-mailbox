@@ -30,3 +30,5 @@ body.auth-locked{overflow:hidden}
 @media(max-width:520px){.login-overlay{padding:12px}.login-box{max-height:calc(100dvh - 24px);padding:22px}}
 
 .agent-header-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}#new-agent-access{font:11px/1.7 var(--mono);min-height:150px}.agent-header-actions .button{white-space:nowrap}
+
+.pill.wake-mode{color:#75451f;background:#f3e7d6;border:1px solid #e3c8a8}

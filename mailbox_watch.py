@@ -53,18 +53,36 @@ def save_cursor(path, cursor):
 
 def process_message(message, token, config):
     encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
-    command = config.get("on_message_command")
-    if command:
+    delivery_mode = message.get("delivery_mode", "inbox")
+    is_wake = delivery_mode == "wake" and message.get("message_type", "request") in ("request", "note")
+    notify_command = config.get("on_message_command")
+    wake_command = config.get("on_wake_command")
+    legacy_wake = (notify_command and (config.get("wake") or {}).get("provider")
+                   and any("mailbox_wake.py" in part.casefold() for part in notify_command))
+    if legacy_wake:
+        wake_command = wake_command or notify_command
+        notify_command = None
+
+    def invoke(command, option_name):
         if not isinstance(command, list) or not command or not all(isinstance(part, str) for part in command):
-            raise ValueError("on_message_command debe ser una lista de argumentos de texto.")
+            raise ValueError(f"{option_name} debe ser una lista de argumentos de texto.")
         environment = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
         result = subprocess.run(command, input=encoded, text=True, encoding="utf-8", check=False, env=environment)
         if result.returncode != 0:
-            raise RuntimeError(f"El comando receptor terminó con código {result.returncode}.")
-        if config.get("ack_after_callback", False):
+            raise RuntimeError(f"{option_name} terminó con código {result.returncode}.")
+
+    if notify_command:
+        invoke(notify_command, "on_message_command")
+        if config.get("ack_after_callback", False) and not is_wake:
             request_json(f"{config['url'].rstrip('/')}/inbox/{message['id']}/ack", token,
                          method="POST", payload={})
-    else:
+    if is_wake and wake_command:
+        invoke(wake_command, "on_wake_command")
+        print(json.dumps({"type": "mailbox_wake_queued", "message_id": message["id"],
+                          "wake_backlog": bool(message.get("wake_backlog", False))}), flush=True)
+    elif is_wake:
+        print(json.dumps({"type": "mailbox_wake_unconfigured", "message_id": message["id"]}), flush=True)
+    elif not notify_command:
         print(json.dumps({"type": "mailbox_message", "message": message}, ensure_ascii=False), flush=True)
 
 

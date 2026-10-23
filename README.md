@@ -123,9 +123,10 @@ No token is injected into the prompt. See [adapters](adapters/README.md).
 For Codex local, install the bundled repo plugin and start the local SQLite server. Its `SessionStart`
 hook registers each new chat through loopback with its native session ID and no human account/key.
 Hosted Codex servers use the private profile enrollment configuration. In either case, a failed hook
-never falls back to a sibling chat token. A private Codex profile can opt into a separate `codex queue`
-callback for each bound session; each callback targets the exact native session and uses its private
-mailbox client. This starts a model turn and may consume model usage. See [agent setup](docs/AGENT-SETUP.md).
+never falls back to a sibling chat token. Senders choose `delivery_mode: "inbox"` (default, no turn)
+or `"wake"` for a local model turn; `wake_backlog` asks that exact session to process earlier pending
+messages too. Each bound Codex chat has its own queue callback and private mailbox client. A wake can
+consume model usage. See [agent setup](docs/AGENT-SETUP.md).
 
 `mailbox_listener.py` supervises multiple `mailbox_watch.py` workers from one local manifest. Each
 worker polls every 15 s and invokes its host adapter with message JSON on stdin. The supervisor uses

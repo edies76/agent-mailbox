@@ -199,6 +199,8 @@ class Message(BaseModel):
     subject: str = Field(default="", max_length=180)
     share_subject: bool = False
     message_type: Literal["request", "note"] = "request"
+    delivery_mode: Literal["inbox", "wake"] = "inbox"
+    wake_backlog: bool = False
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
     in_reply_to: int | None = Field(default=None, gt=0, le=MAX_MESSAGE_ID)
     attachments: list[Attachment] = Field(default_factory=list, max_length=3)
@@ -965,7 +967,8 @@ def create_app():
         result = store.inbox_count(identifier)
         page = page_mail(identifier, "inbox", {"unread_only": True, "limit": 20})
         preview = [{key: row[key] for key in ("id", "subject", "thread_id", "status", "from_agent_id",
-                   "created_at_iso", "message_type", "attachment_count", "has_images", "has_files")} for row in page["messages"]]
+                   "created_at_iso", "message_type", "delivery_mode", "wake_backlog",
+                   "attachment_count", "has_images", "has_files")} for row in page["messages"]]
         return {**result, "instance": public_agent(store.get_agent(identifier), time.time()),
                 "preview": preview, "has_more": page["has_more"], "checked_at": time.time()}
 
@@ -1418,6 +1421,10 @@ def create_app():
     @app.post("/messages", status_code=201)
     def send_message(body: Message, identity: Identity):
         sender = agent_id(identity)
+        if body.delivery_mode == "wake" and body.in_reply_to is not None:
+            raise HTTPException(422, "Only a new message can use delivery_mode='wake'")
+        if body.wake_backlog and body.delivery_mode != "wake":
+            raise HTTPException(422, "wake_backlog requires delivery_mode='wake'")
         attachments = prepare_attachments(body.attachments)
         if not body.text.strip() and not attachments:
             raise HTTPException(422, "Message text cannot be blank")

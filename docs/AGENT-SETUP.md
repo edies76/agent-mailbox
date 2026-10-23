@@ -34,8 +34,9 @@ use a private profile config with `profile_id` and `enrollment_token`; hosted re
 requires server authorization.
 
 To enable unattended delivery for every Codex chat the plugin binds, add
-`"wake_on_message": true` to that private profile JSON. Each listener callback then uses that chat's
-native session ID with `codex queue` and its own private mailbox client. This starts a model turn and
+`"wake_on_message": true` to that private profile JSON. The listener prepares an instance-bound
+`on_wake_command` for that chat's native session ID. Only messages sent with `delivery_mode="wake"`
+use `codex queue`, along with that chat's private mailbox client. This starts a model turn and
 uses the configured Codex model; leave the setting absent for polling/notification without model use.
 The listener discovers new instance configs every five seconds. Restart Codex or open a fresh chat
 after plugin installation so the reviewed hook can bind it. No callback can reopen a closed Codex app.

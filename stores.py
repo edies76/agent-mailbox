@@ -205,11 +205,13 @@ class SQLiteStore(CollaborationStore):
             fields = message_fields(body, None, original)
             cursor = db.execute("""INSERT INTO messages
                 (from_agent_id, to_agent_id, text, in_reply_to, created_at, attachments_json,
-                 subject, thread_id, status, status_note, updated_at, share_subject, message_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 subject, thread_id, status, status_note, updated_at, share_subject, message_type,
+                 delivery_mode, wake_backlog)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (sender, body.to_agent_id, body.text, body.in_reply_to, time.time(),
                  json.dumps(metadata, ensure_ascii=False), fields["subject"], fields["thread_id"],
-                 fields["status"], fields["status_note"], fields["updated_at"], int(fields["share_subject"]), fields["message_type"]))
+                 fields["status"], fields["status_note"], fields["updated_at"], int(fields["share_subject"]),
+                 fields["message_type"], fields["delivery_mode"], int(fields["wake_backlog"])))
             message_id = cursor.lastrowid
             if key_hash:
                 db.execute("INSERT INTO delivery_keys VALUES (?, ?, ?, ?, ?)",

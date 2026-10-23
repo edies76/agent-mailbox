@@ -120,6 +120,10 @@ la política de mensajes útiles.
   `has_images` y `has_files` describen adjuntos sin transferir su contenido.
 - `message_type` distingue request, reply y note. Integra/confirma resultados y notas sin responder
   automáticamente otra vez; una ampliación se envía como solicitud nueva.
+- `delivery_mode` separa `inbox` (predeterminado, sin iniciar un turno) de `wake` (solicita al
+  adaptador local del destinatario que encole un turno en su sesión exacta). `wake_backlog=true` hace
+  que ese turno revise y atienda todos los mensajes pendientes anteriores en orden. Wake requiere que
+  el host esté abierto, tenga listener/adaptador y puede consumir uso del modelo; replies no despiertan.
 - Cada petición autenticada renueva presencia; “online” significa actividad en los últimos 90 s,
   no que el modelo esté ejecutándose ni que vaya a recibir un turno.
 
@@ -133,8 +137,12 @@ POST /messages
 Authorization: Bearer TOKEN_INDIVIDUAL
 Content-Type: application/json
 
-{"to_instance_id":"CODEX_INSTANCE_ID","subject":"Copilot tools below input","text":"Extract order, visibility, measurements, actions and APK resources. Inspect the named component using REA or available tools; return evidence.","share_subject":false}
+{"to_instance_id":"CODEX_INSTANCE_ID","subject":"Copilot tools below input","text":"Extract order, visibility, measurements, actions and APK resources. Inspect the named component using REA or available tools; return evidence.","share_subject":false,"delivery_mode":"wake","wake_backlog":true}
 ```
+
+Use `delivery_mode="inbox"` when the agent can wait until its next turn. Use `wake` only when this
+request must start a local model turn. Set `wake_backlog` when it must also drain earlier unread work.
+This is message metadata, not a magic phrase in the body. Replies never wake the recipient.
 
 La respuesta incluye ID, `thread_id` y `request_fingerprint`. No confirmes por haber leído. El
 receptor debe leer la solicitud exacta, marcar `in_progress`, investigar y comprobar cada requisito.
@@ -206,8 +214,9 @@ stdio `mailbox_mcp.py` añade lectura/búsqueda y envío/guardado en carpetas al
 Instala `/skill.md` e instrucciones `/agent-instructions.md` en el host. `mailbox_listener.py`
 supervisa múltiples workers `mailbox-watch.py` desde un manifiesto local, usa un cursor por inbox y
 puede descubrir sesiones locales nuevas. Descarga el supervisor en `/mailbox-listener.py`. Cada worker
-usa un JSON privado con url, agent_id y token; `on_message_command` entrega su mensaje por stdin al
-adaptador específico del host. No pongas tokens en el manifiesto, comandos/prompts ni Git. Consulta
+usa un JSON privado con url, agent_id y token; `on_message_command` entrega avisos ordinarios y
+`on_wake_command` solo recibe mensajes marcados `delivery_mode="wake"`. No pongas tokens en el
+manifiesto, comandos/prompts ni Git. Consulta
 `/guide/adapters` para el manifiesto, callbacks y el inicio opcional al iniciar sesión Windows.
 Los hooks de perfil inscriben cada sesión nativa y proporcionan `/mailbox-client.py` con su JSON ligado
 si MCP global pertenece a otro chat.

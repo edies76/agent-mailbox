@@ -28,6 +28,8 @@ def message_view(row):
     row.setdefault("status_note", "")
     row.setdefault("share_subject", False)
     row["share_subject"] = bool(row["share_subject"])
+    row.setdefault("delivery_mode", "inbox")
+    row["wake_backlog"] = bool(row.get("wake_backlog", False))
     row["created_at_iso"] = iso_date(row.get("created_at"))
     row["updated_at_iso"] = iso_date(row.get("updated_at") or row.get("created_at"))
     files = row.get("attachments", [])
@@ -35,6 +37,8 @@ def message_view(row):
     row["has_images"] = any(item["media_type"].startswith("image/") for item in files)
     row["has_files"] = any(not item["media_type"].startswith("image/") for item in files)
     binding = [row["id"], row["from_agent_id"], row["to_agent_id"], row["subject"], row["text"]]
+    if row["delivery_mode"] != "inbox" or row["wake_backlog"]:
+        binding.extend([row["delivery_mode"], row["wake_backlog"]])
     row["request_fingerprint"] = hashlib.sha256(json.dumps(binding, ensure_ascii=False).encode()).hexdigest()
     return row
 
@@ -43,6 +47,8 @@ def message_fields(body, identifier, original=None):
     return dict(subject=body.subject or (original or {}).get("subject", ""),
                 thread_id=(original or {}).get("thread_id") or (original or {}).get("id") or identifier,
                 message_type="reply" if original else body.message_type,
+                delivery_mode="inbox" if original else body.delivery_mode,
+                wake_backlog=False if original else body.wake_backlog,
                 status="completed" if original or body.message_type == "note" else "queued", status_note="", updated_at=time.time(),
                 share_subject=body.share_subject)
 
@@ -58,6 +64,8 @@ class CollaborationStore:
                            "capabilities_json": "TEXT NOT NULL DEFAULT '[]'"},
                 "messages": {"subject": "TEXT NOT NULL DEFAULT ''", "thread_id": "INTEGER",
                              "message_type": "TEXT NOT NULL DEFAULT 'request'",
+                             "delivery_mode": "TEXT NOT NULL DEFAULT 'inbox'",
+                             "wake_backlog": "INTEGER NOT NULL DEFAULT 0",
                              "status": "TEXT NOT NULL DEFAULT 'queued'", "status_note": "TEXT NOT NULL DEFAULT ''",
                              "updated_at": "REAL", "share_subject": "INTEGER NOT NULL DEFAULT 0"},
             }

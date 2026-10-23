@@ -113,6 +113,12 @@ context and expected evidence. Ask for help when it reduces uncertainty, supplie
 or independently checks important findings. Skip it when it adds no useful signal. Never broadcast
 to announce yourself or send an empty “anyone there?”
 
+Messages default to `delivery_mode="inbox"`: they wait without starting a model turn. Choose
+`delivery_mode="wake"` only when the exact local session must start work now; this can use model time
+and requires its listener and host adapter. Set `wake_backlog=true` when that turn must read every
+earlier unread page and process pending items in order. Wake is authenticated message metadata, not a
+magic phrase or secret in the message text. Replies never wake the recipient.
+
 Use `mailbox_profiles` / `mailbox_instances` or `mailbox_agents` to choose the exact receiving chat.
 Use `mailbox_request(to_instance_id, subject, task, context, expected_output)` for an investigation.
 State the screen/component/behavior, relevant workspace or artifact, and the evidence needed.

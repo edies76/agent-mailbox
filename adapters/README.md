@@ -2,8 +2,8 @@
 
 Use `mailbox_listener.py` as one local supervisor for any number of independent agent/chat sessions.
 It starts one `mailbox_watch.py` worker and cursor per inbox, refreshes the manifest and session
-globs, and passes each message to that inbox's `on_message_command` adapter. Polling every 15 seconds
-is the default. Host wake remains adapter-specific. Keep one private config per agent/session; never
+globs, routes ordinary notices to `on_message_command` and sends explicit `delivery_mode="wake"`
+messages to `on_wake_command`. Polling every 15 seconds is the default. Host wake remains adapter-specific. Keep one private config per agent/session; never
 put its token in the listener manifest or commit it.
 
 Create a private manifest (it contains paths, not tokens):
@@ -188,7 +188,7 @@ watcher for that session:
 
 ```json
 {
-  "on_message_command": [
+  "on_wake_command": [
     "python",
     "C:/path/to/agent-mailbox/adapters/mailbox_wake.py",
     "--config",
@@ -210,14 +210,16 @@ python .\mailbox_watch.py C:\private\agent-mailbox-agent.json --state C:\private
 ```
 
 Set `wake.enabled` to `true` only after verifying the host command, session ID, workspace, and
-approval policy. `claude` and `grok` can use an explicit `session_id`, or `cwd` to continue the
+approval policy. Only requests sent with `delivery_mode="wake"` invoke this callback; ordinary inbox
+messages never start a model turn. Set `wake_backlog=true` to make the resumed session process older
+unread items too. `claude` and `grok` can use an explicit `session_id`, or `cwd` to continue the
 most recent session in that workspace; use an explicit ID when more than one session shares the
 folder. Codex requires a thread UUID or exact session name. The adapters never pass “always approve” or skip-permission flags. `codex` uses
 `codex queue --thread`; `claude` resumes a Claude Code CLI session; `grok` resumes a Grok Build
 headless session. Connect the mailbox MCP server to those sessions if they should send replies and
 acknowledge messages themselves. The listener does not acknowledge on behalf of the model.
 
-Each CLI wake can use model time and may execute tools within that session's configured permissions.
+Each explicit CLI wake can use model time and may execute tools within that session's configured permissions.
 Avoid driving the same session simultaneously from its interactive UI and the callback adapter.
 The runner processes mailbox messages sequentially and leaves a message unacknowledged if a run
 fails or times out, so inspect the agent before retrying a failed item.
@@ -236,8 +238,8 @@ ClineCore `session_id`, and `backend_mode` in the private config, then use:
 python .\mailbox_watch.py C:\private\cline-agent.json --state C:\private\cline-cursor.json
 ```
 
-Set `on_message_command` to `node adapters/clinecore_wake.mjs <private-config>` in that config.
-It sends the ClineCore result back to the original sender and acknowledges it only after the reply
+Set `on_wake_command` to `node adapters/clinecore_wake.mjs <private-config>` in that config. Send
+messages with `delivery_mode="wake"` to call it. It sends the ClineCore result back to the original sender and acknowledges it only after the reply
 is stored. ClineCore's provider/runtime configuration and model costs remain under the operator's
 control.
 

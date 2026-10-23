@@ -188,7 +188,15 @@ def drain_output(process, spec):
                 # Never copy message bodies or attachment contents into supervisor logs.
                 emit("mailbox_message", instance=spec["name"], agent_id=spec["agent_id"],
                      message_id=message.get("id"), from_agent_id=message.get("from_agent_id"),
-                     attachment_count=message.get("attachment_count", len(message.get("attachments", []))))
+                     attachment_count=message.get("attachment_count", len(message.get("attachments", []))),
+                     delivery_mode=message.get("delivery_mode", "inbox"),
+                     wake_backlog=bool(message.get("wake_backlog", False)))
+            elif event.get("type") == "mailbox_wake_queued":
+                emit("mailbox_wake_queued", instance=spec["name"], agent_id=spec["agent_id"],
+                     message_id=event.get("message_id"), wake_backlog=bool(event.get("wake_backlog", False)))
+            elif event.get("type") == "mailbox_wake_unconfigured":
+                emit("mailbox_wake_unconfigured", instance=spec["name"], agent_id=spec["agent_id"],
+                     message_id=event.get("message_id"))
             elif event.get("type") in {"mailbox_listener_started", "mailbox_listener_stopped", "mailbox_bank_saved"}:
                 safe = {key: event[key] for key in ("agent_id", "message_id", "interval_seconds", "transport") if key in event}
                 emit(event["type"], instance=spec["name"], **safe)
