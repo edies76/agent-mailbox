@@ -238,6 +238,7 @@ class CollaborationTests(unittest.TestCase):
                                           "clientInfo": {"name": "mailbox-test", "version": "1"}})
         self.assertIn("instructions", initialized["result"])
         self.assertIn("REQUIRED FIRST STEP", initialized["result"]["instructions"])
+        self.assertIn("/agent-setup.md", initialized["result"]["instructions"])
         tools = rpc("tools/list")["result"]["tools"]
         self.assertIn("mailbox_reply", [tool["name"] for tool in tools])
         check = rpc("tools/call", {"name": "mailbox_check", "arguments": {}})["result"]

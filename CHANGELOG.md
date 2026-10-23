@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.7
+
+- Require connection instructions to read the downloadable skill, persistent instructions, agent setup guide and adapter guide before an instance is considered onboarded; expose the same files over ordinary HTTP as well as MCP.
+- Add listener/alarmer installation guidance, a copy-ready host-specific adapter authoring prompt and direct downloads for listener, watcher, hook, wake and local-bank components, with clear notification-versus-wake limits.
+
 ## 0.3.6
 
 - Turn instance registration into a required agent handoff: the dashboard produces a copy-ready, instance-bound onboarding prompt alongside the private MCP credentials and clearly gates completion on configuring MCP and teaching the agent.

@@ -902,6 +902,8 @@ def create_app():
         return {"version": APP_VERSION, "skill": (root / "skills/agent-mailbox/SKILL.md").read_text(encoding="utf-8"),
                 "master_prompt": (root / "docs/AGENT-MAILBOX-MASTER-PROMPT.md").read_text(encoding="utf-8"),
                 "persistent_instructions": (root / "docs/AGENT-INSTRUCTIONS.md").read_text(encoding="utf-8"),
+                "agent_setup_guide": (root / "docs/AGENT-SETUP.md").read_text(encoding="utf-8"),
+                "setup_guide_url": "/agent-setup.md", "adapter_prompt_url": "/adapter-build-prompt.md",
                 "guide_url": "/guide/start", "scope": "task boundaries while the host has a model turn"}
 
     def reply_to(identifier, message_id, body):
@@ -1070,6 +1072,16 @@ def create_app():
         path = FilePath(__file__).parent / "docs" / "CONNECT-AGENT-PROMPT.md"
         return PlainTextResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
 
+    @app.get("/agent-setup.md", response_class=PlainTextResponse, include_in_schema=False)
+    def agent_setup_guide():
+        path = FilePath(__file__).parent / "docs" / "AGENT-SETUP.md"
+        return PlainTextResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
+    @app.get("/adapter-build-prompt.md", response_class=PlainTextResponse, include_in_schema=False)
+    def adapter_build_prompt():
+        path = FilePath(__file__).parent / "docs" / "ADAPTER-BUILD-PROMPT.md"
+        return PlainTextResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
     @app.get("/skill.md", response_class=PlainTextResponse, include_in_schema=False)
     def agent_mailbox_skill():
         path = FilePath(__file__).parent / "skills" / "agent-mailbox" / "SKILL.md"
@@ -1082,6 +1094,24 @@ def create_app():
     @app.get("/mailbox-watch.py", include_in_schema=False)
     def mailbox_watcher():
         return FileResponse(FilePath(__file__).parent / "mailbox_watch.py",
+                            media_type="text/x-python", headers={"Cache-Control": "no-store",
+                                                                  "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/mailbox-hook.py", include_in_schema=False)
+    def mailbox_hook_script():
+        return FileResponse(FilePath(__file__).parent / "adapters" / "mailbox_hook.py",
+                            media_type="text/x-python", headers={"Cache-Control": "no-store",
+                                                                  "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/mailbox-wake.py", include_in_schema=False)
+    def mailbox_wake_script():
+        return FileResponse(FilePath(__file__).parent / "adapters" / "mailbox_wake.py",
+                            media_type="text/x-python", headers={"Cache-Control": "no-store",
+                                                                  "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/mailbox-spool.py", include_in_schema=False)
+    def mailbox_spool_script():
+        return FileResponse(FilePath(__file__).parent / "adapters" / "mailbox_spool.py",
                             media_type="text/x-python", headers={"Cache-Control": "no-store",
                                                                   "X-Content-Type-Options": "nosniff"})
 

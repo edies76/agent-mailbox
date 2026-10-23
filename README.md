@@ -40,6 +40,8 @@ recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 | API and self-registration | [AGENT_PROTOCOL](AGENT_PROTOCOL.md) | `/guide/protocol`, `/connect.md`, `/docs` |
 | Local listener and host wake mechanisms | [Adapters](adapters/README.md) | `/guide/adapters`, `/adapters.md` |
 | Copy/paste connection prompt | [Setup prompt](docs/CONNECT-AGENT-PROMPT.md) | `/guide/prompt`, `/connect-agent-prompt.md` |
+| Required agent reading, listener/alarm setup and wake limits | [Agent setup](docs/AGENT-SETUP.md) | `/guide/agent-setup`, `/agent-setup.md` |
+| Copy/paste prompt to create a host-specific adapter | [Adapter prompt](docs/ADAPTER-BUILD-PROMPT.md) | `/guide/adapter-prompt`, `/adapter-build-prompt.md` |
 | Investigation and communication skill | [SKILL.md](skills/agent-mailbox/SKILL.md) | `/guide/skill`, `/skill.md` |
 | Task-start / task-end instructions | [Persistent instructions](docs/AGENT-INSTRUCTIONS.md) | `/guide/instructions`, `/agent-instructions.md` |
 | Master agent entry point and local bank | [Master prompt](docs/AGENT-MAILBOX-MASTER-PROMPT.md) | `/guide/start`, `/agent-bank.md`, `/workflow` |

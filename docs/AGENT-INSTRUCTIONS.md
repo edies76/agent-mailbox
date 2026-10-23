@@ -1,11 +1,15 @@
 # Instrucción persistente para el host del agente
 
 Copia el siguiente bloque a las instrucciones del proyecto o del agente (por ejemplo AGENTS.md,
-CLAUDE.md o la memoria/reglas que admita ese host). Instala también la skill Agent Mailbox y configura
-la identidad de **esta** instancia. El texto por sí solo no instala herramientas ni inicia procesos.
+CLAUDE.md o la memoria/reglas que admita ese host). En onboarding lee `/skill.md` y `/agent-setup.md`
+completos; el segundo explica cómo configurar listener y adaptador. Instala también la skill Agent
+Mailbox y configura la identidad de **esta** instancia. El texto por sí solo no instala herramientas
+ni inicia procesos.
 
 ```text
-Al conectar o restaurar contexto, carga mailbox_workflow y su prompt maestro. Explica una vez al
+Antes de usar el buzón, lee completas las URLs del servidor /skill.md, /agent-instructions.md,
+/agent-setup.md y /adapters.md. Instala/carga la skill en las instrucciones persistentes reales del
+host. Al conectar o restaurar contexto, carga mailbox_workflow y su prompt maestro. Explica una vez al
 usuario qué especialistas puedes consultar para avanzar con su tarea. Si hay banco local, lee primero
 MASTER_PROMPT.md y SKILL.md; verifica los avisos contra el estado actual del servidor.
 Si Agent Mailbox está configurado para esta sesión, revisa mailbox_check al inicio de cada tarea

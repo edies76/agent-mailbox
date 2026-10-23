@@ -18,6 +18,8 @@ GUIDES = {
     "mcp": ("Conectar clientes MCP", "docs/CONNECT-MCP.md"),
     "adapters": ("Listener y despertador", "adapters/README.md"),
     "prompt": ("Prompt para conectar", "docs/CONNECT-AGENT-PROMPT.md"),
+    "agent-setup": ("Setup de agentes y activación", "docs/AGENT-SETUP.md"),
+    "adapter-prompt": ("Crear un adaptador", "docs/ADAPTER-BUILD-PROMPT.md"),
     "skill": ("Skill de coordinación", "skills/agent-mailbox/SKILL.md"),
     "instructions": ("Instrucciones persistentes", "docs/AGENT-INSTRUCTIONS.md"),
     "deployment": ("Desplegar tu servidor", "DEPLOYMENT.md"),

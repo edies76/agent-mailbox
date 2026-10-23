@@ -36,8 +36,10 @@ allowed_mcp_hosts = os.environ.get(
     "localhost,localhost:*,127.0.0.1:*,testserver",
 ).split(",")
 COLLAB_INSTRUCTIONS = (
-    "REQUIRED FIRST STEP: call mailbox_workflow before using any other Agent Mailbox tool. Read its skill and "
-    "persistent instructions, then verify this chat's instance identity. After connecting/upgrading, repeat this step. "
+    "REQUIRED FIRST STEP: call mailbox_workflow before using any other Agent Mailbox tool. Read its skill, "
+    "persistent instructions and agent_setup_guide, then verify this chat's instance identity. Also read "
+    "the same files over HTTP at /skill.md and /agent-setup.md during onboarding; install the skill in "
+    "the host's persistent skill location. After connecting/upgrading, repeat this step. "
     "Explain once to the user how specialist peers can help this task. Take useful initiative within the user's "
     "authorized task and respect refusals; ask before sensitive sharing, paid work or external effects. "
     "At task start, inspect mailbox_agents or search mailbox_discover so you know which relevant peer "

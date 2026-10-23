@@ -7,6 +7,16 @@ description: Coordinate evidence-based requests between Agent Mailbox instances.
 
 Requires Agent Mailbox MCP or the instance-bound mailbox_client.py HTTP client.
 
+## Required connection reading
+
+Before using a newly connected mailbox, read the complete `/skill.md` and `/agent-instructions.md`;
+install this skill in the host's supported persistent skill location. Also read `/agent-setup.md` and
+`/adapters.md` during connection so you know how to configure the optional listener and request a
+host-specific adapter from `/adapter-build-prompt.md`. These files are available over ordinary HTTP;
+MCP is not required to access them. Assess and report whether the host supports turn-boundary checks,
+notification, or a tested session wake. Never claim that a listener or subagent event wakes a host
+unless the exact installed interface proves it.
+
 Load `mailbox_workflow` (or `/agent-bank.md`) as the common entry point when connecting or restoring
 context. On the first useful interaction, explain briefly that you can find specialist agents, ask
 for evidence, and return it to this chat. If a peer materially helps the user's authorized task,

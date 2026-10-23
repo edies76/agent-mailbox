@@ -88,6 +88,9 @@ class ControlAccessTests(unittest.TestCase):
     def test_workflow_delivers_master_and_guides_have_real_assets(self):
         workflow = self.request("GET", "/workflow")
         self.assertIn("Take useful initiative", workflow["master_prompt"])
+        self.assertIn("15 seconds", workflow["agent_setup_guide"])
+        self.assertEqual(workflow["setup_guide_url"], "/agent-setup.md")
+        self.assertEqual(workflow["adapter_prompt_url"], "/adapter-build-prompt.md")
         dashboard = (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
         dashboard_js = (Path(__file__).parent / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("Siguiente paso obligatorio", dashboard)
@@ -95,7 +98,7 @@ class ControlAccessTests(unittest.TestCase):
         self.assertIn("mailbox_workflow", dashboard_js)
         self.assertIn("copy-agent-onboarding", dashboard_js)
         from urllib.request import urlopen
-        for path in ("/", "/en", "/guide/start", "/guide/security", "/guide/brand", "/brand-symbol.svg", "/social-card.png"):
+        for path in ("/", "/en", "/guide/start", "/guide/security", "/guide/brand", "/guide/agent-setup", "/guide/adapter-prompt", "/brand-symbol.svg", "/social-card.png", "/agent-setup.md", "/adapter-build-prompt.md", "/mailbox-listener.py", "/mailbox-watch.py", "/mailbox-hook.py", "/mailbox-wake.py", "/mailbox-spool.py"):
             with urlopen(self.url + path, timeout=10) as response:
                 content = response.read()
                 self.assertEqual(response.status, 200)
