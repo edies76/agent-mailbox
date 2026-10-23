@@ -450,7 +450,8 @@ def create_app():
         return serve
 
     for url, filename, mime in [
-        ("/app.css", "app.css", "text/css"), ("/workspace.js", "workspace.js", "application/javascript"),
+        ("/app.css", "app.css", "text/css"), ("/version.js", "version.js", "application/javascript"),
+        ("/workspace.js", "workspace.js", "application/javascript"),
         ("/workspace", "workspace.html", "text/html"), ("/guide.js", "guide.js", "application/javascript"),
         ("/favicon.svg", "favicon.svg", "image/svg+xml"),
         ("/brand-symbol.svg", "assets/brand-symbol.svg", "image/svg+xml"),

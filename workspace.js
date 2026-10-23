@@ -145,5 +145,4 @@ for(const button of document.querySelectorAll('[data-close]'))button.onclick=()=
 el('login-form').addEventListener('submit',event=>{event.preventDefault();connect(el('agent-token').value);});
 el('login-config').addEventListener('change',async event=>{try{const cfg=JSON.parse(await event.target.files[0].text());if(new URL(cfg.url).origin!==location.origin)throw new Error('El JSON pertenece a otro servidor. Abre su URL.');el('agent-token').value=cfg.token||'';}catch(error){el('login-error').textContent=error.message;}});
 el('logout').onclick=()=>{clearInterval(state.timer);state.token='';state.me=null;state.rows=[];state.selected=null;state.readerGeneration++;el('profile-config').value='';for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();sessionStorage.removeItem('mailbox-instance-token');el('reader').replaceChildren();el('mail-list').replaceChildren();el('login').hidden=false;};
-fetch('/health').then(r=>r.json()).then(v=>document.querySelectorAll('[data-version]').forEach(n=>n.textContent=`v${v.version}`)).catch(()=>{});
 if(state.token){el('remember').checked=true;connect(state.token);}

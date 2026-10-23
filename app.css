@@ -32,3 +32,4 @@ body.auth-locked{overflow:hidden}
 .agent-header-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}#new-agent-access{font:11px/1.7 var(--mono);min-height:150px}.agent-header-actions .button{white-space:nowrap}
 
 .pill.wake-mode{color:#75451f;background:#f3e7d6;border:1px solid #e3c8a8}
+.version-dock{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));z-index:50;display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid #ffffff26;border-radius:999px;background:#252b28;color:#f4f3ed;text-decoration:none;font:10px/1 var(--mono);letter-spacing:.04em;box-shadow:0 4px 16px #10141235;opacity:.88;transition:opacity .18s ease,transform .18s ease}.version-dock:hover,.version-dock:focus-visible{color:#fff;opacity:1;transform:translateY(-2px)}.version-dock:focus-visible{outline:2px solid var(--accent);outline-offset:3px}@media print{.version-dock{display:none}}

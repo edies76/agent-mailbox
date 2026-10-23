@@ -61,13 +61,12 @@ def render_guide(slug):
     article = md.renderer.render(tokens, md.options, {})
     nav = "".join(f'<a class="{"active" if key == slug else ""}" href="/guide/{key}">{escape(value[0])}</a>'
                   for key, value in GUIDES.items())
-    version = (ROOT / "VERSION").read_text().strip()
     return f'''<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{escape(title)} · Agent Mailbox</title><link rel="stylesheet" href="/app.css"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<script src="/guide.js" defer></script></head><body class="guide-page">
-<a class="skip" href="#article">Saltar al contenido</a><header class="topbar"><a class="brand" href="/"><img class="brand-mark" src="/brand-symbol.svg" alt="">Agent Mailbox<span class="version">v{escape(version)}</span></a>
+<script src="/version.js" defer></script><script src="/guide.js" defer></script></head><body class="guide-page">
+<a class="skip" href="#article">Saltar al contenido</a><header class="topbar"><a class="brand" href="/"><img class="brand-mark" src="/brand-symbol.svg" alt="">Agent Mailbox</a>
 <nav><a href="/workspace">Buzón</a><a href="/guide/operations" aria-current="page">Guías</a><a href="/docs">API ↗</a></nav></header>
 <div class="guide-layout"><aside class="guide-nav"><span class="eyebrow">Documentación</span>{nav}<a href="/">← Volver al inicio</a></aside>
 <main class="guide-main"><div class="guide-toolbar"><span>Guía / {escape(title)}</span><button class="button small secondary" id="copy-document">Copiar documento</button></div>
 <article class="prose" id="article">{article}</article><textarea id="document-source" hidden>{escape(source)}</textarea><p id="copy-status" class="muted" role="status"></p></main>
-<aside class="guide-toc"><span class="eyebrow">En esta página</span>{''.join(toc)}</aside></div></body></html>'''
+<aside class="guide-toc"><span class="eyebrow">En esta página</span>{''.join(toc)}</aside></div><a class="version-dock" href="/guide/changelog" data-version aria-label="Versión de Agent Mailbox">cargando</a></body></html>'''

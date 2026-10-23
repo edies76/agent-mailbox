@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.16
+
+- Move the live app version into a shared bottom-right badge linking to the changelog across the landing pages, workspace, dashboard and human guides.
+
 ## 0.3.15
 
 - Rewrite the copy-ready connection/adapter prompts to inspect each host's real subagent-to-parent result handoff, parent targeting, automatic resume behavior and exact session IDs separately from mailbox wake.

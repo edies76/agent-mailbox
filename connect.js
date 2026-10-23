@@ -2,7 +2,6 @@
 const byId = id => document.getElementById(id);
 let accessText = '', onboardingText = '', accessConfig = null;
 byId('mcp-url').textContent = `${location.origin}/mcp`;
-fetch('/health').then(r => r.json()).then(v => document.querySelectorAll('[data-version]').forEach(el => el.textContent = `v${v.version}`)).catch(() => {});
 let agentNameTouched=false;
 function suggestAgentName(){if(!agentNameTouched){const kind=byId('agent-kind').selectedOptions[0].textContent;byId('agent-name').value=`${kind} · ${byId('agent-session-id').value.slice(0,8)}`;}}
 function createSessionId() { const value=crypto.randomUUID(); agentNameTouched=false; sessionStorage.setItem('agent-mailbox-session-key',value); byId('agent-session-id').value=value; suggestAgentName(); }
