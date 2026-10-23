@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.10
+
+- Include `onboarding.py` and the root `agent-mailbox.md` in the production image; validate server imports and the complete onboarding catalog/core ZIP during image build so missing runtime files fail before rollout.
+
 ## 0.3.9
 
 - Add root `agent-mailbox.md` as the shared agent entry point: required reading, exact chat identity, a report of what was read, useful proposals and consent before optional guides or local changes.
