@@ -14,7 +14,7 @@ import sys
 import tempfile
 import hashlib
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -61,6 +61,7 @@ def bind_session(config, config_path, host, session_id, workspace=None):
                            "session_key": key}
         if not config.get("local_registration"):
             enrollment_body["instance_name"] = enrollment_body.pop("name")
+            enrollment_body.pop("kind", None)
         headers = {"Content-Type": "application/json"}
         if not config.get("local_registration"):
             headers["Authorization"] = "Bearer " + config["enrollment_token"]
@@ -86,6 +87,18 @@ def bind_session(config, config_path, host, session_id, workspace=None):
     for option in ("on_message_command", "mailbox_bank_dir", "transport", "client_script", "local_registration"):
         if option in config and result.get(option) != config[option]:
             result[option] = config[option]
+            changed = True
+    if host == "codex" and config.get("wake_on_message"):
+        wake = {"enabled": True, "provider": "codex", "session_id": str(session_id)}
+        if config.get("codex_binary"):
+            wake["binary"] = config["codex_binary"]
+        callback = [sys.executable, str(Path(__file__).with_name("mailbox_wake.py")),
+                    "--config", str(destination)]
+        if result.get("wake") != wake:
+            result["wake"] = wake
+            changed = True
+        if result.get("on_message_command") != callback:
+            result["on_message_command"] = callback
             changed = True
     if changed:
         fd, temporary = tempfile.mkstemp(dir=directory, suffix=".tmp")

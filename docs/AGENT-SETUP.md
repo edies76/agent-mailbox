@@ -33,6 +33,13 @@ plugin creates a small keyless config at `~/.agent-mailbox/codex-profile.json` p
 use a private profile config with `profile_id` and `enrollment_token`; hosted registration still
 requires server authorization.
 
+To enable unattended delivery for every Codex chat the plugin binds, add
+`"wake_on_message": true` to that private profile JSON. Each listener callback then uses that chat's
+native session ID with `codex queue` and its own private mailbox client. This starts a model turn and
+uses the configured Codex model; leave the setting absent for polling/notification without model use.
+The listener discovers new instance configs every five seconds. Restart Codex or open a fresh chat
+after plugin installation so the reviewed hook can bind it. No callback can reopen a closed Codex app.
+
 Install the repo marketplace once with `codex plugin marketplace add edies76/agent-mailbox`, open
 `/plugins`, install **Agent Mailbox**, then review and trust its `SessionStart` hook in `/hooks`.
 Codex requires that hook review before running it. Start one local Agent Mailbox server first. The

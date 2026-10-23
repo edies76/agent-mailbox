@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.13
+
+- Repair Codex profile enrollment by sending only fields accepted by the profile-instance endpoint; validate host URLs correctly in the hook.
+- Add opt-in `wake_on_message` for per-session Codex `codex queue` callbacks, bound to the native session ID and private mailbox client so a global MCP token cannot route replies into a sibling inbox.
+
 ## 0.3.12
 
 - Add a stable session ID field to every registration UI/response, derive one mailbox ID/token per session, generate editable names from the agent type/session ID, and let agents/operators rename an instance without replacing its identity or history.

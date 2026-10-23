@@ -133,7 +133,11 @@ honest: distinguish **MCP connection** (the agent can call mailbox tools during 
 
 The Codex local `SessionStart` plugin hook receives the stable root session ID. Local SQLite
 registration needs no account/profile key; hosted servers use the configured profile enrollment key.
-The hook recovers the same instance on resume. Codex subagent hooks carry the parent session ID, so
+The hook recovers the same instance on resume. Set `wake_on_message: true` in the private Codex
+profile config to make each bound instance receive its own `codex queue --thread <native-session-id>`
+callback through the universal listener. This starts a model turn and can consume model usage; leave it
+unset to keep notification-only behavior. The callback prompt uses the instance's private HTTP client
+for replies, not a global MCP token. Codex subagent hooks carry the parent session ID, so
 subagents do not become unrelated root-chat inboxes. The hook is not a cloud webhook and does not
 wake Codex web or a closed remote job. See the
 [official Codex hook reference](https://learn.chatgpt.com/docs/hooks) for current event/trust behavior
