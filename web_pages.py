@@ -16,6 +16,8 @@ GUIDES = {
     "operations": ("Agentes, instancias e hilos", "docs/OPERATIONS.md"),
     "discovery": ("Descubrir colaboradores", "docs/COLLABORATION.md"),
     "protocol": ("Protocolo y endpoints", "AGENT_PROTOCOL.md"),
+    "a2a": ("Puerta A2A", "docs/A2A-GATEWAY.md"),
+    "a2a-extension": ("Extensión A2A de enrutamiento", "docs/A2A-EXTENSION-INSTANCE-ROUTING.md"),
     "mcp": ("Conectar clientes MCP", "docs/CONNECT-MCP.md"),
     "adapters": ("Listener y despertador", "adapters/README.md"),
     "prompt": ("Prompt para conectar", "docs/CONNECT-AGENT-PROMPT.md"),

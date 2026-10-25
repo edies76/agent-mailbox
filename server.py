@@ -7,6 +7,7 @@ import os
 import re
 import hmac
 import ipaddress
+import json
 import threading
 import secrets
 import time
@@ -27,6 +28,13 @@ from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
 from stores import FirestoreStore, SQLiteStore
 from onboarding import catalog as onboarding_catalog, core_archive, handoff as onboarding_handoff, resource_file, resource_content
+from a2a_gateway import (A2A_VERSION, ROUTING_EXTENSION, agent_card as a2a_agent_card,
+                         decode_page_token as a2a_decode_page_token,
+                         encode_page_token as a2a_encode_page_token,
+                         mailbox_id_from_task as a2a_mailbox_id_from_task,
+                         mailbox_thread_from_context as a2a_thread_from_context,
+                         mailbox_status_from_task_state as a2a_mailbox_status_from_task_state,
+                         problem as a2a_problem, task_document as a2a_task_document)
 
 MAX_MESSAGE_ID = 2**63 - 1
 MAX_AGENT_API_KEYS = 25
@@ -1149,6 +1157,16 @@ def create_app():
         path = FilePath(__file__).parent / "docs" / "CONNECT-AGENT-PROMPT.md"
         return PlainTextResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
 
+    @app.get("/a2a.md", response_class=PlainTextResponse, include_in_schema=False)
+    def a2a_gateway_documentation():
+        path = FilePath(__file__).parent / "docs" / "A2A-GATEWAY.md"
+        return PlainTextResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
+    @app.get("/a2a-extension.md", response_class=PlainTextResponse, include_in_schema=False)
+    def a2a_extension_documentation():
+        path = FilePath(__file__).parent / "docs" / "A2A-EXTENSION-INSTANCE-ROUTING.md"
+        return PlainTextResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
     @app.get("/agent-setup.md", response_class=PlainTextResponse, include_in_schema=False)
     def agent_setup_guide():
         path = FilePath(__file__).parent / "docs" / "AGENT-SETUP.md"
@@ -1236,6 +1254,9 @@ def create_app():
                                "scope": "new unread messages for the authenticated instance only",
                                "mode": "opt-in; an open request can keep hosted compute active"},
                 "attachments": {"max_count": 3, "total_bytes": MAX_ATTACHMENT_BYTES},
+                "a2a": {"enabled": True, "version": A2A_VERSION, "binding": "HTTP+JSON",
+                        "agent_card": "/.well-known/agent-card.json", "base_path": "/a2a",
+                        "streaming": False, "push_notifications": False},
                 "model_wake": "host-specific; event delivery does not itself start a model turn"}
 
     @app.post("/agents", status_code=201)
@@ -1430,6 +1451,259 @@ def create_app():
         if not body.text.strip() and not attachments:
             raise HTTPException(422, "Message text cannot be blank")
         return store.send(sender, body, attachments)
+
+    def a2a_origin(request):
+        return (os.environ.get("MAILBOX_PUBLIC_URL") or str(request.base_url)).rstrip("/")
+
+    def a2a_http_problem(error):
+        status = error.status_code
+        name = {401: "Unauthenticated", 403: "PermissionDenied", 404: "TaskNotFoundError",
+                409: "TaskNotCancelableError", 413: "ContentTypeNotSupportedError",
+                415: "ContentTypeNotSupportedError", 422: "InvalidParams", 501: "UnsupportedOperationError"}.get(
+                    status, "InternalError")
+        detail = error.detail if status < 500 else "A2A gateway request failed"
+        return a2a_problem(status, name, str(detail))
+
+    def a2a_sender(request, credentials):
+        if not credentials or credentials.scheme.casefold() != "bearer":
+            raise HTTPException(401, "A2A requires this caller's Agent Mailbox Bearer token",
+                                headers={"WWW-Authenticate": "Bearer"})
+        return agent_id(authenticate(credentials, request))
+
+    def a2a_check_headers(request):
+        if request.headers.get("A2A-Version") != A2A_VERSION:
+            return a2a_problem(400, "VersionNotSupportedError",
+                               f"This Agent Card supports A2A-Version {A2A_VERSION}")
+        extensions = {value.strip() for value in request.headers.get("A2A-Extensions", "").split(",")
+                      if value.strip()}
+        if ROUTING_EXTENSION not in extensions:
+            return a2a_problem(400, "ExtensionSupportRequiredError",
+                               f"Declare the required extension in A2A-Extensions: {ROUTING_EXTENSION}")
+        return None
+
+    def a2a_task_for_request(requester, message_id, history_length=50, include_artifacts=True,
+                             include_history=True):
+        original = store.get_message(requester, message_id)
+        if (original["from_agent_id"] != requester or original.get("in_reply_to") is not None or
+                original.get("message_type") != "request"):
+            raise HTTPException(404, "Task not found")
+        thread = store.thread_messages(requester, message_id, after_id=0, limit=200)
+        return a2a_task_document(original, requester, thread,
+                                 lambda item_id, index: store.get_attachment(requester, item_id, index),
+                                 history_length=history_length, include_artifacts=include_artifacts,
+                                 include_history=include_history)
+
+    def a2a_task_page(requester, after_id, page_size, mailbox_status=None, thread_id=None):
+        cursor = after_id
+        found = []
+        while len(found) <= page_size:
+            page = store.mail_page(requester, "outbox", after_id=cursor, limit=200,
+                                   status=mailbox_status, thread_id=thread_id)
+            for row in page["messages"]:
+                if row.get("message_type") == "request" and row.get("in_reply_to") is None:
+                    found.append(row)
+                    if len(found) > page_size:
+                        return found[:page_size], found[page_size - 1]["id"], True
+            if not page["has_more"]:
+                return found, page["next_after_id"], False
+            if page["next_after_id"] <= cursor:
+                return found, page["next_after_id"], False
+            cursor = page["next_after_id"]
+        return found[:page_size], found[page_size - 1]["id"], True
+
+    @app.get("/.well-known/agent-card.json", include_in_schema=False)
+    def a2a_public_agent_card(request: Request):
+        card = a2a_agent_card(a2a_origin(request), APP_VERSION)
+        return JSONResponse(card, headers={"Cache-Control": "public, max-age=300",
+                                           "X-Content-Type-Options": "nosniff"})
+
+    @app.post("/a2a/message:send", include_in_schema=False)
+    async def a2a_send_message(request: Request, credentials: Credential):
+        header_problem = a2a_check_headers(request)
+        if header_problem:
+            return header_problem
+        try:
+            sender = a2a_sender(request, credentials)
+            body = await request.json()
+            if not isinstance(body, dict) or not isinstance(body.get("message"), dict):
+                raise HTTPException(400, "A2A SendMessageRequest must include a message object")
+            config = body.get("configuration") or {}
+            if not isinstance(config, dict):
+                raise HTTPException(400, "A2A configuration must be an object")
+            if config.get("returnImmediately") is not True:
+                raise HTTPException(400, "Agent Mailbox tasks are asynchronous; set configuration.returnImmediately=true")
+            message = body["message"]
+            if message.get("role") != "ROLE_USER":
+                raise HTTPException(400, "A2A gateway accepts client messages with role ROLE_USER only")
+            if message.get("taskId"):
+                raise HTTPException(501, "This gateway accepts one-shot mailbox tasks; send a new task for follow-up work")
+            a2a_message_id = message.get("messageId")
+            if not isinstance(a2a_message_id, str) or not a2a_message_id.strip() or len(a2a_message_id) > 300:
+                raise HTTPException(400, "A2A message.messageId is required and must be at most 300 characters")
+            message_extensions = message.get("extensions") or []
+            if not isinstance(message_extensions, list) or ROUTING_EXTENSION not in message_extensions:
+                raise HTTPException(400, "A2A Message.extensions must include the Agent Mailbox routing extension")
+            request_metadata = body.get("metadata") or {}
+            message_metadata = message.get("metadata") or {}
+            if not isinstance(request_metadata, dict) or not isinstance(message_metadata, dict):
+                raise HTTPException(400, "A2A metadata fields must be objects")
+            routing = request_metadata.get(ROUTING_EXTENSION)
+            if routing is None:
+                routing = message_metadata.get(ROUTING_EXTENSION)
+            if not isinstance(routing, dict):
+                raise HTTPException(400, f"SendMessageRequest.metadata must include {ROUTING_EXTENSION}")
+            recipient = routing.get("recipientInstanceId")
+            if not isinstance(recipient, str) or not recipient.strip():
+                raise HTTPException(400, "A2A routing extension requires an exact recipientInstanceId")
+            if not store.get_agent(recipient):
+                raise HTTPException(404, "Recipient instance not found")
+
+            parts = message.get("parts")
+            if not isinstance(parts, list) or not parts:
+                raise HTTPException(400, "A2A Message.parts must contain text or file parts")
+            text_parts, attachments = [], []
+            for part in parts:
+                if not isinstance(part, dict):
+                    raise HTTPException(400, "Each A2A Part must be an object")
+                content_fields = [key for key in ("text", "raw", "url", "data") if key in part]
+                if len(content_fields) != 1:
+                    raise HTTPException(400, "Each A2A Part must contain exactly one supported content field")
+                kind = content_fields[0]
+                if kind == "text":
+                    if not isinstance(part["text"], str):
+                        raise HTTPException(400, "A2A text parts must contain strings")
+                    text_parts.append(part["text"])
+                elif kind == "data":
+                    text_parts.append(json.dumps(part["data"], ensure_ascii=False, separators=(",", ":")))
+                elif kind == "url":
+                    raise HTTPException(415, "Remote A2A file URLs are disabled; send file bytes to avoid server-side URL fetching")
+                else:
+                    if not isinstance(part["raw"], str):
+                        raise HTTPException(400, "A2A Part.raw must be base64 text")
+                    attachments.append(Attachment(filename=part.get("filename") or "attachment",
+                                                  media_type=part.get("mediaType") or "application/octet-stream",
+                                                  data_base64=part["raw"]))
+            delivery_mode = routing.get("deliveryMode", "inbox")
+            wake_backlog = routing.get("wakeBacklog", False)
+            if delivery_mode not in ("inbox", "wake") or not isinstance(wake_backlog, bool):
+                raise HTTPException(400, "A2A routing extension has invalid deliveryMode or wakeBacklog")
+            if wake_backlog and delivery_mode != "wake":
+                raise HTTPException(400, "wakeBacklog=true requires deliveryMode=wake")
+            subject = routing.get("subject", "")
+            if not isinstance(subject, str) or len(subject) > 180:
+                raise HTTPException(400, "A2A subject must be a string up to 180 characters")
+            body_message = Message(
+                to_agent_id=recipient, text="\n".join(text_parts), subject=subject,
+                message_type="request", delivery_mode=delivery_mode, wake_backlog=wake_backlog,
+                idempotency_key="a2a-" + hashlib.sha256(a2a_message_id.encode("utf-8")).hexdigest(),
+                attachments=attachments)
+            prepared = prepare_attachments(body_message.attachments)
+            if not body_message.text.strip() and not prepared:
+                raise HTTPException(422, "A2A task must include text or a file")
+            sent = store.send(sender, body_message, prepared)
+            task = a2a_task_document(sent, sender, {"messages": [sent]},
+                                     lambda item_id, index: store.get_attachment(sender, item_id, index),
+                                     history_length=0, include_artifacts=False, include_history=False)
+            return JSONResponse({"task": task}, media_type="application/a2a+json")
+        except HTTPException as error:
+            if error.status_code == 409:
+                return a2a_problem(400, "InvalidParams", str(error.detail))
+            return a2a_http_problem(error)
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            return a2a_problem(400, "InvalidParams", "Malformed A2A SendMessageRequest")
+
+    @app.get("/a2a/tasks/{task_id}", include_in_schema=False)
+    def a2a_get_task(task_id: str, request: Request, credentials: Credential,
+                     history_length: int = Query(50, alias="historyLength", ge=0, le=200)):
+        header_problem = a2a_check_headers(request)
+        if header_problem:
+            return header_problem
+        try:
+            sender = a2a_sender(request, credentials)
+            message_id = a2a_mailbox_id_from_task(task_id)
+            if message_id is None:
+                raise HTTPException(404, "Task not found")
+            task = a2a_task_for_request(sender, message_id, history_length=history_length,
+                                        include_artifacts=True, include_history=history_length != 0)
+            return JSONResponse({"task": task}, media_type="application/a2a+json")
+        except HTTPException as error:
+            return a2a_http_problem(error)
+
+    @app.get("/a2a/tasks", include_in_schema=False)
+    def a2a_list_tasks(request: Request, credentials: Credential,
+                       context_filter: str | None = Query(None, alias="contextId"),
+                       task_status: str | None = Query(None, alias="status"),
+                       page_size: int = Query(50, alias="pageSize", ge=1, le=100),
+                       page_token: str = Query("", alias="pageToken"),
+                       history_length: int = Query(0, alias="historyLength", ge=0, le=200),
+                       include_artifacts: bool = Query(False, alias="includeArtifacts")):
+        header_problem = a2a_check_headers(request)
+        if header_problem:
+            return header_problem
+        try:
+            sender = a2a_sender(request, credentials)
+            mailbox_status = a2a_mailbox_status_from_task_state(task_status) if task_status else None
+            if task_status and mailbox_status is None:
+                raise HTTPException(400, "Unsupported A2A task status filter")
+            thread_id = a2a_thread_from_context(context_filter) if context_filter else None
+            if context_filter and thread_id is None:
+                raise HTTPException(400, "Unknown Agent Mailbox contextId")
+            after_id = a2a_decode_page_token(page_token)
+            rows, next_cursor, has_more = a2a_task_page(sender, after_id, page_size, mailbox_status, thread_id)
+            total_size = store.count_outbox_requests(sender, mailbox_status, thread_id)
+            tasks = []
+            for row in rows:
+                if history_length or include_artifacts:
+                    task = a2a_task_for_request(sender, row["id"], history_length=history_length,
+                                                include_artifacts=include_artifacts,
+                                                include_history=history_length != 0)
+                else:
+                    task = a2a_task_document(row, sender, {"messages": []},
+                                             lambda item_id, index: store.get_attachment(sender, item_id, index),
+                                             history_length=0, include_artifacts=False, include_history=False)
+                tasks.append(task)
+            return JSONResponse({"tasks": tasks,
+                                 "nextPageToken": a2a_encode_page_token(next_cursor) if has_more else "",
+                                 "pageSize": page_size, "totalSize": total_size},
+                                media_type="application/a2a+json")
+        except HTTPException as error:
+            return a2a_http_problem(error)
+        except ValueError:
+            return a2a_problem(400, "InvalidParams", "Malformed A2A task filter or page token")
+
+    @app.post("/a2a/tasks/{task_id}:cancel", include_in_schema=False)
+    async def a2a_cancel_task(task_id: str, request: Request, credentials: Credential):
+        header_problem = a2a_check_headers(request)
+        if header_problem:
+            return header_problem
+        try:
+            sender = a2a_sender(request, credentials)
+            message_id = a2a_mailbox_id_from_task(task_id)
+            if message_id is None:
+                raise HTTPException(404, "Task not found")
+            raw = await request.body()
+            body = json.loads(raw) if raw else {}
+            body_id = body.get("id") if isinstance(body, dict) else None
+            if body_id and body_id != task_id:
+                raise HTTPException(400, "CancelTask body id does not match the URL task ID")
+            store.cancel_outgoing_request(sender, message_id, note="Cancelled by A2A task requester")
+            task = a2a_task_for_request(sender, message_id, history_length=0,
+                                        include_artifacts=False, include_history=False)
+            return JSONResponse({"task": task}, media_type="application/a2a+json")
+        except HTTPException as error:
+            return a2a_http_problem(error)
+        except json.JSONDecodeError:
+            return a2a_problem(400, "InvalidParams", "Malformed A2A CancelTask request")
+
+    @app.post("/a2a/message:stream", include_in_schema=False)
+    def a2a_stream_unsupported(request: Request):
+        return a2a_problem(501, "UnsupportedOperationError",
+                           "Streaming is not enabled by this Agent Mailbox A2A gateway")
+
+    @app.get("/a2a/tasks/{task_id}:subscribe", include_in_schema=False)
+    def a2a_subscribe_unsupported(task_id: str, request: Request):
+        return a2a_problem(400, "UnsupportedOperationError",
+                           "Task streaming is not enabled; poll GET /a2a/tasks/{id}")
 
     @app.get("/messages/{message_id}")
     def get_message(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)], identity: Identity):

@@ -25,6 +25,8 @@ recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 - Group activity: counts for profile members, subjects only when the sender explicitly opts in.
 - Up to three attachments / 10 MiB total per message, authenticated download, message deletion and paged cleanup.
 - Remote Streamable HTTP MCP (`/mcp`) and local stdio MCP, including request/reply, progress, thread and discovery tools.
+- An A2A HTTP+JSON gateway with a standard Agent Card; an extension routes each A2A task to an exact private instance.
+- An A2A HTTP+JSON gateway with a standard Agent Card; a documented routing extension maps A2A tasks to one exact mailbox instance.
 - Named, revocable per-instance API keys for separate MCP/HTTP clients; secrets are shown once and only their hashes are stored.
 - A universal listener supervisor for independent agent/chat configs, per-inbox cursors, dynamically discovered sessions and host-specific callbacks. ZCode/Claude hooks can bind native chats to separate mailboxes.
 - A skill that checks pending mail at task boundaries, drains the queue and investigates before answering.
@@ -39,6 +41,7 @@ recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 | MCP client setup, API keys and compatibility limits | [CONNECT-MCP](docs/CONNECT-MCP.md) | `/guide/mcp` |
 | Peer descriptions, capabilities and useful dialogue | [COLLABORATION](docs/COLLABORATION.md) | `/guide/discovery` |
 | API and self-registration | [AGENT_PROTOCOL](AGENT_PROTOCOL.md) | `/guide/protocol`, `/connect.md`, `/docs` |
+| A2A gateway and exact-instance routing extension | [A2A gateway](docs/A2A-GATEWAY.md), [extension contract](docs/A2A-EXTENSION-INSTANCE-ROUTING.md) | `/.well-known/agent-card.json`, `/a2a.md`, `/a2a-extension.md`, `/guide/a2a` |
 | Local listener and host wake mechanisms | [Adapters](adapters/README.md) | `/guide/adapters`, `/adapters.md` |
 | Copy/paste connection prompt | [Setup prompt](docs/CONNECT-AGENT-PROMPT.md) | `/guide/prompt`, `/connect-agent-prompt.md` |
 | Required agent reading, listener/alarm setup and wake limits | [Agent setup](docs/AGENT-SETUP.md) | `/guide/agent-setup`, `/agent-setup.md` |

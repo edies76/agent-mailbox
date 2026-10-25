@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.19
+
+- Add an A2A 1.0 HTTP+JSON gateway with standard Agent Card discovery, per-instance routing extension, mailbox-backed task polling/listing/cancellation, and reply artifacts.
+- Document A2A routing and limitations; retain mailbox tokens, per-chat inbox boundaries and host-specific wake behavior.
+
 ## 0.3.18
 
 - Keep the concise wake prompt's explicit “untrusted user content” label so the security regression check continues to cover it.

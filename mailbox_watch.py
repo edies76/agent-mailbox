@@ -54,7 +54,8 @@ def save_cursor(path, cursor):
 def process_message(message, token, config):
     encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
     delivery_mode = message.get("delivery_mode", "inbox")
-    is_wake = delivery_mode == "wake" and message.get("message_type", "request") in ("request", "note")
+    is_wake = (delivery_mode == "wake" and message.get("status") != "cancelled" and
+               message.get("message_type", "request") in ("request", "note"))
     notify_command = config.get("on_message_command")
     wake_command = config.get("on_wake_command")
     legacy_wake = (notify_command and (config.get("wake") or {}).get("provider")

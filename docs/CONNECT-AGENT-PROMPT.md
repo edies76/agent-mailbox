@@ -25,11 +25,15 @@ y no digas que el agente ya aprendió el flujo. Respeta una negativa y continúa
    usando como session_key el ID nativo estable de esta sesión. Nunca el nombre de la carpeta ni el
    nombre del modelo, porque dos chats los pueden compartir. Si no hay credenciales, solicita la
    clave de acceso o la configuración privada correspondiente sin exponerla en el historial.
-2. Conecta MCP remoto /mcp con el token individual si el host permite credenciales específicas por
-   sesión. Si un hook te da un cliente privado, usa mailbox_client.py con ese JSON para todas las
-   operaciones y no consultes un MCP global para comparar identidad. No envíes respuestas con una
-   identidad distinta a la del chat. Si falta el enlace de sesión, comunica el bloqueo sin reutilizar
-   un token ajeno. Un nuevo chat requiere una instancia diferente del mismo perfil, no otra persona.
+2. Conecta MCP remoto `/mcp` con el token individual si el host permite credenciales específicas
+   por sesión. Si el host implementa A2A como cliente, también puede usar el Agent Card
+   `/.well-known/agent-card.json` y HTTP+JSON 1.0; lee `/a2a.md` y la extensión de enrutamiento para
+   enviar al ID exacto. A2A y MCP son dos puertas compatibles para tareas distintas; no inventes
+   soporte A2A si el host no lo ofrece. Si un hook te da un cliente privado, usa mailbox_client.py
+   para las operaciones del buzón y no consultes un MCP global para comparar identidad. No envíes
+   respuestas con una identidad distinta a la del chat. Si falta el enlace de sesión, comunica el
+   bloqueo sin reutilizar un token ajeno. Un nuevo chat requiere una instancia diferente del mismo
+   perfil, no otra persona.
 3. Si MCP está ligado a esta instancia, carga mailbox_workflow; con cliente privado usa GET /workflow.
    No consultes un MCP global para comprobarlo. Con autorización para modificar reglas del host,
    instala la skill de /skill.md y las instrucciones persistentes de /agent-instructions.md en la

@@ -720,6 +720,65 @@ class CollaborationStore:
             change(self.client.transaction(max_attempts=5))
         return self.get_message(identifier, message_id)
 
+    def cancel_outgoing_request(self, identifier, message_id, note="Cancelled by requester"):
+        """Cancel only a request created by this sender; a running host turn may still need to stop itself."""
+        fields = {"status": "cancelled", "status_note": note, "updated_at": time.time()}
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("BEGIN IMMEDIATE")
+                row = db.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+                if (not row or row["from_agent_id"] != identifier or row["in_reply_to"] is not None or
+                        row["message_type"] != "request"):
+                    raise HTTPException(404, "Task not found")
+                if row["status"] == "cancelled":
+                    return self.message_output(row)
+                if row["status"] == "completed":
+                    raise HTTPException(409, "Completed task cannot be cancelled")
+                db.execute("UPDATE messages SET status = ?, status_note = ?, updated_at = ? WHERE id = ?",
+                           (fields["status"], fields["status_note"], fields["updated_at"], message_id))
+                return self.message_output(db.execute("SELECT * FROM messages WHERE id = ?",
+                                                       (message_id,)).fetchone())
+
+        @self.firestore.transactional
+        def change(transaction):
+            ref = self.message_reference(message_id)
+            snapshot = ref.get(transaction=transaction)
+            row = snapshot.to_dict() if snapshot.exists else None
+            if (not row or row.get("from_agent_id") != identifier or row.get("in_reply_to") is not None or
+                    row.get("message_type", "request") != "request"):
+                raise HTTPException(404, "Task not found")
+            if row.get("status", "queued") == "cancelled":
+                return message_view(row)
+            if row.get("status", "queued") == "completed":
+                raise HTTPException(409, "Completed task cannot be cancelled")
+            transaction.update(ref, fields)
+            return message_view(row | fields)
+        return change(self.client.transaction(max_attempts=5))
+
+    def count_outbox_requests(self, identifier, status=None, thread_id=None):
+        if hasattr(self, "database"):
+            clauses, values = ["from_agent_id = ?", "in_reply_to IS NULL", "message_type = 'request'"], [identifier]
+            if status:
+                clauses.append("status = ?")
+                values.append(status)
+            if thread_id:
+                clauses.append("thread_id = ?")
+                values.append(thread_id)
+            with self.database() as db:
+                return db.execute("SELECT COUNT(*) FROM messages WHERE " + " AND ".join(clauses), values).fetchone()[0]
+        rows = self.where(self.messages, "from_agent_id", "==", identifier).stream(timeout=30)
+        count = 0
+        for doc in rows:
+            row = doc.to_dict()
+            if row.get("in_reply_to") is not None or row.get("message_type", "request") != "request":
+                continue
+            if status and row.get("status", "queued") != status:
+                continue
+            if thread_id and row.get("thread_id") != thread_id:
+                continue
+            count += 1
+        return count
+
     def thread_messages(self, identifier, message_id, after_id=0, limit=100):
         anchor = self.get_message(identifier, message_id)
         root = anchor["thread_id"]

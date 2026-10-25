@@ -245,7 +245,7 @@ def handle_hook_event(host, payload, config_path):
     config = bind_session(config, config_path, host, session_id, workspace)
     if event == "Stop" and (not config.get("auto_continue_on_stop", False) or payload.get("stop_hook_active")):
         return None
-    messages = get_pending(config)
+    messages = [message for message in get_pending(config) if message.get("status") != "cancelled"]
     messages = filter_new_messages(config, config_path, session_id, messages,
                                    reset=event in ("SessionStart", "UserPromptSubmit", "Stop"))
     return hook_response(host, event, payload, messages, config)

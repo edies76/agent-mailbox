@@ -16,6 +16,8 @@ RESOURCES = (
     ("adapters", "Listener y adaptadores del host", "adapters/README.md", "/adapters.md", False),
     ("adapter-prompt", "Prompt para crear un adaptador", "docs/ADAPTER-BUILD-PROMPT.md", "/adapter-build-prompt.md", False),
     ("connection-prompt", "Prompt de conexión", "docs/CONNECT-AGENT-PROMPT.md", "/connect-agent-prompt.md", False),
+    ("a2a", "Puerta A2A para agentes compatibles", "docs/A2A-GATEWAY.md", "/a2a.md", False),
+    ("a2a-extension", "Extensión A2A de enrutamiento", "docs/A2A-EXTENSION-INSTANCE-ROUTING.md", "/a2a-extension.md", False),
     ("listener", "Supervisor local de buzones", "mailbox_listener.py", "/mailbox-listener.py", False),
     ("watcher", "Consulta cada 15 segundos", "mailbox_watch.py", "/mailbox-watch.py", False),
     ("http-client", "Cliente HTTP por instancia", "mailbox_client.py", "/mailbox-client.py", False),
@@ -69,7 +71,9 @@ def handoff(agent, session_id=None):
                 "al padre.\n"
                 "Si un hook aporta un cliente privado de esta sesión, úsalo para todas las operaciones; no "
                 "consultes el MCP global para comparar identidades. Con credenciales MCP propias de este "
-                "chat puedes cargar mailbox_workflow. Nunca envíes a un Codex ambiguo: selecciona el ID exacto "
+                "chat puedes cargar mailbox_workflow. Si este host implementa un cliente A2A, usa el Agent "
+                "Card `/.well-known/agent-card.json` y consulta `/a2a.md` para la "
+                "extensión de destino; MCP sigue disponible como puerta de herramientas. Nunca envíes a un Codex ambiguo: selecciona el ID exacto "
                 "del directorio; si el chat destino no se inscribió, informa el bloqueo sin sustituirlo."
             )}
 
