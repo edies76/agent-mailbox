@@ -47,6 +47,7 @@
       const session=await api('/auth/session');currentUser={...session.user,auth_method:session.auth_method};
       const data=await api('/dashboard/data'); view=data; render(data); byId('login').hidden=true;document.body.classList.remove('auth-locked');byId('connection').textContent=`Conectado · ${currentUser.username}`;byId('change-password').hidden=currentUser.auth_method!=='password';
       if(data.permissions.can_manage_users){loadAccounts();loadLegacyControlUsers();} else byId('key-panel').hidden=true;
+      if(data.permissions.can_manage_workspace)loadWorkspace();else byId('workspace-panel').hidden=true;
     } catch(error) {
       if(error.status===401){await showLogin();}
       else {byId('connection').textContent='Sin conexión';byId('admin-error').textContent=error.message;}
@@ -55,11 +56,11 @@
   function render(data) {
     const {stats,agents,messages,permissions}=data;
     byId('total').textContent=stats.agents_total;byId('online').textContent=stats.agents_online;byId('messages').textContent=stats.messages_total;byId('pending').textContent=stats.messages_pending;
-    byId('agent-count').textContent=`${stats.agents_online} activas · ${agents.length} total`;
+    byId('agent-count').textContent=`${agents.length} en tu directorio compartido`;
     byId('updated').textContent=`actualizado ${fmtTime(data.updated_at)}`;
-    byId('role-name').textContent={owner:'Propietario',operator:'Operador',observer:'Observador'}[permissions.role]||permissions.role;
+    byId('role-name').textContent={owner:'Propietario',workspace_owner:'Dueño de espacio',operator:'Operador',observer:'Observador'}[permissions.role]||permissions.role;
     byId('content-scope').textContent=permissions.can_read_message_content?(permissions.can_delete_messages?'Puedes ver contenido reciente y eliminar mensajes.':'Puedes ver contenido reciente y gestionar instancias; la limpieza de mensajes corresponde al propietario.'):'Vista de observador: conteos, rutas y estados; los asuntos, cuerpos y adjuntos permanecen ocultos.';
-    byId('key-panel').hidden=!permissions.can_manage_users;byId('new-agent').hidden=!permissions.can_manage_agents;
+    byId('key-panel').hidden=!permissions.can_manage_users;byId('new-agent').hidden=!permissions.can_manage_agents;byId('workspace-panel').hidden=!permissions.can_manage_workspace;
     renderAgents(agents,permissions);renderMessages(messages,agents,permissions);
   }
   function renderAgents(agents,permissions) {
@@ -72,7 +73,7 @@
       info.append(el('div','agent-name',agent.instance_name||agent.name),el('div','agent-kind',`${agent.kind}${agent.project?' · '+agent.project:''}`));
       const card=[agent.description,(agent.capabilities||[]).join(' · ')].filter(Boolean).join(' — ')||'Ficha sin completar';info.append(el('div','agent-card-copy',card));
       const badge=el('span',`badge${agent.online?' on':''}`,agent.online?'EN LÍNEA':'INACTIVA');const actions=el('div','agent-actions');actions.append(badge);
-      if(permissions.can_manage_agents){const rename=el('button','button small secondary','Renombrar');rename.type='button';rename.onclick=()=>openRenameAgent(agent);actions.append(rename);const remove=el('button','remove-agent','Dar de baja');remove.type='button';remove.setAttribute('aria-label',`Dar de baja a ${agent.name}`);remove.onclick=()=>unregisterAgent(agent);actions.append(remove);}
+      if(permissions.can_manage_agents&&agent.can_manage!==false){const rename=el('button','button small secondary','Renombrar');rename.type='button';rename.onclick=()=>openRenameAgent(agent);actions.append(rename);const remove=el('button','remove-agent','Dar de baja');remove.type='button';remove.setAttribute('aria-label',`Dar de baja a ${agent.name}`);remove.onclick=()=>unregisterAgent(agent);actions.append(remove);}
       row.append(info,actions);list.append(row);
     }
   }
@@ -109,6 +110,18 @@
     }catch(error){byId('key-status').textContent=`No se pudieron cargar las cuentas: ${error.message}`;}
   }
   async function disableAccount(user){if(!await confirmAction(`Desactivar la cuenta de ${user.username}. Sus sesiones dejarán de funcionar.`,'Desactivar cuenta'))return;try{await api(`/dashboard/accounts/${encodeURIComponent(user.id)}`,'DELETE');await loadAccounts();}catch(error){byId('admin-error').textContent=error.message;}}
+  async function loadWorkspace(){
+    try{
+      const data=await api('/dashboard/workspace'),list=byId('workspace-connection-list');list.replaceChildren();
+      const active=data.connections.filter(row=>row.status==='accepted');
+      byId('workspace-connection-count').textContent=`${active.length} conectados`;
+      if(!data.connections.length&&!data.invitations.length)list.append(el('div','empty','Aún no hay otros espacios conectados.'));
+      for(const row of data.connections){const item=el('article','key-row'),info=el('div','key-row-info');info.append(el('strong','',row.workspace_name||row.workspace_id),el('span','pill',row.status==='accepted'?'Conectado':'Desconectado'),el('small','',row.workspace_id));item.append(info);if(row.status==='accepted'){const button=el('button','remove-agent','Desconectar');button.type='button';button.onclick=()=>disconnectWorkspace(row.workspace_id);item.append(button);}list.append(item);}
+      for(const row of data.invitations){const state=row.used_at?'Usada':row.revoked_at?'Revocada':row.expires_at<=Date.now()/1000?'Vencida':'Pendiente';const item=el('article','key-row'),info=el('div','key-row-info');info.append(el('strong','','Invitación'),el('span','pill',state),el('small','',`Vence ${fmtTime(row.expires_at)}`));item.append(info);if(state==='Pendiente'){const button=el('button','remove-agent','Revocar');button.type='button';button.onclick=()=>revokeWorkspaceInvite(row.id);item.append(button);}list.append(item);}
+    }catch(error){byId('workspace-invite-status').textContent=`No se pudo cargar el espacio: ${error.message}`;}
+  }
+  async function disconnectWorkspace(id){if(!await confirmAction(`Desconectar ${id}. Sus agentes dejarán de aparecer y no podrán iniciar mensajes nuevos.`,'Desconectar espacio'))return;try{await api(`/dashboard/workspace-connections/${encodeURIComponent(id)}`,'DELETE');await load();await loadWorkspace();}catch(error){byId('workspace-invite-status').textContent=error.message;}}
+  async function revokeWorkspaceInvite(id){if(!await confirmAction('Revocar esta invitación de un solo uso.','Revocar invitación'))return;try{await api(`/dashboard/workspace-invitations/${encodeURIComponent(id)}`,'DELETE');await loadWorkspace();}catch(error){byId('workspace-invite-status').textContent=error.message;}}
   async function loadLegacyControlUsers(){
     try{const data=await api('/dashboard/users'),list=byId('legacy-key-list');list.replaceChildren();byId('legacy-key-count').textContent=`${data.users.length} claves`;
       if(!data.users.length)list.append(el('div','empty','No quedan claves Bearer heredadas.'));
@@ -128,6 +141,9 @@
   byId('copy-agent-onboarding').onclick=async()=>{try{await navigator.clipboard.writeText(byId('new-agent-onboarding').value);byId('copy-agent-onboarding').textContent='Instrucciones copiadas';}catch{byId('new-agent-onboarding').focus();byId('new-agent-onboarding').select();byId('copy-agent-onboarding').textContent='Seleccionadas; copia el texto';}};
   byId('rename-agent-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;const status=byId('rename-agent-status');try{await api(`/dashboard/agents/${encodeURIComponent(byId('rename-agent-id').value)}`,'PATCH',{name:byId('rename-agent-name').value});status.className='status success';status.textContent='Nombre actualizado. La identidad y su buzón siguen igual.';await load();}catch(error){status.className='status error';status.textContent=error.message;}finally{button.disabled=false;}});
   byId('account-form').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button');button.disabled=true;byId('key-status').textContent='Creando cuenta…';try{const result=await api('/dashboard/accounts','POST',{username:byId('account-user-name').value,password:byId('account-user-password').value,role:byId('account-user-role').value});byId('account-user-password').value='';byId('key-status').className='status success';byId('key-status').textContent=`Cuenta ${result.username} creada. Entrará con la contraseña que acabas de asignar.`;await loadAccounts();}catch(error){byId('key-status').className='status error';byId('key-status').textContent=error.message;}finally{button.disabled=false;}});
+  byId('workspace-invite-form').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button');button.disabled=true;byId('workspace-invite-status').textContent='Creando invitación…';try{const result=await api('/dashboard/workspace-invitations','POST',{expires_in_hours:Number(byId('workspace-invite-expiry').value)});byId('workspace-invite-link').textContent=new URL(result.url,location.origin).toString();byId('workspace-invite-once').hidden=false;byId('workspace-invite-status').className='status success';byId('workspace-invite-status').textContent='Enlace de un solo uso creado. Compártelo por un canal privado.';await loadWorkspace();}catch(error){byId('workspace-invite-status').className='status error';byId('workspace-invite-status').textContent=error.message;}finally{button.disabled=false;}});
+  byId('workspace-connect-form').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button');button.disabled=true;const status=byId('workspace-connect-status');status.textContent='Validando invitación…';try{const result=await api('/dashboard/workspace-connections','POST',{invite_code:byId('workspace-incoming-code').value.trim()});byId('workspace-incoming-code').value='';status.className='status success';status.textContent=`Conectado con ${result.workspace_name}.`;await load();await loadWorkspace();}catch(error){status.className='status error';status.textContent=error.message;}finally{button.disabled=false;}});
+  byId('copy-workspace-invite').onclick=async()=>{try{await navigator.clipboard.writeText(byId('workspace-invite-link').textContent);byId('copy-workspace-invite').textContent='Copiado';}catch{byId('workspace-invite-status').textContent='Selecciona y copia el enlace manualmente.';}};
   byId('legacy-key-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;try{const result=await api('/dashboard/users','POST',{name:byId('legacy-key-name').value,role:byId('legacy-key-role').value});byId('legacy-key-value').textContent=result.access_key;byId('legacy-key-once').hidden=false;byId('legacy-key-name').value='';byId('legacy-key-status').textContent='Clave creada y visible una sola vez.';await loadLegacyControlUsers();}catch(error){byId('legacy-key-status').textContent=error.message;}finally{button.disabled=false;}});
   byId('change-password').onclick=()=>{byId('password-status').textContent='';byId('password-form').reset();byId('password-dialog').showModal();};
   byId('password-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;const status=byId('password-status');try{await api('/auth/password','POST',{current_password:byId('current-password').value,new_password:byId('new-password').value});event.currentTarget.reset();status.className='status success';status.textContent='Contraseña actualizada. Se cerraron las demás sesiones.';await load();}catch(error){status.className='status error';status.textContent=error.message;}finally{button.disabled=false;}});

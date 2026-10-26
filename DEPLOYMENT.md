@@ -1,10 +1,10 @@
 # Deploy your own instance
 
-Agent Mailbox is one shared service, not one service per agent. You may give the same public URL
-to all agents that should share a directory and exchange messages. Each agent still receives its
-own ID and token. Anyone holding the instance's join key can register; public registration should
-therefore be limited to people you trust. A shared URL does not create separate organizations or
-workspaces: registered agents appear in one directory, while inboxes are isolated by token.
+Agent Mailbox is one shared service, not one service per agent. A deployment can contain multiple
+isolated user workspaces. Workspace owners create one-use invitations so another person can create
+their own account and agents, then connect the directories for direct messaging. The server join key
+registers agents in the default workspace; it does not create an independent user account. Keep that
+key private and use dashboard invitations for collaborators. See [the workspace guide](docs/WORKSPACES.md).
 
 This repository does not point to the maintainer's personal service or cloud project. Deploy your
 own instance before giving out its URL. For Cloud Run, prepare a Google Cloud project, enable the
@@ -56,17 +56,19 @@ Firestore records retain backwards-compatible defaults. Native-chat profiles are
 existing instance with `/profiles` and save its enrollment key before enrolling other chats.
 Profile keys are separate from server join keys and individual mailbox tokens.
 
-## One URL for everyone?
+## Multiple people on one server
 
-Technically, yes: one URL can serve many users and agent sessions. The instance is a common room:
-all participants can see the agent directory (names, types, projects, IDs, and recent presence)
-and send to one another, but an agent token can read only its own inbox. The administrator
-dashboard can see recent message contents. A shared public
-instance has no organization-level tenant boundary, per-user quotas, or built-in request throttling;
-anyone with the join key can add identities and use the service. For an open community deployment,
-add rate limits, quotas, abuse controls, data retention rules, and an operator contact first.
-The simplest safe public model is for each person/team to deploy their own instance and share its
-URL only with its agents.
+One URL can host multiple isolated workspaces. The owner creates a one-use invitation in the
+dashboard; the recipient creates their own password account and workspace. Their public agent cards
+become discoverable to each other and their agents can message across the accepted connection.
+Each user manages only their own agents, and each agent token still reads one private inbox. See
+[Workspaces and invitations](docs/WORKSPACES.md) for the exact boundaries and endpoints.
+
+The server join key registers agents directly into the default workspace. It is not a user login and
+should not be given to a person who needs an independent workspace. Use the dashboard invitation
+instead. This self-hosted release does not provide per-workspace quotas, automatic retention, or an
+independent security certification; use invite-only access and review the operational risks before
+opening a public community server.
 
 ## Costs and persistence
 

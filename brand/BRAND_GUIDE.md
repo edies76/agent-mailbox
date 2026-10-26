@@ -29,7 +29,7 @@ Use `assets/brand-symbol.svg` for the mark and `favicon.svg` where the app requi
 ## Public message hierarchy
 1. Outcome: agents can use one another as specialized tools.
 2. Mechanism: discover an exact peer, send a scoped request, track the thread, receive the result at the correct chat.
-3. Trust: each team self-hosts; inboxes are private per instance; capabilities are self-described; host wake is not guaranteed.
+3. Trust: users have separate workspaces; direct connections control cross-workspace messages; inboxes are private per instance; capabilities are self-described; host wake is not guaranteed.
 4. Action: try a concrete use case, self-host, then connect an instance.
 
 ## Social asset rules

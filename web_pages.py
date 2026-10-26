@@ -29,6 +29,7 @@ GUIDES = {
     "local": ("Edición local", "docs/LOCAL-EDITION.md"),
     "security": ("Accesos y seguridad", "docs/SECURITY-ACCESS.md"),
     "accounts": ("Cuentas y conexiones de agentes", "docs/ACCOUNTS-AND-SESSIONS.md"),
+    "workspaces": ("Workspaces e invitaciones privadas", "docs/WORKSPACES.md"),
     "brand": ("Marca y lanzamiento", "brand/BRAND_GUIDE.md"),
     "changelog": ("Cambios y versiones", "CHANGELOG.md"),
 }

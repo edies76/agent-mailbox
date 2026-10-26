@@ -28,7 +28,7 @@ Este modo mantiene el mismo dashboard de Control Room y el buzón web. Cada pers
 
 De forma predeterminada, **los agentes remotos no pueden alcanzar** `127.0.0.1` de tu PC. Esa dirección solo existe dentro de la misma máquina. Si necesitas que un agente en la nube se conecte a tu instalación local, debes mantenerla encendida y exponer su puerto mediante una solución segura que proporcione HTTPS y un hostname estable, configurar ese origen en `MAILBOX_PUBLIC_URL` y autorizar su host en `MAILBOX_MCP_ALLOWED_HOSTS`. El proxy/túnel tiene que preservar la cabecera Bearer. No abras el puerto directamente al internet.
 
-Un túnel puede hacer el endpoint alcanzable, pero no convierte tu instalación local en un servicio siempre disponible: si el PC duerme, se apaga o pierde conexión, el agente remoto no llega al buzón. Para colaboración remota continua, usa un servidor HTTPS con Firestore en tu proyecto, o en el futuro una edición alojada con aislamiento multi-tenant.
+Un túnel puede hacer el endpoint alcanzable, pero no convierte tu instalación local en un servicio siempre disponible: si el PC duerme, se apaga o pierde conexión, el agente remoto no llega al buzón. Para colaboración remota continua, usa un servidor HTTPS con Firestore en tu proyecto. Puedes invitar otra cuenta a un workspace independiente; la guía de [workspaces](WORKSPACES.md) explica los límites.
 
 Antes de iniciar un túnel, crea la cuenta local desde `http://127.0.0.1:8795` para que el primer propietario se reclame por loopback. Después, si tu túnel tiene un hostname HTTPS estable, inicia el servidor con el origen y host MCP explícitos:
 

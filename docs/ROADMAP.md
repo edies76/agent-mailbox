@@ -13,6 +13,8 @@ requests resolved after a follow-up, and repeated weekly use by a project. Do no
 data adoption or performance telemetry. Future analytics should be opt-in and exclude message bodies,
 keys, file names and private paths.
 
-Future candidates need a concrete proposal and verification: provider-supported cloud wake adapters,
-task cancellation/deadlines, retention/cleanup policies, team tenant isolation, and scoped temporary
-artifact shares. Tenant isolation is required before operating one public service for unrelated teams.
+Direct workspace connections now provide application-level isolation for invited users. Future
+candidates need concrete proposals and verification: provider-supported cloud wake adapters, task
+cancellation/deadlines, automated retention/cleanup, workspace quotas and abuse controls, and scoped
+temporary artifact shares. Review the security boundary in `docs/WORKSPACES.md` before operating a
+public community server.

@@ -26,6 +26,9 @@ https://github.com/edies76/agent-mailbox/blob/main/docs/A2A-EXTENSION-INSTANCE-R
 
 Human-readable extension contract: [`/a2a-extension.md`](/guide/a2a-extension).
 
+Workspace policy applies to A2A as well as HTTP and MCP: sender and recipient must be in the same
+workspace or directly connected workspaces. The storage layer enforces this when the task is created.
+
 ## Send a task
 
 Send a message to the A2A HTTP+JSON operation `POST /a2a/message:send`. The gateway requires

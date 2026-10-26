@@ -11,6 +11,12 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 STATES = {"queued", "in_progress", "completed", "blocked", "cancelled"}
+DEFAULT_WORKSPACE_ID = "workspace-default"
+
+
+def workspace_connection_id(workspace_a, workspace_b):
+    pair = "\0".join(sorted((workspace_a, workspace_b)))
+    return hashlib.sha256(pair.encode()).hexdigest()
 
 
 def iso_date(value):
@@ -61,7 +67,8 @@ class CollaborationStore:
             additions = {
                 "agents": {"profile_id": "TEXT", "instance_name": "TEXT NOT NULL DEFAULT ''",
                            "description": "TEXT NOT NULL DEFAULT ''",
-                           "capabilities_json": "TEXT NOT NULL DEFAULT '[]'"},
+                           "capabilities_json": "TEXT NOT NULL DEFAULT '[]'",
+                           "workspace_id": f"TEXT NOT NULL DEFAULT '{DEFAULT_WORKSPACE_ID}'"},
                 "messages": {"subject": "TEXT NOT NULL DEFAULT ''", "thread_id": "INTEGER",
                              "message_type": "TEXT NOT NULL DEFAULT 'request'",
                              "delivery_mode": "TEXT NOT NULL DEFAULT 'inbox'",
@@ -95,7 +102,8 @@ class CollaborationStore:
                 CREATE TABLE IF NOT EXISTS account_users (
                     id TEXT PRIMARY KEY, username TEXT NOT NULL, username_norm TEXT UNIQUE NOT NULL,
                     password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'owner',
-                    created_at REAL NOT NULL, last_login_at REAL, disabled_at REAL
+                    created_at REAL NOT NULL, last_login_at REAL, disabled_at REAL,
+                    workspace_id TEXT NOT NULL DEFAULT 'workspace-default'
                 );
                 CREATE TABLE IF NOT EXISTS account_sessions (
                     id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES account_users(id) ON DELETE CASCADE,
@@ -108,6 +116,30 @@ class CollaborationStore:
                     locked_until REAL NOT NULL DEFAULT 0
                 );
             """)
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS workspaces (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS workspace_invites (
+                    id TEXT PRIMARY KEY, code_hash TEXT UNIQUE NOT NULL, workspace_id TEXT NOT NULL,
+                    created_by TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL,
+                    used_at REAL, revoked_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS workspace_invite_hash_idx ON workspace_invites(code_hash);
+                CREATE TABLE IF NOT EXISTS workspace_connections (
+                    id TEXT PRIMARY KEY, workspace_a TEXT NOT NULL, workspace_b TEXT NOT NULL,
+                    status TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL
+                );
+            """)
+            account_columns = {row[1] for row in db.execute("PRAGMA table_info(account_users)")}
+            if "workspace_id" not in account_columns:
+                db.execute("ALTER TABLE account_users ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'workspace-default'")
+            db.execute("INSERT OR IGNORE INTO workspaces (id,name,created_at) VALUES (?,?,?)",
+                       (DEFAULT_WORKSPACE_ID, "Workspace principal", time.time()))
+            db.execute("UPDATE agents SET workspace_id = ? WHERE workspace_id IS NULL OR workspace_id = ''",
+                       (DEFAULT_WORKSPACE_ID,))
+            db.execute("UPDATE account_users SET workspace_id = ? WHERE workspace_id IS NULL OR workspace_id = ''",
+                       (DEFAULT_WORKSPACE_ID,))
             db.execute("UPDATE messages SET message_type = 'reply' WHERE in_reply_to IS NOT NULL AND message_type = 'request'")
             db.execute("CREATE INDEX IF NOT EXISTS outbox_idx ON messages(from_agent_id, id)")
             db.execute("CREATE INDEX IF NOT EXISTS thread_idx ON messages(thread_id, id)")
@@ -124,14 +156,253 @@ class CollaborationStore:
         owner = self.client.collection("meta").document("account_owner").get(timeout=15)
         return owner.exists
 
+    def ensure_default_workspace(self):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("INSERT OR IGNORE INTO workspaces (id,name,created_at) VALUES (?,?,?)",
+                           (DEFAULT_WORKSPACE_ID, "Workspace principal", time.time()))
+            return
+        marker = self.client.collection("meta").document("workspace_migration_v1")
+        if marker.get(timeout=15).exists:
+            return
+        now = time.time()
+        workspace_ref = self.client.collection("workspaces").document(DEFAULT_WORKSPACE_ID)
+        if not workspace_ref.get(timeout=15).exists:
+            workspace_ref.set({"id": DEFAULT_WORKSPACE_ID, "name": "Workspace principal", "created_at": now})
+        for collection_name in ("agents", "account_users"):
+            batch, queued = self.client.batch(), 0
+            for doc in self.client.collection(collection_name).stream(timeout=30):
+                if not doc.to_dict().get("workspace_id"):
+                    batch.update(doc.reference, {"workspace_id": DEFAULT_WORKSPACE_ID})
+                    queued += 1
+                    if queued == 450:
+                        batch.commit(timeout=30)
+                        batch, queued = self.client.batch(), 0
+            if queued:
+                batch.commit(timeout=30)
+        marker.set({"completed_at": now}, timeout=15)
+
+    def workspace_for_agent(self, agent_id):
+        row = self.get_agent(agent_id)
+        return (row or {}).get("workspace_id") or DEFAULT_WORKSPACE_ID
+
+    def workspace_info(self, workspace_id):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT id,name,created_at FROM workspaces WHERE id=?", (workspace_id,)).fetchone()
+                return dict(row) if row else None
+        snapshot = self.client.collection("workspaces").document(workspace_id).get(timeout=15)
+        return snapshot.to_dict() if snapshot.exists else None
+
+    def workspace_stats(self, workspace_id, cutoff):
+        agents = [row for row in self.all_agents()
+                  if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id]
+        counts = [self.inbox_count(row["id"]) for row in agents]
+        return {"agents_total": len(agents),
+                "agents_online": sum(row.get("last_seen", 0) >= cutoff for row in agents),
+                "messages_total": sum(row["total"] for row in counts),
+                "messages_pending": sum(row["pending"] for row in counts)}
+
+    def connected_workspaces(self, workspace_id):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                rows = db.execute("SELECT workspace_a,workspace_b FROM workspace_connections "
+                                  "WHERE status='accepted' AND (workspace_a=? OR workspace_b=?)",
+                                  (workspace_id, workspace_id)).fetchall()
+            return {row[1] if row[0] == workspace_id else row[0] for row in rows}
+        collection = self.client.collection("workspace_connections")
+        docs = list(self.where(collection, "workspace_a", "==", workspace_id).stream(timeout=15))
+        docs += list(self.where(collection, "workspace_b", "==", workspace_id).stream(timeout=15))
+        result = set()
+        for doc in docs:
+            row = doc.to_dict()
+            if row.get("status") == "accepted":
+                result.add(row["workspace_b"] if row["workspace_a"] == workspace_id else row["workspace_a"])
+        return result
+
+    def create_workspace_invite(self, row):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("INSERT INTO workspace_invites (id,code_hash,workspace_id,created_by,created_at,expires_at,used_at,revoked_at) "
+                           "VALUES (?,?,?,?,?,?,NULL,NULL)",
+                           tuple(row[key] for key in ("id","code_hash","workspace_id","created_by","created_at","expires_at")))
+        else:
+            self.client.collection("workspace_invites").document(row["id"]).create(row | {"used_at": None,"revoked_at": None}, timeout=15)
+        return row
+
+    def accept_workspace_invite(self, code_hash, user, workspace):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("BEGIN IMMEDIATE")
+                invite = db.execute("SELECT * FROM workspace_invites WHERE code_hash=?", (code_hash,)).fetchone()
+                now = user["created_at"]
+                if not invite or invite["used_at"] is not None or invite["revoked_at"] is not None or invite["expires_at"] <= now:
+                    raise HTTPException(410, "Invitation is invalid, expired or already used")
+                if db.execute("SELECT 1 FROM account_users WHERE username_norm=?", (user["username_norm"],)).fetchone():
+                    raise HTTPException(409, "Username is already taken")
+                db.execute("INSERT INTO workspaces (id,name,created_at) VALUES (?,?,?)",
+                           (workspace["id"], workspace["name"], workspace["created_at"]))
+                db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at,workspace_id) "
+                           "VALUES (?,?,?,?, 'workspace_owner',?,?,NULL,?)",
+                           (user["id"], user["username"], user["username_norm"], user["password_hash"],
+                            user["created_at"], user["last_login_at"], workspace["id"]))
+                a, b = sorted((invite["workspace_id"], workspace["id"]))
+                key = workspace_connection_id(a, b)
+                db.execute("INSERT INTO workspace_connections (id,workspace_a,workspace_b,status,created_at,updated_at) "
+                           "VALUES (?,?,?,'accepted',?,?)", (key, a, b, now, now))
+                db.execute("UPDATE workspace_invites SET used_at=? WHERE id=? AND used_at IS NULL", (now, invite["id"]))
+            return user | {"workspace_id": workspace["id"], "role": "workspace_owner"}
+
+        invite_query = self.where(self.client.collection("workspace_invites"), "code_hash", "==", code_hash).limit(1)
+        matches = list(invite_query.stream(timeout=15))
+        if not matches:
+            raise HTTPException(410, "Invitation is invalid, expired or already used")
+        invite_ref = matches[0].reference
+        inviter_workspace = matches[0].to_dict()["workspace_id"]
+        workspace_id = workspace["id"]
+        a, b = sorted((inviter_workspace, workspace_id))
+        workspace_ref = self.client.collection("workspaces").document(workspace_id)
+        user_ref = self.client.collection("account_users").document(user["id"])
+        username_ref = self.client.collection("account_usernames").document(user["username_norm"])
+        connection_ref = self.client.collection("workspace_connections").document(workspace_connection_id(a, b))
+        @self.firestore.transactional
+        def create(transaction):
+            invite_snapshot = invite_ref.get(transaction=transaction)
+            username_snapshot = username_ref.get(transaction=transaction)
+            if not invite_snapshot.exists:
+                raise HTTPException(410, "Invitation is invalid, expired or already used")
+            current = invite_snapshot.to_dict()
+            now = user["created_at"]
+            if current.get("used_at") is not None or current.get("revoked_at") is not None or current.get("expires_at",0) <= now:
+                raise HTTPException(410, "Invitation is invalid, expired or already used")
+            if username_snapshot.exists:
+                raise HTTPException(409, "Username is already taken")
+            transaction.create(workspace_ref, workspace)
+            transaction.create(user_ref, user | {"role":"workspace_owner","workspace_id":workspace_id})
+            transaction.create(username_ref, {"user_id":user["id"]})
+            transaction.create(connection_ref, {"id":connection_ref.id,"workspace_a":a,"workspace_b":b,
+                                                "status":"accepted","created_at":now,"updated_at":now})
+            transaction.update(invite_ref, {"used_at":now})
+        create(self.client.transaction(max_attempts=5))
+        return user | {"workspace_id":workspace_id,"role":"workspace_owner"}
+
+    def accept_existing_workspace_invite(self, code_hash, workspace_id, now):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("BEGIN IMMEDIATE")
+                invite = db.execute("SELECT * FROM workspace_invites WHERE code_hash=?", (code_hash,)).fetchone()
+                if not invite or invite["used_at"] is not None or invite["revoked_at"] is not None or invite["expires_at"] <= now:
+                    raise HTTPException(410, "Invitation is invalid, expired or already used")
+                inviter = invite["workspace_id"]
+                if inviter == workspace_id:
+                    raise HTTPException(409, "You cannot connect your workspace to itself")
+                a, b = sorted((inviter, workspace_id))
+                key = workspace_connection_id(a, b)
+                current = db.execute("SELECT status FROM workspace_connections WHERE id=?", (key,)).fetchone()
+                if current and current["status"] == "accepted":
+                    raise HTTPException(409, "These workspaces are already connected")
+                if current:
+                    db.execute("UPDATE workspace_connections SET status='accepted',updated_at=? WHERE id=?", (now,key))
+                else:
+                    db.execute("INSERT INTO workspace_connections (id,workspace_a,workspace_b,status,created_at,updated_at) "
+                               "VALUES (?,?,?,'accepted',?,?)", (key,a,b,now,now))
+                db.execute("UPDATE workspace_invites SET used_at=? WHERE id=? AND used_at IS NULL", (now,invite["id"]))
+            return {"workspace_id": inviter, "connected": True}
+        matches = list(self.where(self.client.collection("workspace_invites"), "code_hash", "==", code_hash).limit(1).stream(timeout=15))
+        if not matches:
+            raise HTTPException(410, "Invitation is invalid, expired or already used")
+        invite_ref = matches[0].reference
+        inviter = matches[0].to_dict()["workspace_id"]
+        if inviter == workspace_id:
+            raise HTTPException(409, "You cannot connect your workspace to itself")
+        a, b = sorted((inviter, workspace_id))
+        connection_ref = self.client.collection("workspace_connections").document(workspace_connection_id(a,b))
+        @self.firestore.transactional
+        def connect(transaction):
+            invite_snapshot = invite_ref.get(transaction=transaction)
+            connection_snapshot = connection_ref.get(transaction=transaction)
+            if not invite_snapshot.exists:
+                raise HTTPException(410, "Invitation is invalid, expired or already used")
+            row = invite_snapshot.to_dict()
+            if row.get("used_at") is not None or row.get("revoked_at") is not None or row.get("expires_at",0) <= now:
+                raise HTTPException(410, "Invitation is invalid, expired or already used")
+            if connection_snapshot.exists and connection_snapshot.to_dict().get("status") == "accepted":
+                raise HTTPException(409, "These workspaces are already connected")
+            connection = {"id": connection_ref.id,"workspace_a":a,"workspace_b":b,
+                          "status":"accepted","created_at":now,"updated_at":now}
+            transaction.set(connection_ref, connection)
+            transaction.update(invite_ref, {"used_at":now})
+        connect(self.client.transaction(max_attempts=5))
+        return {"workspace_id":inviter,"connected":True}
+
+    def workspace_invites(self, workspace_id):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                rows = db.execute("SELECT id,workspace_id,created_by,created_at,expires_at,used_at,revoked_at "
+                                  "FROM workspace_invites WHERE workspace_id=? ORDER BY created_at DESC", (workspace_id,)).fetchall()
+                return [dict(row) for row in rows]
+        docs = self.where(self.client.collection("workspace_invites"), "workspace_id", "==", workspace_id).stream(timeout=15)
+        fields = ("id","workspace_id","created_by","created_at","expires_at","used_at","revoked_at")
+        return sorted(({key: doc.to_dict().get(key) for key in fields} for doc in docs),
+                      key=lambda row: row["created_at"], reverse=True)
+
+    def revoke_workspace_invite(self, workspace_id, invite_id, now):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                result = db.execute("UPDATE workspace_invites SET revoked_at=? WHERE id=? AND workspace_id=? "
+                                    "AND used_at IS NULL AND revoked_at IS NULL", (now,invite_id,workspace_id))
+                return bool(result.rowcount)
+        ref = self.client.collection("workspace_invites").document(invite_id)
+        snap = ref.get(timeout=15)
+        if not snap.exists:
+            return False
+        row = snap.to_dict()
+        if row.get("workspace_id") != workspace_id or row.get("used_at") is not None or row.get("revoked_at") is not None:
+            return False
+        ref.update({"revoked_at":now}, timeout=15)
+        return True
+
+    def workspace_connections(self, workspace_id):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                rows = db.execute("SELECT id,workspace_a,workspace_b,status,created_at,updated_at FROM workspace_connections "
+                                  "WHERE workspace_a=? OR workspace_b=? ORDER BY created_at DESC", (workspace_id,workspace_id)).fetchall()
+                return [dict(row) for row in rows]
+        coll = self.client.collection("workspace_connections")
+        docs = list(self.where(coll,"workspace_a","==",workspace_id).stream(timeout=15))
+        docs += list(self.where(coll,"workspace_b","==",workspace_id).stream(timeout=15))
+        unique = {doc.id:doc.to_dict() for doc in docs}
+        return sorted(unique.values(),key=lambda row:row.get("created_at",0),reverse=True)
+
+    def disconnect_workspaces(self, workspace_id, peer_workspace_id, now):
+        key = workspace_connection_id(workspace_id, peer_workspace_id)
+        if hasattr(self, "database"):
+            with self.database() as db:
+                result = db.execute("UPDATE workspace_connections SET status='revoked',updated_at=? WHERE id=? "
+                                    "AND status='accepted' AND (workspace_a=? OR workspace_b=?)",
+                                    (now,key,workspace_id,workspace_id))
+                return bool(result.rowcount)
+        ref = self.client.collection("workspace_connections").document(key)
+        snap = ref.get(timeout=15)
+        if not snap.exists:
+            return False
+        row = snap.to_dict()
+        if workspace_id not in (row.get("workspace_a"),row.get("workspace_b")) or row.get("status") != "accepted":
+            return False
+        ref.update({"status":"revoked","updated_at":now}, timeout=15)
+        return True
+
     def create_owner_account(self, row):
         if hasattr(self, "database"):
             with self.database() as db:
                 db.execute("BEGIN IMMEDIATE")
                 if db.execute("SELECT 1 FROM account_users LIMIT 1").fetchone():
                     raise HTTPException(409, "The owner account has already been created")
-                db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at) VALUES (?,?,?,?, 'owner',?,NULL,NULL)",
-                           (row["id"], row["username"], row["username_norm"], row["password_hash"], row["created_at"]))
+                db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at,workspace_id) VALUES (?,?,?,?, 'owner',?,NULL,NULL,?)",
+                           (row["id"], row["username"], row["username_norm"], row["password_hash"], row["created_at"],
+                            row.get("workspace_id", DEFAULT_WORKSPACE_ID)))
+                db.execute("INSERT OR IGNORE INTO workspaces (id,name,created_at) VALUES (?,?,?)",
+                           (row.get("workspace_id", DEFAULT_WORKSPACE_ID), "Workspace principal", row["created_at"]))
             return row
         owner_ref = self.client.collection("meta").document("account_owner")
         username_ref = self.client.collection("account_usernames").document(row["username_norm"])
@@ -162,13 +433,15 @@ class CollaborationStore:
     def account_by_id(self, user_id):
         if hasattr(self, "database"):
             with self.database() as db:
-                row = db.execute("SELECT id,username,role,created_at,last_login_at FROM account_users WHERE id = ? AND disabled_at IS NULL",
+                row = db.execute("SELECT id,username,role,created_at,last_login_at,workspace_id FROM account_users WHERE id = ? AND disabled_at IS NULL",
                                  (user_id,)).fetchone()
                 return dict(row) if row else None
         row = self.client.collection("account_users").document(user_id).get(timeout=15)
         if not row.exists or row.to_dict().get("disabled_at") is not None:
             return None
-        return row.to_dict()
+        data = row.to_dict()
+        data["workspace_id"] = data.get("workspace_id") or DEFAULT_WORKSPACE_ID
+        return data
 
     def update_account_login(self, user_id, seen):
         if hasattr(self, "database"):
@@ -220,7 +493,7 @@ class CollaborationStore:
     def account_session_by_hash(self, token_hash, now):
         if hasattr(self, "database"):
             with self.database() as db:
-                row = db.execute("SELECT s.*,u.username,u.role FROM account_sessions s JOIN account_users u ON u.id=s.user_id WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.disabled_at IS NULL",
+                row = db.execute("SELECT s.*,u.username,u.role,u.workspace_id FROM account_sessions s JOIN account_users u ON u.id=s.user_id WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.disabled_at IS NULL",
                                  (token_hash, now)).fetchone()
                 if not row:
                     return None
@@ -237,14 +510,16 @@ class CollaborationStore:
         if not user:
             return None
         rows[0].reference.update({"last_seen": now}, timeout=15)
-        return row | {"username": user["username"], "role": user["role"]}
+        return row | {"username": user["username"], "role": user["role"],
+                      "workspace_id": user.get("workspace_id") or DEFAULT_WORKSPACE_ID}
 
     def create_team_account(self, row):
         if hasattr(self, "database"):
             with self.database() as db:
                 try:
-                    db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at) VALUES (?,?,?,?,?,?,NULL,NULL)",
-                               (row["id"], row["username"], row["username_norm"], row["password_hash"], row["role"], row["created_at"]))
+                    db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at,workspace_id) VALUES (?,?,?,?,?,?,NULL,NULL,?)",
+                               (row["id"], row["username"], row["username_norm"], row["password_hash"], row["role"], row["created_at"],
+                                row.get("workspace_id", DEFAULT_WORKSPACE_ID)))
                 except sqlite3.IntegrityError:
                     raise HTTPException(409, "Username is already taken")
             return row
@@ -259,13 +534,19 @@ class CollaborationStore:
         create(self.client.transaction(max_attempts=5))
         return row
 
-    def all_account_users(self):
+    def all_account_users(self, workspace_id=None):
         if hasattr(self, "database"):
             with self.database() as db:
-                rows = db.execute("SELECT id,username,role,created_at,last_login_at,disabled_at FROM account_users ORDER BY created_at").fetchall()
+                if workspace_id is None:
+                    rows = db.execute("SELECT id,username,role,created_at,last_login_at,disabled_at,workspace_id FROM account_users ORDER BY created_at").fetchall()
+                else:
+                    rows = db.execute("SELECT id,username,role,created_at,last_login_at,disabled_at,workspace_id FROM account_users WHERE workspace_id=? ORDER BY created_at", (workspace_id,)).fetchall()
                 return [dict(row) for row in rows]
-        rows = [doc.to_dict() for doc in self.client.collection("account_users").stream(timeout=15)]
-        return sorted(({key: row.get(key) for key in ("id", "username", "role", "created_at", "last_login_at", "disabled_at")}
+        query = self.client.collection("account_users")
+        if workspace_id is not None:
+            query = self.where(query, "workspace_id", "==", workspace_id)
+        rows = [doc.to_dict() for doc in query.stream(timeout=15)]
+        return sorted(({key: row.get(key) for key in ("id", "username", "role", "created_at", "last_login_at", "disabled_at", "workspace_id")}
                        for row in rows), key=lambda row: row["created_at"])
 
     def disable_team_account(self, user_id, disabled_at):
@@ -359,7 +640,8 @@ class CollaborationStore:
                     raise HTTPException(409, "Instance is already grouped or no longer exists")
                 description = description or agent["description"]
                 capabilities = capabilities or json.loads(agent["capabilities_json"] or "[]")
-                profile.update(description=description, capabilities=capabilities)
+                profile.update(description=description, capabilities=capabilities,
+                               workspace_id=agent["workspace_id"] or DEFAULT_WORKSPACE_ID)
                 db.execute("INSERT INTO profiles VALUES (?, ?)", (profile["id"], json.dumps(profile)))
                 db.execute("UPDATE agents SET profile_id = ?, instance_name = name WHERE id = ?",
                            (profile["id"], identifier))
@@ -371,7 +653,8 @@ class CollaborationStore:
                 if not agent or agent.get("profile_id"):
                     raise HTTPException(409, "Instance is already grouped or no longer exists")
                 profile.update(description=description or agent.get("description", ""),
-                               capabilities=capabilities or agent.get("capabilities", []))
+                               capabilities=capabilities or agent.get("capabilities", []),
+                               workspace_id=agent.get("workspace_id") or DEFAULT_WORKSPACE_ID)
                 transaction.create(self.client.collection("profiles").document(profile["id"]), profile)
                 transaction.update(ref, {"profile_id": profile["id"], "instance_name": agent["name"]})
             create(self.client.transaction(max_attempts=5))
@@ -577,7 +860,7 @@ class CollaborationStore:
                 verify(dict(old) if old else None)
                 if old:
                     return False
-                columns = ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "profile_id", "instance_name", "description", "capabilities_json")
+                columns = ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "profile_id", "instance_name", "description", "capabilities_json", "workspace_id")
                 db.execute(f"INSERT INTO agents ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
                            tuple(json.dumps(row["capabilities"], ensure_ascii=False) if key == "capabilities_json" else row[key]
                                  for key in columns))

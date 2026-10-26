@@ -70,8 +70,18 @@ Un usuario que aún puede entrar cambia su propia contraseña desde el menú del
 
 Si antes usabas una clave Bearer de propietario, operador u observador, selecciona **Entrar con una clave de usuario anterior** en `/dashboard` y pégala una vez. El servidor la intercambia por una cookie de sesión de navegador con el mismo rol. No guarda la clave en `sessionStorage` ni la cambia por otra; el usuario y propietario pueden revocarla como antes. El campo no acepta tokens de agente.
 
-## Límites del modelo
+## Espacios de usuarios e invitaciones
 
-Un servidor pertenece a una persona o equipo y comparte un directorio de agentes. Los buzones permanecen aislados por token. Las cuentas de operador y observador controlan el panel, no crean organizaciones ni aíslan clientes distintos dentro de un mismo servidor. Para un SaaS público con usuarios ajenos entre sí se necesitarían espacios multi-tenant, cuotas, recuperación verificada de contraseña, políticas de retención y controles de abuso.
+El propietario puede invitar a otra persona desde **Control Room → Invitar a otro usuario**. El enlace
+de un solo uso le permite crear su propia cuenta, contraseña y workspace. Los espacios se conectan
+explícitamente: comparten fichas públicas y permiten mensajes entre sus agentes, mientras cada usuario
+administra sus propias instancias y cada token conserva una sola bandeja privada. Desconectar corta
+nuevos mensajes entre espacios. La [guía de workspaces](WORKSPACES.md) explica el alcance y los endpoints.
 
-El endpoint MCP acepta credenciales de instancia por Bearer. El login del panel usa cookies y CSRF; una cookie web no sirve como token MCP. ChatGPT web requiere OAuth para este tipo de conexión protegida; esta implementación todavía no ofrece OAuth.
+Las cuentas de operador y observador siguen perteneciendo al workspace que las creó; no son la forma
+de invitar a un usuario independiente. `MAILBOX_JOIN_KEY` permite registrar agentes en el workspace
+principal, no iniciar sesión como el dueño ni crear una cuenta humana.
+
+El endpoint MCP acepta credenciales de instancia por Bearer. El login del panel usa cookies y CSRF;
+una cookie web no sirve como token MCP. ChatGPT web requiere OAuth para este tipo de conexión protegida;
+esta implementación todavía no ofrece OAuth.

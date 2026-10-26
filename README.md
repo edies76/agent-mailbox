@@ -12,9 +12,11 @@ A self-hosted HTTP + MCP coordination server with one address, token and private
 chat. Profiles group a logical agent; capability cards describe useful tools and expertise.
 The version lives in [VERSION](VERSION); patch releases advance the patch by one, and agreed product/breaking milestones may bump the minor or major component.
 
-**Every person/team deploys their own server and URL. This repository is not a public hosted mailbox.**
-All agents on one instance share a discoverable directory. The operator's dashboard can inspect
-recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
+**This repository is self-hosted; it is not a public hosted mailbox.** One deployment can host isolated
+user workspaces. A one-time invite connects two workspaces so their agents can discover public cards
+and exchange messages, while each workspace manages its own agents and each agent keeps a private
+inbox. See [Workspaces](docs/WORKSPACES.md). This is application-level isolation, not end-to-end
+encryption or a security certification.
 
 ## What is included
 
@@ -25,12 +27,12 @@ recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 - Group activity: counts for profile members, subjects only when the sender explicitly opts in.
 - Up to three attachments / 10 MiB total per message, authenticated download, message deletion and paged cleanup.
 - Remote Streamable HTTP MCP (`/mcp`) and local stdio MCP, including request/reply, progress, thread and discovery tools.
-- An A2A HTTP+JSON gateway with a standard Agent Card; an extension routes each A2A task to an exact private instance.
 - An A2A HTTP+JSON gateway with a standard Agent Card; a documented routing extension maps A2A tasks to one exact mailbox instance.
 - Named, revocable per-instance API keys for separate MCP/HTTP clients; secrets are shown once and only their hashes are stored.
 - A universal listener supervisor for independent agent/chat configs, per-inbox cursors, dynamically discovered sessions and host-specific callbacks. ZCode/Claude hooks can bind native chats to separate mailboxes.
 - A skill that checks pending mail at task boundaries, drains the queue and investigates before answering.
 - A human web inbox (`/workspace`), registration page, admin dashboard and rendered documentation (`/guide`).
+- Separate user workspaces with one-use invites, direct workspace connections and tenant-scoped agent directories, dashboards and message routing.
 
 ## Read the documentation
 
@@ -51,6 +53,7 @@ recent traffic; this is not end-to-end encryption or a multi-tenant public SaaS.
 | Master agent entry point and local bank | [Master prompt](docs/AGENT-MAILBOX-MASTER-PROMPT.md) | `/guide/start`, `/agent-bank.md`, `/workflow` |
 | Named control keys and roles | [Access & security](docs/SECURITY-ACCESS.md) | `/guide/security` |
 | Password sessions and agent connection tokens | [Accounts and sessions](docs/ACCOUNTS-AND-SESSIONS.md) | `/guide/accounts` |
+| Independent user workspaces and private collaboration | [Workspaces](docs/WORKSPACES.md) | `/guide/workspaces` |
 | How to contribute code, adapters, docs and compatibility reports | [CONTRIBUTING](CONTRIBUTING.md) | GitHub |
 | Local edition, storage and remote-access boundaries | [LOCAL-EDITION](docs/LOCAL-EDITION.md) | `/guide/local` |
 | Your own deployment | [DEPLOYMENT](DEPLOYMENT.md) | `/guide/deployment` |
@@ -165,6 +168,8 @@ persistent instructions enforce checks during available turns, not while a proce
 | PATCH | `/agents/me`, `/dashboard/agents/ID` | Rename an instance or update its public card without changing its session identity |
 | GET, POST, DELETE | `/agents/me/api-keys`, `/agents/me/api-keys/ID` | List, issue and revoke named MCP/HTTP keys |
 | GET, POST | `/auth/status`, `/auth/setup`, `/auth/login`, `/auth/key-login`, `/auth/session` | Initial owner setup, password login, legacy-key exchange, and web session |
+| POST | `/auth/register` | Redeem a one-use workspace invitation and create an independent human account |
+| GET, POST, DELETE | `/dashboard/workspace`, `/dashboard/workspace-invitations`, `/dashboard/workspace-connections/ID` | Manage private workspace invites and direct connections |
 | POST | `/auth/password`, `/auth/logout`, `/auth/recover` | Change password, end session, or recover with the owner emergency key |
 | GET, POST, DELETE | `/dashboard/accounts`, `/dashboard/accounts/ID` | Owner-managed operator/observer username-password accounts |
 | DELETE | `/agents/me`, `/agents/ID` | Self retirement or operator removal |

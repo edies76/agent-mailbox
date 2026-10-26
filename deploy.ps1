@@ -16,7 +16,7 @@ if ($appVersion -notmatch '^\d+\.\d+\.\d+$') { throw "VERSION no tiene formato M
 if (-not $RuntimeServiceAccount) { $RuntimeServiceAccount = "agent-mailbox-runtime@$CloudProject.iam.gserviceaccount.com" }
 if (-not $SkipTests) {
     $testPython = if (Test-Path '.\.venv\Scripts\python.exe') { '.\.venv\Scripts\python.exe' } else { (Get-Command python).Source }
-    & $testPython -m unittest -v test_mailbox.py test_adapters.py test_collaboration.py test_control_access.py test_a2a.py
+    & $testPython -m unittest -v test_mailbox.py test_adapters.py test_collaboration.py test_control_access.py test_a2a.py test_workspaces.py
     if ($LASTEXITCODE -ne 0) { throw 'Las pruebas fallaron; no se publicara.' }
 }
 if (-not $SkipIndexSetup) {

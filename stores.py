@@ -7,7 +7,8 @@ import time
 import json
 
 from fastapi import HTTPException
-from collaboration import CollaborationStore, message_view, message_fields
+from collaboration import (CollaborationStore, DEFAULT_WORKSPACE_ID, workspace_connection_id,
+                           message_view, message_fields)
 from delivery import delivery_identity
 
 
@@ -123,9 +124,9 @@ class SQLiteStore(CollaborationStore):
 
     def register(self, row):
         with self.database() as db:
-            db.execute("INSERT INTO agents (id, name, kind, project, token_hash, created_at, last_seen, description, capabilities_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            db.execute("INSERT INTO agents (id, name, kind, project, token_hash, created_at, last_seen, description, capabilities_json, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        tuple(row.get(k, "") for k in ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "description")) +
-                       (json.dumps(row.get("capabilities", []), ensure_ascii=False),))
+                       (json.dumps(row.get("capabilities", []), ensure_ascii=False), row.get("workspace_id", DEFAULT_WORKSPACE_ID)))
 
     @staticmethod
     def agent_output(row):
@@ -195,6 +196,17 @@ class SQLiteStore(CollaborationStore):
                     return {**self.message_output(previous), "delivery_replayed": True}
             if db.execute("SELECT 1 FROM agents WHERE id = ?", (body.to_agent_id,)).fetchone() is None:
                 raise HTTPException(404, "Recipient not found")
+            sender_row = db.execute("SELECT workspace_id FROM agents WHERE id = ?", (sender,)).fetchone()
+            recipient_row = db.execute("SELECT workspace_id FROM agents WHERE id = ?", (body.to_agent_id,)).fetchone()
+            if not sender_row:
+                raise HTTPException(401, "Sender instance is unavailable")
+            sender_workspace = sender_row["workspace_id"] or DEFAULT_WORKSPACE_ID
+            recipient_workspace = recipient_row["workspace_id"] or DEFAULT_WORKSPACE_ID
+            if sender_workspace != recipient_workspace:
+                connection_id = workspace_connection_id(sender_workspace, recipient_workspace)
+                connection = db.execute("SELECT status FROM workspace_connections WHERE id = ?", (connection_id,)).fetchone()
+                if not connection or connection["status"] != "accepted":
+                    raise HTTPException(403, "These workspaces are not connected")
             original = None
             if body.in_reply_to is not None:
                 original = db.execute("SELECT * FROM messages WHERE id = ?", (body.in_reply_to,)).fetchone()
@@ -270,6 +282,18 @@ class SQLiteStore(CollaborationStore):
         deleted, unlinked = self._delete_message_ids([message_id])
         return {"id": message_id, "deleted": bool(deleted), "related_replies_unlinked": unlinked}
 
+    def message_in_workspace(self, message_id, workspace_id):
+        with self.database() as db:
+            row = db.execute("SELECT from_agent_id,to_agent_id FROM messages WHERE id=?", (message_id,)).fetchone()
+            if not row:
+                return False
+            placeholders = "?"
+            for identifier in (row["from_agent_id"], row["to_agent_id"]):
+                agent = db.execute("SELECT workspace_id FROM agents WHERE id=?", (identifier,)).fetchone()
+                if agent and (agent["workspace_id"] or DEFAULT_WORKSPACE_ID) == workspace_id:
+                    return True
+        return False
+
     def delete_inbox(self, identifier, after_id, before_id, limit):
         clauses, params = ["to_agent_id = ?", "id > ?"], [identifier, after_id]
         if before_id is not None:
@@ -283,10 +307,17 @@ class SQLiteStore(CollaborationStore):
         return {"deleted_count": deleted, "related_replies_unlinked": unlinked,
                 "has_more": len(rows) > limit, "next_after_id": selected[-1] if selected else after_id}
 
-    def recent_messages(self, limit=15):
+    def recent_messages(self, limit=15, agent_ids=None):
         with self.database() as db:
-            return [self.message_output(row) for row in db.execute(
-                "SELECT * FROM messages ORDER BY id DESC LIMIT ?", (limit,))]
+            if agent_ids is None:
+                rows = db.execute("SELECT * FROM messages ORDER BY id DESC LIMIT ?", (limit,))
+            elif not agent_ids:
+                return []
+            else:
+                placeholders = ",".join("?" for _ in agent_ids)
+                rows = db.execute(f"SELECT * FROM messages WHERE from_agent_id IN ({placeholders}) OR to_agent_id IN ({placeholders}) ORDER BY id DESC LIMIT ?",
+                                  (*agent_ids, *agent_ids, limit))
+            return [self.message_output(row) for row in rows]
 
     def get_attachment(self, identifier, message_id, attachment_index):
         with self.database() as db:
@@ -384,11 +415,13 @@ class FirestoreStore(CollaborationStore):
         return {**snapshot.to_dict(), **fields}
 
     def all_agents(self):
-        rows = [doc.to_dict() for doc in self.agents.stream(timeout=15)]
+        rows = [doc.to_dict() | {"workspace_id": doc.to_dict().get("workspace_id") or DEFAULT_WORKSPACE_ID}
+                for doc in self.agents.stream(timeout=15)]
         return sorted(rows, key=lambda row: (row["created_at"], row["id"]))
 
     def get_agent(self, identifier):
-        return self.agents.document(identifier).get(timeout=15).to_dict()
+        row = self.agents.document(identifier).get(timeout=15).to_dict()
+        return row | {"workspace_id": row.get("workspace_id") or DEFAULT_WORKSPACE_ID} if row else None
 
     def unregister(self, identifier):
         """Revoke an agent and permanently erase its messages and attachments."""
@@ -445,9 +478,20 @@ class FirestoreStore(CollaborationStore):
                     if previous is None:
                         raise HTTPException(410, "This delivery was deleted; do not retry it with this key")
                     return {**message_view(previous), "delivery_replayed": True}
+            sender_snapshot = self.agents.document(sender).get(transaction=transaction)
             recipient = self.agents.document(body.to_agent_id).get(transaction=transaction)
+            if not sender_snapshot.exists:
+                raise HTTPException(401, "Sender instance is unavailable")
             if not recipient.exists:
                 raise HTTPException(404, "Recipient not found")
+            sender_workspace = sender_snapshot.to_dict().get("workspace_id") or DEFAULT_WORKSPACE_ID
+            recipient_workspace = recipient.to_dict().get("workspace_id") or DEFAULT_WORKSPACE_ID
+            if sender_workspace != recipient_workspace:
+                connection_ref = self.client.collection("workspace_connections").document(
+                    workspace_connection_id(sender_workspace, recipient_workspace))
+                connection = connection_ref.get(transaction=transaction)
+                if not connection.exists or connection.to_dict().get("status") != "accepted":
+                    raise HTTPException(403, "These workspaces are not connected")
             original = None
             if body.in_reply_to is not None:
                 original = self.message_reference(body.in_reply_to).get(transaction=transaction).to_dict()
@@ -539,6 +583,13 @@ class FirestoreStore(CollaborationStore):
         deleted, unlinked = self._delete_message_ids([message_id])
         return {"id": message_id, "deleted": bool(deleted), "related_replies_unlinked": unlinked}
 
+    def message_in_workspace(self, message_id, workspace_id):
+        row = self.message_reference(message_id).get(timeout=15).to_dict()
+        if not row:
+            return False
+        return any(self.workspace_for_agent(identifier) == workspace_id
+                   for identifier in (row["from_agent_id"], row["to_agent_id"]))
+
     def delete_inbox(self, identifier, after_id, before_id, limit):
         query = self.where(self.messages, "to_agent_id", "==", identifier)
         query = self.where(query, "id", ">", after_id)
@@ -550,9 +601,21 @@ class FirestoreStore(CollaborationStore):
         return {"deleted_count": deleted, "related_replies_unlinked": unlinked,
                 "has_more": len(rows) > limit, "next_after_id": selected[-1] if selected else after_id}
 
-    def recent_messages(self, limit=15):
-        return [message_view(doc.to_dict()) for doc in self.messages.order_by(
-            "id", direction=self.firestore.Query.DESCENDING).limit(limit).stream(timeout=15)]
+    def recent_messages(self, limit=15, agent_ids=None):
+        if agent_ids is None:
+            docs = self.messages.order_by("id", direction=self.firestore.Query.DESCENDING).limit(limit).stream(timeout=15)
+            return [message_view(doc.to_dict()) for doc in docs]
+        if not agent_ids:
+            return []
+        found = {}
+        for identifier in agent_ids:
+            for field in ("from_agent_id", "to_agent_id"):
+                query = self.where(self.messages, field, "==", identifier).order_by(
+                    "id", direction=self.firestore.Query.DESCENDING).limit(limit)
+                for doc in query.stream(timeout=15):
+                    found[doc.id] = doc.to_dict()
+        rows = sorted(found.values(), key=lambda row: row["id"], reverse=True)[:limit]
+        return [message_view(row) for row in rows]
 
     def get_attachment(self, identifier, message_id, attachment_index):
         row = self.message_reference(message_id).get(timeout=15).to_dict()

@@ -1,7 +1,9 @@
 # Conectarte a Agent Mailbox
 
 La URL base es el origen de esta página. Usa HTTP estándar o MCP; no necesitas acceso al PC del
-operador ni a su cuenta de Google Cloud. Cada equipo despliega su propio servidor y claves.
+operador ni a su cuenta de Google Cloud. Cada agente conserva su propio ID/token. Un humano que
+necesite cuenta y agentes independientes debe aceptar una invitación de workspace desde `/dashboard`;
+`MAILBOX_JOIN_KEY` solo registra agentes en el workspace principal y no debe usarse como login humano.
 
 ## Onboarding obligatorio para agentes
 

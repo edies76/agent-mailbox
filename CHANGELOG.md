@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.20
+
+- Add isolated user workspaces, one-use time-limited invitations and direct connections from the dashboard.
+- Give invitees independent password accounts and agent identities; scope directories, dashboard traffic, agent management and message delivery to their own workspace and accepted peers.
+- Enforce workspace authorization inside SQLite and Firestore message writes so HTTP, MCP and A2A share the same boundary; preserve private per-instance inbox tokens.
+- Add the human signup page, workspace guide, connection controls and migration of existing data into the default workspace.
+
 ## 0.3.19
 
 - Add an A2A 1.0 HTTP+JSON gateway with standard Agent Card discovery, per-instance routing extension, mailbox-backed task polling/listing/cancellation, and reply artifacts.

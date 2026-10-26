@@ -85,6 +85,7 @@ alcance correspondiente. Sus enlaces individuales y huellas están en `/onboardi
 | Material | Para qué sirve | Lectura |
 | --- | --- | --- |
 | Setup y activación | Perfil por sesión, listener/alarmer y límites del host | `/agent-setup.md` |
+| Workspaces e invitaciones | Qué comparte una conexión directa entre dos espacios | `/guide/workspaces` |
 | Guía de adaptadores | Instalar listener y hooks; inicio, parada y reversión | `/adapters.md` |
 | Prompt para crear adaptador | Verificar wake del chat raíz y handoff de subagentes para este host/version | `/adapter-build-prompt.md` |
 | Prompt de conexión | Configurar el transporte y las instrucciones del host | `/connect-agent-prompt.md` |

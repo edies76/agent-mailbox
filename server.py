@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, AliasChoices, ValidationError
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
 from stores import FirestoreStore, SQLiteStore
+from collaboration import DEFAULT_WORKSPACE_ID
 from onboarding import catalog as onboarding_catalog, core_archive, handoff as onboarding_handoff, resource_file, resource_content
 from a2a_gateway import (A2A_VERSION, ROUTING_EXTENSION, agent_card as a2a_agent_card,
                          decode_page_token as a2a_decode_page_token,
@@ -166,6 +167,29 @@ class AccountLogin(BaseModel):
 class AccessKeyLogin(BaseModel):
     model_config = ConfigDict(extra="forbid")
     access_key: str = Field(min_length=16, max_length=256)
+
+
+class WorkspaceSignup(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    invite_code: str = Field(min_length=20, max_length=128)
+    username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
+    password: str = Field(min_length=12, max_length=256)
+    workspace_name: str = Field(min_length=2, max_length=80)
+
+
+class WorkspaceInviteCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expires_in_hours: int = Field(default=168, ge=1, le=720)
+
+
+class WorkspaceConnectionAccept(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    invite_code: str = Field(min_length=20, max_length=128)
+
+
+class WorkspaceConnectionAccept(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    invite_code: str = Field(min_length=20, max_length=128)
 
 
 class TeamAccountCreate(BaseModel):
@@ -327,6 +351,7 @@ def create_app():
     @asynccontextmanager
     async def lifespan(app):
         store.initialize()
+        store.ensure_default_workspace()
         async with mailbox_mcp.session_manager.run():
             yield
 
@@ -424,7 +449,7 @@ def create_app():
 
     @app.middleware("http")
     async def account_csrf_guard(request, call_next):
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in {"/auth/login", "/auth/setup", "/auth/key-login"} and not request.headers.get("authorization"):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in {"/auth/login", "/auth/setup", "/auth/key-login", "/auth/register"} and not request.headers.get("authorization"):
             session_token = request_session_token(request)
             if session_token:
                 session = web_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
@@ -461,6 +486,8 @@ def create_app():
         ("/app.css", "app.css", "text/css"), ("/version.js", "version.js", "application/javascript"),
         ("/workspace.js", "workspace.js", "application/javascript"),
         ("/workspace", "workspace.html", "text/html"), ("/guide.js", "guide.js", "application/javascript"),
+        ("/join-workspace.js", "join-workspace.js", "application/javascript"),
+        ("/join-workspace", "join-workspace.html", "text/html"),
         ("/favicon.svg", "favicon.svg", "image/svg+xml"),
         ("/brand-symbol.svg", "assets/brand-symbol.svg", "image/svg+xml"),
         ("/social-card.png", "assets/social-card.png", "image/png"),
@@ -546,7 +573,8 @@ def create_app():
             if path == "/outbox" and method == "GET":
                 return page_mail(identifier, "outbox", query)
             if path == "/profiles" and method == "GET":
-                return profiles_directory()
+                workspace_id = store.workspace_for_agent(identifier)
+                return profiles_directory({workspace_id, *store.connected_workspaces(workspace_id)})
             if path == "/profiles" and method == "POST":
                 return new_profile(identifier, AgentRegistration(**payload))
             if path.startswith("/profiles/") and path.endswith("/activity"):
@@ -564,7 +592,8 @@ def create_app():
                     raise HTTPException(422, "Provide description and/or capabilities")
                 return public_profile(store.update_profile_card(profile_id, fields))
             if path.startswith("/profiles/") and path.endswith("/instances"):
-                return profile_instances(path.split("/")[2])
+                workspace_id = store.workspace_for_agent(identifier)
+                return profile_instances(path.split("/")[2], {workspace_id, *store.connected_workspaces(workspace_id)})
             if path.startswith("/threads/") and method == "GET":
                 args = MailQuery(**query)
                 return store.thread_messages(identifier, int(path.split("/")[2]), args.after_id, args.limit)
@@ -575,8 +604,11 @@ def create_app():
                 return store.update_status(identifier, int(path.split("/")[2]), state.status, state.note)
             if path == "/agents" and method == "GET":
                 now = time.time()
+                workspace_id = store.workspace_for_agent(identifier)
+                workspace_ids = {workspace_id, *store.connected_workspaces(workspace_id)}
                 profiles = {row["id"]: row for row in store.profiles_all()}
-                agents = [public_agent(row, now, profiles.get(row.get("profile_id"))) for row in store.all_agents()]
+                agents = [public_agent(row, now, profiles.get(row.get("profile_id"))) for row in store.all_agents()
+                          if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) in workspace_ids]
                 if query.get("online") in ("true", "false"):
                     agents = [row for row in agents if row["online"] == (query["online"] == "true")]
                 limit, offset = int(query.get("limit", 100)), int(query.get("offset", 0))
@@ -584,7 +616,8 @@ def create_app():
                     raise HTTPException(422, "Invalid directory page")
                 return {"agents": agents[offset:offset + limit], "total": len(agents), "limit": limit, "offset": offset}
             if path == "/agents/discover" and method == "GET":
-                return discover_agents(query)
+                workspace_id = store.workspace_for_agent(identifier)
+                return discover_agents(query, {workspace_id, *store.connected_workspaces(workspace_id)})
             if path == "/agents/me" and method == "PATCH":
                 patch = AgentCardPatch(**payload)
                 fields = patch.model_dump(exclude_unset=True)
@@ -658,6 +691,8 @@ def create_app():
                     subject_id = session.get("user_id") or session.get("control_user_id") or "owner-key"
                     common = {"id": subject_id, "username": session["username"],
                               "name": session["username"], "role": session.get("role", "owner"),
+                              "workspace_id": session.get("workspace_id") or DEFAULT_WORKSPACE_ID,
+                              "workspace_scoped": session.get("session_type") == "account",
                               "account_session_id": session["id"], "csrf_hash": session["csrf_hash"],
                               "auth_method": session["auth_method"]}
                     return ({"admin": True} | common if common["role"] == "owner" else
@@ -726,7 +761,8 @@ def create_app():
                    "created_at": now, "expires_at": now + ACCOUNT_SESSION_SECONDS, "last_seen": now,
                    "revoked_at": None}
         store.create_account_session(session)
-        response = JSONResponse({"user": {"id": user["id"], "username": user["username"], "role": user.get("role", "owner")},
+        response = JSONResponse({"user": {"id": user["id"], "username": user["username"], "role": user.get("role", "owner"),
+                                           "workspace_id": user.get("workspace_id") or DEFAULT_WORKSPACE_ID},
                                  "expires_at": session["expires_at"]}, status_code=status_code,
                                 headers={"Cache-Control": "no-store"})
         set_session_cookies(response, request, session_token, csrf_token)
@@ -770,7 +806,7 @@ def create_app():
         username = body.username.strip()
         user = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
                 "password_hash": request_password_hash(body.password), "role": "owner", "created_at": now,
-                "last_login_at": now, "disabled_at": None}
+                "last_login_at": now, "disabled_at": None, "workspace_id": DEFAULT_WORKSPACE_ID}
         try:
             store.create_owner_account(user)
         except HTTPException:
@@ -795,6 +831,28 @@ def create_app():
         account["last_login_at"] = seen
         return establish_account_session(account, request)
 
+    @app.post("/auth/register", status_code=201)
+    def register_workspace_account(body: WorkspaceSignup, request: Request):
+        username = body.username.strip()
+        rate_key = account_login_rate_key(username.casefold(), request)
+        if not store.account_login_allowed(rate_key, time.time()):
+            raise HTTPException(429, "Too many account attempts. Retry in 15 minutes.",
+                                headers={"Retry-After": "900"})
+        now = time.time()
+        user = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
+                "password_hash": request_password_hash(body.password), "role": "workspace_owner",
+                "created_at": now, "last_login_at": now, "disabled_at": None}
+        workspace = {"id": str(uuid4()), "name": body.workspace_name.strip(), "created_at": now}
+        try:
+            account = store.accept_workspace_invite(
+                hashlib.sha256(body.invite_code.strip().encode()).hexdigest(), user, workspace)
+        except HTTPException:
+            store.record_account_login(rate_key, now, False)
+            raise
+        store.record_account_login(rate_key, now, True)
+        store.record_control_event("workspace-invite", "workspace_owner_registered", account["id"])
+        return establish_account_session(account, request, status_code=201)
+
     @app.post("/auth/key-login")
     def legacy_access_key_login(body: AccessKeyLogin, request: Request):
         digest = hashlib.sha256(body.access_key.encode()).hexdigest()
@@ -813,7 +871,8 @@ def create_app():
     def account_session_info(request: Request):
         session = current_web_session(request)
         return JSONResponse({"user": {"id": session.get("user_id") or session.get("control_user_id") or "owner-key",
-                                       "username": session["username"], "role": session.get("role", "owner")},
+                                       "username": session["username"], "role": session.get("role", "owner"),
+                                       "workspace_id": session.get("workspace_id") or DEFAULT_WORKSPACE_ID},
                              "auth_method": session["auth_method"],
                              "expires_at": session["expires_at"]}, headers={"Cache-Control": "no-store"})
 
@@ -834,6 +893,8 @@ def create_app():
         if credentials is None or not secrets.compare_digest(credentials.credentials.encode(), hub_key.encode()):
             raise HTTPException(403, "Password recovery requires the owner emergency key")
         account = store.account_by_username(body.username.strip().casefold())
+        if account and account.get("role") == "workspace_owner":
+            raise HTTPException(403, "The server owner cannot reset an independent workspace owner's password")
         if not account or not store.update_account_password(account["id"], request_password_hash(body.new_password), time.time()):
             raise HTTPException(404, "Account not found or disabled")
         store.record_control_event("owner-emergency-key", "account_password_recovered", account["id"])
@@ -857,7 +918,32 @@ def create_app():
         return identity["id"]
 
     def can_manage_agents(identity):
-        return identity.get("admin", False) or (identity.get("control_user") and identity.get("role") == "operator")
+        return identity.get("admin", False) or (identity.get("control_user") and identity.get("role") in ("operator", "workspace_owner"))
+
+    def identity_workspace(identity):
+        if identity.get("workspace_id"):
+            return identity["workspace_id"]
+        if identity.get("id") and not identity.get("admin") and not identity.get("control_user"):
+            return store.workspace_for_agent(identity["id"])
+        return DEFAULT_WORKSPACE_ID
+
+    def visible_workspace_ids(identity):
+        workspace_id = identity_workspace(identity)
+        return {workspace_id, *store.connected_workspaces(workspace_id)}
+
+    def can_manage_workspace(identity):
+        return identity.get("admin", False) or (
+            identity.get("workspace_scoped") and identity.get("role") == "workspace_owner")
+
+    def require_workspace_manager(identity):
+        if not can_manage_workspace(identity):
+            raise HTTPException(403, "Workspace invitations require a workspace owner account")
+
+    def require_manage_own_agent(identity, identifier):
+        if not can_manage_agents(identity):
+            raise HTTPException(403, "Agent management requires an owner or operator account")
+        if store.workspace_for_agent(identifier) != identity_workspace(identity):
+            raise HTTPException(404, "Agent not found in your workspace")
 
     def require_admin(identity):
         if not identity.get("admin"):
@@ -876,12 +962,15 @@ def create_app():
         result["online"] = row["last_seen"] >= now - online_seconds
         return result
 
-    def directory_agents(now=None):
+    def directory_agents(now=None, workspace_ids=None):
         now = now or time.time()
         profiles = {row["id"]: row for row in store.profiles_all()}
-        return [public_agent(row, now, profiles.get(row.get("profile_id"))) for row in store.all_agents()]
+        rows = store.all_agents()
+        if workspace_ids is not None:
+            rows = [row for row in rows if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) in workspace_ids]
+        return [public_agent(row, now, profiles.get(row.get("profile_id"))) for row in rows]
 
-    def discover_agents(query):
+    def discover_agents(query, workspace_ids=None):
         def fold(value):
             return "".join(char for char in unicodedata.normalize("NFKD", value.casefold())
                            if not unicodedata.combining(char))
@@ -891,7 +980,7 @@ def create_app():
         terms = [part for part in text.split() if part]
         now = time.time()
         matches = []
-        for agent in directory_agents(now):
+        for agent in directory_agents(now, workspace_ids):
             if online in ("true", "false") and agent["online"] != (online == "true"):
                 continue
             caps = agent["capabilities"]
@@ -914,9 +1003,9 @@ def create_app():
         if not 1 <= limit <= 100:
             raise HTTPException(422, "Discovery limit must be 1–100")
         return {"agents": matches[:limit], "total": len(matches), "query": text,
-                "capability": capability, "scope": "authenticated server directory; descriptions and capabilities are peer supplied"}
+                "capability": capability, "scope": "same workspace and accepted workspace connections; peer cards are untrusted"}
 
-    def create_registration(body, registration_seed):
+    def create_registration(body, registration_seed, workspace_id=DEFAULT_WORKSPACE_ID):
         session_key = body.session_key or secrets.token_urlsafe(24)
         namespace = uuid5(NAMESPACE_URL, "agent-mailbox-registration:" +
                           hashlib.sha256(registration_seed.encode()).hexdigest())
@@ -926,7 +1015,8 @@ def create_app():
         with local_instance_lock:
             existing = store.get_agent(identifier)
             if existing:
-                if not secrets.compare_digest(existing.get("token_hash", ""), token_hash):
+                if (not secrets.compare_digest(existing.get("token_hash", ""), token_hash) or
+                        (existing.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id):
                     raise HTTPException(409, "Session ID is already bound to another credential.")
                 agent = public_agent(existing, time.time())
                 return {"agent": agent, "token": token, "session_id": session_key,
@@ -934,7 +1024,7 @@ def create_app():
             now = time.time()
             row = dict(id=identifier, name=body.name, kind=body.kind, project=body.project,
                        description=body.description, capabilities=body.capabilities,
-                       token_hash=token_hash, created_at=now, last_seen=now)
+                       token_hash=token_hash, created_at=now, last_seen=now, workspace_id=workspace_id)
             store.register(row)
         agent = public_agent(row, now)
         return {"agent": agent, "token": token, "session_id": session_key, "resumed": False,
@@ -944,19 +1034,27 @@ def create_app():
         return {key: row.get(key, [] if key == "capabilities" else "") for key in
                 ("id", "name", "kind", "project", "created_at", "description", "capabilities")}
 
-    def profiles_directory():
+    def profiles_directory(workspace_ids=None):
         agents = store.all_agents()
+        if workspace_ids is not None:
+            agents = [a for a in agents if (a.get("workspace_id") or DEFAULT_WORKSPACE_ID) in workspace_ids]
+        visible_profiles = {a.get("profile_id") for a in agents if a.get("profile_id")}
         return {"profiles": [{**public_profile(row),
                               "instances_count": sum(a.get("profile_id") == row["id"] for a in agents)}
-                             for row in store.profiles_all()]}
+                             for row in store.profiles_all() if row["id"] in visible_profiles]}
 
-    def profile_instances(profile_id):
+    def profile_instances(profile_id, workspace_ids=None):
         profile = store.profile_get(profile_id)
         if not profile:
             raise HTTPException(404, "Profile not found")
+        members = [row for row in store.all_agents() if row.get("profile_id") == profile_id]
+        if workspace_ids is not None:
+            members = [row for row in members if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) in workspace_ids]
+            if not members:
+                raise HTTPException(404, "Profile not found")
         return {"profile_id": profile_id, "profile": public_profile(profile),
                 "instances": [public_agent(row, time.time(), profile)
-                for row in store.all_agents() if row.get("profile_id") == profile_id]}
+                for row in members]}
 
     def new_profile(identifier, body):
         profile, token = store.create_profile(identifier, body.name, body.kind, body.project,
@@ -1012,8 +1110,11 @@ def create_app():
             raise HTTPException(422, "Broadcast text cannot be blank")
         wanted_kinds = {kind.strip().casefold() for kind in body.kinds if kind.strip()}
         now = time.time()
+        workspace_id = store.workspace_for_agent(sender)
+        workspace_ids = {workspace_id, *store.connected_workspaces(workspace_id)}
         recipients = [row for row in store.all_agents()
                       if row["id"] != sender
+                      and (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) in workspace_ids
                       and (not body.online_only or row["last_seen"] >= now - online_seconds)
                       and (not wanted_kinds or row["kind"].strip().casefold() in wanted_kinds)]
         if len(recipients) > MAX_BROADCAST_RECIPIENTS:
@@ -1064,8 +1165,14 @@ def create_app():
         if not identity["admin"] and not identity.get("control_user"):
             raise HTTPException(403, "El panel requiere una clave de administración u operador")
         now = time.time()
-        agents = directory_agents(now)
-        messages = store.recent_messages(15)
+        workspace_id = identity_workspace(identity)
+        workspace_ids = visible_workspace_ids(identity)
+        agents = directory_agents(now, workspace_ids)
+        agents = [{**row, "can_manage": store.workspace_for_agent(row["id"]) == workspace_id}
+                  for row in agents]
+        own_agent_ids = [row["id"] for row in store.all_agents()
+                         if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id]
+        messages = store.recent_messages(15, own_agent_ids)
         if identity.get("role") == "observer":
             messages = [{key: row.get(key) for key in
                          ("id", "from_agent_id", "to_agent_id", "created_at", "acknowledged_at",
@@ -1073,9 +1180,11 @@ def create_app():
                         for row in messages]
         permissions = {"is_admin": identity["admin"], "role": "owner" if identity["admin"] else identity.get("role"),
                        "can_manage_agents": can_manage_agents(identity),
+                       "can_manage_workspace": can_manage_workspace(identity),
                        "can_manage_users": identity["admin"], "can_read_message_content": identity["admin"] or identity.get("role") == "operator",
-                       "can_delete_messages": identity["admin"]}
-        return {"stats": {**store.stats(now - online_seconds), "online_window_seconds": online_seconds},
+                       "can_delete_messages": identity["admin"] or (identity.get("workspace_scoped") and identity.get("role") == "workspace_owner")}
+        permissions["can_read_message_content"] = permissions["can_read_message_content"] or identity.get("role") == "workspace_owner"
+        return {"stats": {**store.workspace_stats(workspace_id, now - online_seconds), "online_window_seconds": online_seconds},
                 "agents": agents, "messages": messages, "permissions": permissions, "updated_at": now}
 
     @app.get("/dashboard/users")
@@ -1108,18 +1217,18 @@ def create_app():
     @app.get("/dashboard/accounts")
     def dashboard_accounts(identity: Identity):
         require_admin(identity)
-        return {"accounts": store.all_account_users()}
+        return {"accounts": store.all_account_users(identity_workspace(identity))}
 
     @app.post("/dashboard/accounts", status_code=201)
     def create_dashboard_account(body: TeamAccountCreate, identity: Identity):
         require_admin(identity)
-        active = [row for row in store.all_account_users() if row.get("disabled_at") is None]
+        active = [row for row in store.all_account_users(identity_workspace(identity)) if row.get("disabled_at") is None]
         if len(active) >= 100:
             raise HTTPException(409, "Account limit reached; disable an unused account first")
         username = body.username.strip()
         row = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
                "password_hash": request_password_hash(body.password), "role": body.role, "created_at": time.time(),
-               "last_login_at": None, "disabled_at": None}
+               "last_login_at": None, "disabled_at": None, "workspace_id": identity_workspace(identity)}
         store.create_team_account(row)
         store.record_control_event(identity.get("id", "owner"), "account_created", row["id"])
         return {key: row[key] for key in ("id", "username", "role", "created_at", "last_login_at", "disabled_at")}
@@ -1127,10 +1236,72 @@ def create_app():
     @app.delete("/dashboard/accounts/{user_id}")
     def disable_dashboard_account(user_id: str, identity: Identity):
         require_admin(identity)
+        account = store.account_by_id(user_id)
+        if not account or account.get("workspace_id", DEFAULT_WORKSPACE_ID) != identity_workspace(identity):
+            raise HTTPException(404, "Non-owner account not found in your workspace")
         if not store.disable_team_account(user_id, time.time()):
             raise HTTPException(404, "Non-owner account not found or already disabled")
         store.record_control_event(identity.get("id", "owner"), "account_disabled", user_id)
         return {"id": user_id, "disabled": True}
+
+    @app.get("/dashboard/workspace")
+    def dashboard_workspace(identity: Identity):
+        require_workspace_manager(identity)
+        workspace_id = identity_workspace(identity)
+        connections = []
+        for row in store.workspace_connections(workspace_id):
+            peer_id = row["workspace_b"] if row["workspace_a"] == workspace_id else row["workspace_a"]
+            peer = store.workspace_info(peer_id) or {}
+            connections.append({"workspace_id": peer_id, "workspace_name": peer.get("name", peer_id),
+                                "status": row["status"], "created_at": row["created_at"]})
+        own = store.workspace_info(workspace_id) or {}
+        return {"workspace_id": workspace_id, "workspace_name": own.get("name", workspace_id), "connections": connections,
+                "invitations": store.workspace_invites(workspace_id)}
+
+    @app.post("/dashboard/workspace-invitations", status_code=201)
+    def create_workspace_invitation(body: WorkspaceInviteCreate, identity: Identity):
+        require_workspace_manager(identity)
+        now = time.time()
+        code = "amw_" + secrets.token_urlsafe(32)
+        workspace_id = identity_workspace(identity)
+        active_invites = [row for row in store.workspace_invites(workspace_id)
+                          if row.get("used_at") is None and row.get("revoked_at") is None and row.get("expires_at", 0) > now]
+        if len(active_invites) >= 20:
+            raise HTTPException(409, "Workspace has 20 active invitations; revoke or wait for one to expire")
+        row = {"id": str(uuid4()), "code_hash": hashlib.sha256(code.encode()).hexdigest(),
+               "workspace_id": workspace_id, "created_by": identity.get("id", "owner"),
+               "created_at": now, "expires_at": now + body.expires_in_hours * 3600}
+        store.create_workspace_invite(row)
+        store.record_control_event(identity.get("id", "owner"), "workspace_invitation_created", row["id"])
+        return JSONResponse({"invitation": {key: row[key] for key in
+                             ("id", "workspace_id", "created_at", "expires_at")},
+                             "code": code, "url": "/join-workspace#invite=" + code,
+                             "warning": "One-time code. The recipient creates their own account and workspace."},
+                            status_code=201, headers={"Cache-Control": "no-store"})
+
+    @app.delete("/dashboard/workspace-invitations/{invite_id}")
+    def revoke_workspace_invitation(invite_id: str, identity: Identity):
+        require_workspace_manager(identity)
+        if not store.revoke_workspace_invite(identity_workspace(identity), invite_id, time.time()):
+            raise HTTPException(404, "Active invitation not found")
+        store.record_control_event(identity.get("id", "owner"), "workspace_invitation_revoked", invite_id)
+        return {"id": invite_id, "revoked": True}
+
+    @app.delete("/dashboard/workspace-connections/{peer_workspace_id}")
+    def disconnect_workspace(peer_workspace_id: str, identity: Identity):
+        require_workspace_manager(identity)
+        if not store.disconnect_workspaces(identity_workspace(identity), peer_workspace_id, time.time()):
+            raise HTTPException(404, "Workspace connection not found")
+        store.record_control_event(identity.get("id", "owner"), "workspace_disconnected", peer_workspace_id)
+        return {"workspace_id": peer_workspace_id, "disconnected": True}
+
+    @app.post("/dashboard/workspace-connections", status_code=201)
+    def accept_workspace_connection(body: WorkspaceConnectionAccept, identity: Identity):
+        require_workspace_manager(identity)
+        result = store.accept_existing_workspace_invite(
+            hashlib.sha256(body.invite_code.encode()).hexdigest(), identity_workspace(identity), time.time())
+        store.record_control_event(identity.get("id", "workspace-owner"), "workspace_connected", result["workspace_id"])
+        return result | {"workspace_name": (store.workspace_info(result["workspace_id"]) or {}).get("name", result["workspace_id"])}
 
     @app.get("/dashboard/audit")
     def dashboard_audit(identity: Identity, limit: int = Query(100, ge=1, le=200)):
@@ -1243,13 +1414,18 @@ def create_app():
     @app.get("/capabilities")
     def capabilities():
         return {"version": APP_VERSION, "profiles": True, "private_instance_inboxes": True,
+                "workspaces": {"enabled": True, "one_time_invites": True,
+                               "directory": "own workspace and accepted connections",
+                               "message_access": "only between agents in the same or connected workspaces",
+                               "disconnect_revokes_new_cross_workspace_messages": True},
                 "local_open_registration": {"enabled": local_first_run, "requires_user_account": False,
                                             "requires_join_key": False,
                                             "scope": "loopback client and local host only"},
                 "bound_replies": True, "transactional_final_reply": True, "idempotent_delivery": True,
                 "control_roles": ["owner", "operator", "observer"], "local_file_bank": True,
                 "peer_discovery": {"enabled": True, "agent_card_description_chars": 500,
-                                   "capabilities_per_card": 20, "directory_scope": "authenticated agents on this server"},
+                                   "capabilities_per_card": 20,
+                                   "directory_scope": "same workspace and explicitly connected workspaces"},
                 "inbox_wait": {"enabled": True, "max_timeout_seconds": 25, "slots_per_process": 12,
                                "scope": "new unread messages for the authenticated instance only",
                                "mode": "opt-in; an open request can keep hosted compute active"},
@@ -1263,18 +1439,23 @@ def create_app():
     def register(body: AgentRegistration, identity: Identity):
         if not can_manage_agents(identity):
             raise HTTPException(403, "Agent registration requires an owner or operator key")
-        result = create_registration(body, local_instance_seed if local_first_run else hub_key)
+        workspace_id = identity_workspace(identity)
+        registration_seed = local_instance_seed if local_first_run else hub_key
+        if workspace_id != DEFAULT_WORKSPACE_ID:
+            registration_seed = hmac.new(hub_key.encode(), workspace_id.encode(), hashlib.sha256).hexdigest()
+        result = create_registration(body, registration_seed, workspace_id)
         if identity.get("control_user"):
             store.record_control_event(identity["id"], "agent_registered", result["agent"]["id"])
         return JSONResponse(result, status_code=201, headers={"Cache-Control": "no-store"})
 
     @app.get("/stats")
     def stats(identity: Identity):
-        return {**store.stats(time.time() - online_seconds), "online_window_seconds": online_seconds}
+        return {**store.workspace_stats(identity_workspace(identity), time.time() - online_seconds),
+                "online_window_seconds": online_seconds}
 
     @app.get("/profiles")
     def list_profiles(identity: Identity):
-        return profiles_directory()
+        return profiles_directory(visible_workspace_ids(identity))
 
     @app.post("/profiles", status_code=201)
     def create_profile(body: AgentRegistration, identity: Identity):
@@ -1306,7 +1487,7 @@ def create_app():
 
     @app.get("/profiles/{profile_id}/instances")
     def get_instances(profile_id: str, identity: Identity):
-        return profile_instances(profile_id)
+        return profile_instances(profile_id, visible_workspace_ids(identity))
 
     @app.delete("/profiles/{profile_id}")
     def delete_profile(profile_id: str, credentials: Credential):
@@ -1328,7 +1509,8 @@ def create_app():
         row = dict(id=identifier, name=body.instance_name, kind=profile["kind"],
                    project=body.project or profile["project"], created_at=now, last_seen=now,
                    description=body.description, capabilities=body.capabilities,
-                   token_hash=hashlib.sha256(token.encode()).hexdigest())
+                   token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                   workspace_id=profile.get("workspace_id") or DEFAULT_WORKSPACE_ID)
         created = store.enroll_profile_instance(profile_id, row)
         agent = public_agent(store.get_agent(identifier), time.time())
         return JSONResponse({"agent": agent, "token": token, "resumed": not created,
@@ -1352,13 +1534,13 @@ def create_app():
         query = {"q": q, "capability": capability, "limit": limit}
         if online is not None:
             query["online"] = str(online).lower()
-        return discover_agents(query)
+        return discover_agents(query, visible_workspace_ids(identity))
 
     @app.get("/agents")
     def list_agents(identity: Identity, online: bool | None = None,
                     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0)):
         now = time.time()
-        agents = directory_agents(now)
+        agents = directory_agents(now, visible_workspace_ids(identity))
         if online is not None:
             agents = [row for row in agents if row["online"] == online]
         return {"agents": agents[offset:offset + limit], "total": len(agents), "limit": limit, "offset": offset}
@@ -1408,8 +1590,7 @@ def create_app():
     def rename_dashboard_agent(identifier: Annotated[str, Path(min_length=1, max_length=100,
                                                                 pattern=r"^[A-Za-z0-9_-]+$")],
                                body: AgentRename, identity: Identity):
-        if not can_manage_agents(identity):
-            raise HTTPException(403, "Agent renaming requires an owner or operator account")
+        require_manage_own_agent(identity, identifier)
         row = store.update_agent_card(identifier, {"name": body.name})
         if identity.get("control_user"):
             store.record_control_event(identity["id"], "agent_renamed", identifier)
@@ -1427,8 +1608,7 @@ def create_app():
     def unregister_agent(identifier: Annotated[str, Path(min_length=1, max_length=100,
                                                           pattern=r"^[A-Za-z0-9_-]+$")],
                           identity: Identity):
-        if not can_manage_agents(identity):
-            raise HTTPException(403, "Only an owner or operator can remove another agent")
+        require_manage_own_agent(identity, identifier)
         if not store.unregister(identifier):
             raise HTTPException(404, "Agent not found")
         if identity.get("control_user"):
@@ -1732,6 +1912,12 @@ def create_app():
 
     @app.delete("/messages/{message_id}")
     def delete_message(message_id: Annotated[int, Path(gt=0, le=MAX_MESSAGE_ID)], identity: Identity):
+        if identity.get("workspace_scoped") and identity.get("role") == "workspace_owner":
+            if not store.message_in_workspace(message_id, identity_workspace(identity)):
+                raise HTTPException(404, "Message not found in your workspace")
+            return store.delete_message(identity.get("id", ""), message_id, admin=True)
+        if identity.get("admin") and not store.message_in_workspace(message_id, identity_workspace(identity)):
+            raise HTTPException(404, "Message not found in your workspace")
         return store.delete_message(identity.get("id", ""), message_id, admin=identity["admin"])
 
     @app.post("/broadcast", status_code=201)
