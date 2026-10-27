@@ -67,8 +67,10 @@ if ($LASTEXITCODE -ne 0) { throw 'No se pudo obtener la URL.' }
 $serviceDescription = $serviceJson | ConvertFrom-Json
 $serviceUrl = $serviceDescription.status.url
 $mcpHosts = @(([Uri]$serviceUrl).Host)
-if ($serviceDescription.metadata.annotations.'run.googleapis.com/urls') {
-    $mcpHosts += @($serviceDescription.metadata.annotations.'run.googleapis.com/urls' | ConvertFrom-Json | ForEach-Object { ([Uri]$_).Host })
+$runUrls = $serviceDescription.metadata.annotations.'run.googleapis.com/urls'
+if ($runUrls) {
+    if ($runUrls -is [string]) { $runUrls = @($runUrls | ConvertFrom-Json) }
+    foreach ($runUrl in @($runUrls)) { $mcpHosts += ([Uri]([string]$runUrl)).Host }
 }
 $previousHosts = $serviceDescription.spec.template.spec.containers[0].env | Where-Object name -eq 'MAILBOX_MCP_ALLOWED_HOSTS'
 if ($previousHosts.value) { $mcpHosts += $previousHosts.value -split ',' }

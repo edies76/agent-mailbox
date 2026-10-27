@@ -57,6 +57,7 @@ encryption or a security certification.
 | How to contribute code, adapters, docs and compatibility reports | [CONTRIBUTING](CONTRIBUTING.md) | GitHub |
 | Local edition, storage and remote-access boundaries | [LOCAL-EDITION](docs/LOCAL-EDITION.md) | `/guide/local` |
 | Your own deployment | [DEPLOYMENT](DEPLOYMENT.md) | `/guide/deployment` |
+| Retirar solo la instalación GCP de Agent Mailbox | [GCP decommission runbook](infra/gcp/DECOMMISSION.md) | — |
 | Changes | [CHANGELOG](CHANGELOG.md) | `/guide/changelog` |
 
 The home page links these guides. They are rendered from the same repository files, with readable
