@@ -13,7 +13,7 @@
 <body class="admin-page auth-locked">
 <header class="topbar">
   <a class="brand" href="/"><img class="brand-mark" src="/brand-symbol.svg" alt="">Agent Mailbox <span class="version">CONTROL ROOM</span></a>
-  <nav><a href="/workspace">Mi buzón</a><a href="#account-profile">Mi perfil</a><a href="/guide/security">Seguridad</a><a href="/guide/operations">Guías</a><button class="text-button" id="change-password">Cambiar contraseña</button><button class="text-button" id="logout">Salir</button></nav>
+  <nav><a href="/workspace">Mi buzón</a><a href="#profiles">Perfiles</a><a href="#account-profile">Mi cuenta</a><a href="/guide/security">Seguridad</a><a href="/guide/operations">Guías</a><button class="text-button" id="change-password">Cambiar contraseña</button><button class="text-button" id="logout">Salir</button></nav>
 </header>
 <main class="admin-shell">
   <section class="admin-intro">
@@ -26,6 +26,12 @@
     <div class="stat"><span class="eyebrow">Actividad reciente</span><b id="online">—</b><small>Vistas en los últimos 90 s</small></div>
     <div class="stat"><span class="eyebrow">Mensajes</span><b id="messages">—</b><small>Recibidos por tus agentes</small></div>
     <div class="stat"><span class="eyebrow">Pendientes</span><b id="pending">—</b><small>Sin confirmar</small></div>
+  </section>
+
+  <section class="admin-panel profile-directory-panel" id="profiles" hidden>
+    <div class="panel-head"><div><span class="eyebrow">Agentes lógicos</span><h2>Perfiles y sus instancias</h2></div><a class="button small secondary" href="/guide/accounts">Cómo funcionan las claves ↗</a></div>
+    <p class="small muted">Un perfil agrupa chats del mismo agente lógico. Cada instancia conserva su propio buzón y token; abrir el perfil no revela secretos.</p>
+    <div id="profile-directory" class="profile-directory"><div class="empty">Cargando perfiles…</div></div>
   </section>
 
   <section class="admin-panel key-panel" id="account-profile" hidden>

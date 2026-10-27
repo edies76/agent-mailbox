@@ -53,6 +53,7 @@
       const session=await api('/auth/session');currentUser={...session.user,auth_method:session.auth_method};
       const data=await api('/dashboard/data'); view=data; render(data); byId('login').hidden=true;document.body.classList.remove('auth-locked');byId('connection').textContent=`Conectado · ${currentUser.username}`;byId('change-password').hidden=currentUser.auth_method!=='password';
       loadAccountProfile();
+      loadProfileDirectory();
       if(data.permissions.can_manage_users){loadAccounts();loadLegacyControlUsers();} else byId('key-panel').hidden=true;
       if(data.permissions.can_manage_workspace)loadWorkspace();else byId('workspace-panel').hidden=true;
     } catch(error) {
@@ -82,6 +83,11 @@
       else meta.textContent=data.registration.enabled?'Todavía no has creado una clave.':'Tu rol puede consultar el perfil, pero no registrar agentes.';
     }catch(error){panel.hidden=true;}
   }
+  async function loadProfileDirectory(){
+    const panel=byId('profiles'),list=byId('profile-directory');
+    try{const data=await api('/dashboard/profiles');panel.hidden=false;list.replaceChildren();if(!data.profiles.length){list.append(el('div','empty','Todavía no hay perfiles lógicos. Los agentes independientes seguirán apareciendo en el directorio de instancias.'));return;}for(const profile of data.profiles){const card=el('a','profile-directory-card');card.href=profile.route;const head=el('div','profile-directory-head');head.append(el('span','eyebrow',profile.kind),el('span','pill',`${profile.instances_count} instancia${profile.instances_count===1?'':'s'}`));card.append(head,el('h3','',profile.name),el('p','',profile.description||profile.project||'Sin descripción pública.'),el('small','',`${profile.online_count} en línea · abrir perfil ↗`));list.append(card);}}
+    catch(error){panel.hidden=true;}
+  }
   function renderAgents(agents,permissions) {
     const list=byId('agent-list');list.replaceChildren();
     const q=byId('agent-filter').value.trim().toLocaleLowerCase();const presence=byId('agent-state').value;
@@ -91,6 +97,7 @@
       const row=el('article','agent');const info=el('div','agent-info');
       info.append(el('div','agent-name',agent.instance_name||agent.name),el('div','agent-kind',`${agent.kind}${agent.project?' · '+agent.project:''}`));
       const card=[agent.description,(agent.capabilities||[]).join(' · ')].filter(Boolean).join(' — ')||'Ficha sin completar';info.append(el('div','agent-card-copy',card));
+      if(agent.profile_id){const profileLink=el('a','agent-profile-link','Abrir perfil y sus instancias ↗');profileLink.href=`/dashboard/profile/${encodeURIComponent(agent.profile_id)}`;info.append(profileLink);}
       const badge=el('span',`badge${agent.online?' on':''}`,agent.online?'EN LÍNEA':'INACTIVA');const actions=el('div','agent-actions');actions.append(badge);
       if(permissions.can_manage_agents&&agent.can_manage!==false){const rename=el('button','button small secondary','Renombrar');rename.type='button';rename.onclick=()=>openRenameAgent(agent);actions.append(rename);if(permissions.can_manage_workspace){const rotate=el('button','button small secondary','Renovar token');rotate.type='button';rotate.onclick=()=>rotateAgentToken(agent);actions.append(rotate);}const remove=el('button','remove-agent','Dar de baja');remove.type='button';remove.setAttribute('aria-label',`Dar de baja a ${agent.name}`);remove.onclick=()=>unregisterAgent(agent);actions.append(remove);}
       row.append(info,actions);list.append(row);

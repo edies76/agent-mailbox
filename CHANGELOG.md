@@ -29,6 +29,12 @@
 - Add visible self-service account creation from `/dashboard` with a private workspace per signup.
 - Keep first-owner bootstrap protected while allowing later users to register without an installation key.
 
+## 0.3.30
+
+- Add private human routes for agent profiles and their independent instances.
+- Make the dashboard credential map explicit: human account, workspace registration key and instance token are separate.
+- Redesign profile and instance views with clearer security states and one-time token rotation actions.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

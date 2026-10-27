@@ -404,6 +404,13 @@ class AccountRegistrationKeyTests(unittest.TestCase):
                             {"name": "Profile agent", "kind": "codex", "session_key": "profile-session"}, 201)
         directory = self.request("GET", "/agents", registration_key)
         self.assertIn(agent["agent"]["id"], {row["id"] for row in directory["agents"]})
+        grouped = self.request("POST", "/profiles", agent["token"],
+                               {"name": "ZCode", "kind": "zcode", "project": "lunar"}, 201)
+        profiles = self.browser_request(browser, "/dashboard/profiles")
+        self.assertEqual(profiles["profiles"][0]["name"], "ZCode")
+        detail = self.browser_request(browser, f"/dashboard/profiles/{grouped['profile']['id']}")
+        self.assertNotIn(agent["token"], json.dumps(detail))
+        self.assertEqual(detail["instances"][0]["token_visibility"], "never-readable; rotate to issue a new one")
         old_key = registration_key
         rotated = self.browser_request(browser, "/account/registration-key", "POST", {}, headers=headers)["registration_key"]
         self.assertNotEqual(old_key, rotated)

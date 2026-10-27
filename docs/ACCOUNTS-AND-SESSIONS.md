@@ -60,6 +60,12 @@ Cloud/Firestore conserva la clave del servidor. El token devuelto autentica a es
 
 El JSON es un archivo secreto del agente. La URL es compartible entre clientes de tu propio servidor; el token no lo es. No uses la clave propietaria como “token por defecto”: crear una instancia genera su propia credencial mínima de buzón.
 
+En **Control Room → Perfiles y sus instancias**, cada perfil lógico tiene una ruta privada como
+`/dashboard/profile/PROFILE_ID`. Ahí se agrupan los chats de ZCode, Codex u otro agente y se ve su
+ID, proyecto, presencia y época de credencial. La ruta no lista tokens actuales ni claves de
+enrollment: para emitir un acceso nuevo usa **Renovar token** en la instancia concreta. El resultado
+incluye token y secreto de recuperación una sola vez.
+
 Usa una identidad distinta por chat que deba tener un buzón privado. El token permite a ese agente leer y escribir en su buzón; guárdalo en el cliente MCP o en un archivo privado. No pegues el token en una captura, una URL, el repositorio ni el prompt visible del agente. Si un cliente necesita una clave adicional, entra en su buzón y crea una clave API con nombre; cada instancia puede mantener hasta 25 activas y revocarlas por separado.
 
 ## Qué secreto va en cada lugar

@@ -1296,6 +1296,19 @@ def create_app():
         return FileResponse(FilePath(__file__).parent / "dashboard.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
+    @app.get("/dashboard/profile/{profile_id}", include_in_schema=False)
+    def dashboard_profile_page(profile_id: str):
+        return FileResponse(FilePath(__file__).parent / "profile.html", headers={
+            "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+        })
+
+    @app.get("/profile.js", include_in_schema=False)
+    def dashboard_profile_script():
+        return FileResponse(FilePath(__file__).parent / "profile.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
     @app.get("/dashboard/data")
     def dashboard_data(identity: Identity):
         if not identity["admin"] and not identity.get("control_user"):
@@ -1325,6 +1338,55 @@ def create_app():
         permissions["can_read_message_content"] = permissions["can_read_message_content"] or identity.get("role") == "workspace_owner"
         return {"stats": {**store.workspace_stats(workspace_id, now - online_seconds, all_agents), "online_window_seconds": online_seconds},
                 "agents": agents, "messages": messages, "permissions": permissions, "updated_at": now}
+
+    def require_dashboard_identity(identity):
+        if identity.get("registration_key"):
+            raise HTTPException(403, "Registration keys are for agent enrollment only")
+        if not identity["admin"] and not identity.get("control_user"):
+            raise HTTPException(403, "The dashboard requires an account session")
+
+    def dashboard_profile_access(profile_id, identity):
+        require_dashboard_identity(identity)
+        workspace_id = identity_workspace(identity)
+        profile = store.profile_get(profile_id)
+        if not profile or (profile.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id:
+            raise HTTPException(404, "Profile not found in your workspace")
+        return profile, workspace_id
+
+    @app.get("/dashboard/profiles")
+    def dashboard_profiles(identity: Identity):
+        require_dashboard_identity(identity)
+        workspace_id = identity_workspace(identity)
+        agents = [row for row in store.all_agents() if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id]
+        profile_ids = {row.get("profile_id") for row in agents if row.get("profile_id")}
+        now = time.time()
+        result = []
+        for profile in store.profiles_all():
+            if profile["id"] not in profile_ids or (profile.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id:
+                continue
+            members = [row for row in agents if row.get("profile_id") == profile["id"]]
+            result.append({**public_profile(profile), "instances_count": len(members),
+                           "online_count": sum(row.get("last_seen", 0) >= now - online_seconds for row in members),
+                           "route": f"/dashboard/profile/{profile['id']}"})
+        return {"profiles": sorted(result, key=lambda row: row.get("name", "").casefold())}
+
+    @app.get("/dashboard/profiles/{profile_id}")
+    def dashboard_profile_detail(profile_id: str, identity: Identity):
+        profile, workspace_id = dashboard_profile_access(profile_id, identity)
+        now = time.time()
+        instances = []
+        for row in store.all_agents():
+            if row.get("profile_id") != profile_id or (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id:
+                continue
+            instances.append({**public_agent(row, now, profile),
+                              "credential_epoch": row.get("credential_epoch", 0),
+                              "has_recovery_secret": bool(row.get("recovery_hash")),
+                              "rotated_at": row.get("credential_rotated_at"),
+                              "token_visibility": "never-readable; rotate to issue a new one"})
+        return {"profile": public_profile(profile), "instances": instances,
+                "security": {"raw_tokens": False, "enrollment_token": False,
+                              "instance_tokens": "Only returned at registration or explicit rotation",
+                              "route": f"/dashboard/profile/{profile_id}"}}
 
     @app.get("/dashboard/users")
     def dashboard_users(identity: Identity):
