@@ -367,6 +367,26 @@ class AccountSessionTests(unittest.TestCase):
         self.assertEqual(recovered["user"]["role"], "owner")
         self.request("GET", "/dashboard/data", self.admin)
 
+class AccountRegistrationKeyTests(unittest.TestCase):
+    setUpClass = classmethod(http_tests.MailboxTests.setUpClass.__func__)
+    tearDownClass = classmethod(http_tests.MailboxTests.tearDownClass.__func__)
+    start_server = classmethod(http_tests.MailboxTests.start_server.__func__)
+    stop_server = classmethod(http_tests.MailboxTests.stop_server.__func__)
+    setUp = http_tests.MailboxTests.setUp
+    request = http_tests.MailboxTests.request
+
+    def browser_request(self, opener, path, method="GET", body=None, headers=None, expected=200):
+        request = Request(self.url + path, data=json.dumps(body).encode() if body is not None else None,
+                          headers={"Content-Type": "application/json", **(headers or {})}, method=method)
+        try:
+            with opener.open(request, timeout=20) as response:
+                status, data = response.status, json.load(response)
+        except HTTPError as error:
+            with error:
+                status, data = error.code, json.load(error)
+        self.assertEqual(status, expected, data)
+        return data
+
     def test_account_profile_registration_key_is_scoped_and_rotatable(self):
         cookies = http.cookiejar.CookieJar()
         browser = build_opener(HTTPCookieProcessor(cookies))

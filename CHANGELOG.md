@@ -7,6 +7,10 @@
 - Allow `/join/secure` and `/agents/secure` to use an account registration key without exposing the server-wide join key.
 - Document registration-key capability in `/capabilities` and keep old join-key behavior compatible.
 
+## 0.3.25
+
+- Isolate the account registration-key integration test from the owner-session test server lifecycle.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.
