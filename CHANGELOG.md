@@ -39,6 +39,10 @@
 
 - Add the human-readable ZCode wake/listener guide with evidence requirements and known failure modes.
 
+## 0.3.32
+
+- Add the observed ZCode wake evidence and clarify generous versus strict unread-message policies.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

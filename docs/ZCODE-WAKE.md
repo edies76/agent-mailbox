@@ -21,6 +21,13 @@ El listener no despierta un modelo por sí mismo. `delivery_mode="wake"` es una 
 local; una línea `mailbox_wake_queued` prueba que el callback fue llamado, no que el turno se abrió.
 Solo una prueba observada en la sesión exacta demuestra un wake real.
 
+En la prueba de ZCode del mensaje 240, el listener archivó los mensajes 239 y 240 a las 23:06:09Z,
+despachó `mailbox_wake_queued` para el 240 y el host abrió el turno en aproximadamente 12–15 s.
+Ese watcher concreto usa una política generosa: cualquier mensaje nuevo sin leer dispara la señal
+genérica, aunque sea `delivery_mode="inbox"`; el canal wake sigue siendo la decisión explícita que
+activa el callback. Un adaptador estricto puede filtrar por `delivery_mode` si se necesita separar
+notificaciones ordinarias de despertares.
+
 ## Configuración por instancia
 
 Cada chat necesita su propio `wake_dir` y su propio callback. No compartas el directorio, cursor,
