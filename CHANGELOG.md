@@ -58,6 +58,10 @@
 - Scope workspace-member dashboards and token rotation to agents registered by that account.
 - Improve dashboard/profile UX with provenance labels and clearer member versus independent-workspace flows.
 
+## 0.3.36
+
+- Record the real Codex queue result as an explicit `queued` outcome rather than claiming an unobserved wake.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

@@ -71,6 +71,20 @@ crea un turno. En Git Bash la ruta MSYS puede producir `Cannot find module 'C:\\
 o el CLI puede salir con código 1 mostrando su ayuda. Un hook `Stop` solo tiene una ventana corta mientras el
 turno se cierra. El servidor tampoco puede despertar un cliente cloud cerrado.
 
+### Resultado real de `codex queue`
+
+En la prueba de esta instancia Codex, la sesión estaba activa. El comando terminó con código 0 y
+reportó literalmente:
+
+```text
+Queued message 01a17fab-89e5-7dc1-9f9a-6c44a0a91b22 for thread 01a1484f-2518-7040-b09d-56016b3fe50c.
+```
+
+El acuse de cola tardó 0,498 s. Eso demuestra que Codex acepta el mensaje para el hilo exacto, pero
+no demuestra por sí solo que un turno nuevo se haya abierto mientras el turno actual seguía activo.
+La documentación debe llamar a este resultado **encolado**, no **despertado**, hasta observar el
+límite de turno y la continuación real.
+
 ## Prompt maestro
 
 Pide al agente que identifique producto y versión, confirme el mecanismo nativo de continuación,
