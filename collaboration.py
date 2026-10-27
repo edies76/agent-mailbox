@@ -68,7 +68,10 @@ class CollaborationStore:
                 "agents": {"profile_id": "TEXT", "instance_name": "TEXT NOT NULL DEFAULT ''",
                            "description": "TEXT NOT NULL DEFAULT ''",
                            "capabilities_json": "TEXT NOT NULL DEFAULT '[]'",
-                           "workspace_id": f"TEXT NOT NULL DEFAULT '{DEFAULT_WORKSPACE_ID}'"},
+                           "workspace_id": f"TEXT NOT NULL DEFAULT '{DEFAULT_WORKSPACE_ID}'",
+                           "credential_epoch": "INTEGER NOT NULL DEFAULT 0",
+                           "credential_rotated_at": "REAL", "recovery_hash": "TEXT", "last_rotation_hash": "TEXT"},
+                "agent_api_keys": {"credential_epoch": "INTEGER NOT NULL DEFAULT 0"},
                 "messages": {"subject": "TEXT NOT NULL DEFAULT ''", "thread_id": "INTEGER",
                              "message_type": "TEXT NOT NULL DEFAULT 'request'",
                              "delivery_mode": "TEXT NOT NULL DEFAULT 'inbox'",
@@ -194,8 +197,8 @@ class CollaborationStore:
         snapshot = self.client.collection("workspaces").document(workspace_id).get(timeout=15)
         return snapshot.to_dict() if snapshot.exists else None
 
-    def workspace_stats(self, workspace_id, cutoff):
-        agents = [row for row in self.all_agents()
+    def workspace_stats(self, workspace_id, cutoff, all_agents=None):
+        agents = [row for row in (self.all_agents() if all_agents is None else all_agents)
                   if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id]
         counts = [self.inbox_count(row["id"]) for row in agents]
         return {"agents_total": len(agents),
@@ -353,14 +356,17 @@ class CollaborationStore:
                                     "AND used_at IS NULL AND revoked_at IS NULL", (now,invite_id,workspace_id))
                 return bool(result.rowcount)
         ref = self.client.collection("workspace_invites").document(invite_id)
-        snap = ref.get(timeout=15)
-        if not snap.exists:
-            return False
-        row = snap.to_dict()
-        if row.get("workspace_id") != workspace_id or row.get("used_at") is not None or row.get("revoked_at") is not None:
-            return False
-        ref.update({"revoked_at":now}, timeout=15)
-        return True
+        @self.firestore.transactional
+        def revoke(transaction):
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return False
+            row = snap.to_dict()
+            if row.get("workspace_id") != workspace_id or row.get("used_at") is not None or row.get("revoked_at") is not None:
+                return False
+            transaction.update(ref, {"revoked_at": now})
+            return True
+        return revoke(self.client.transaction(max_attempts=5))
 
     def workspace_connections(self, workspace_id):
         if hasattr(self, "database"):
@@ -383,14 +389,17 @@ class CollaborationStore:
                                     (now,key,workspace_id,workspace_id))
                 return bool(result.rowcount)
         ref = self.client.collection("workspace_connections").document(key)
-        snap = ref.get(timeout=15)
-        if not snap.exists:
-            return False
-        row = snap.to_dict()
-        if workspace_id not in (row.get("workspace_a"),row.get("workspace_b")) or row.get("status") != "accepted":
-            return False
-        ref.update({"status":"revoked","updated_at":now}, timeout=15)
-        return True
+        @self.firestore.transactional
+        def disconnect(transaction):
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return False
+            row = snap.to_dict()
+            if workspace_id not in (row.get("workspace_a"), row.get("workspace_b")) or row.get("status") != "accepted":
+                return False
+            transaction.update(ref, {"status": "revoked", "updated_at": now})
+            return True
+        return disconnect(self.client.transaction(max_attempts=5))
 
     def create_owner_account(self, row):
         if hasattr(self, "database"):
@@ -848,21 +857,25 @@ class CollaborationStore:
     def enroll_profile_instance(self, profile_id, row):
         row = {**row, "profile_id": profile_id, "instance_name": row["name"],
                "description": row.get("description", ""), "capabilities": row.get("capabilities", [])}
-        def verify(existing):
-            if existing and (existing.get("profile_id") != profile_id or existing["token_hash"] != row["token_hash"]):
+        def verify(existing, workspace_id):
+            if existing and (existing.get("profile_id") != profile_id or existing["token_hash"] != row["token_hash"] or
+                             (existing.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id):
                 raise HTTPException(409, "Native session identity conflict")
         if hasattr(self, "database"):
             with self.database() as db:
                 db.execute("BEGIN IMMEDIATE")
-                if not db.execute("SELECT 1 FROM profiles WHERE id = ?", (profile_id,)).fetchone():
+                profile_row = db.execute("SELECT data_json FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+                if not profile_row:
                     raise HTTPException(404, "Profile no longer exists")
+                workspace_id = json.loads(profile_row["data_json"]).get("workspace_id") or DEFAULT_WORKSPACE_ID
+                row["workspace_id"] = workspace_id
                 old = db.execute("SELECT * FROM agents WHERE id = ?", (row["id"],)).fetchone()
-                verify(dict(old) if old else None)
+                verify(dict(old) if old else None, workspace_id)
                 if old:
                     return False
-                columns = ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "profile_id", "instance_name", "description", "capabilities_json", "workspace_id")
+                columns = ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "profile_id", "instance_name", "description", "capabilities_json", "workspace_id", "recovery_hash")
                 db.execute(f"INSERT INTO agents ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
-                           tuple(json.dumps(row["capabilities"], ensure_ascii=False) if key == "capabilities_json" else row[key]
+                           tuple(json.dumps(row["capabilities"], ensure_ascii=False) if key == "capabilities_json" else row.get(key)
                                  for key in columns))
             return True
         @self.firestore.transactional
@@ -873,10 +886,11 @@ class CollaborationStore:
             old = instance_ref.get(transaction=transaction).to_dict()
             if not profile:
                 raise HTTPException(404, "Profile no longer exists")
-            verify(old)
+            workspace_id = profile.get("workspace_id") or DEFAULT_WORKSPACE_ID
+            verify(old, workspace_id)
             if old:
                 return False
-            transaction.create(instance_ref, row)
+            transaction.create(instance_ref, {**row, "workspace_id": workspace_id})
             transaction.update(profile_ref, {"membership_revision": profile.get("membership_revision", 0) + 1})
             return True
         return enroll(self.client.transaction(max_attempts=5))

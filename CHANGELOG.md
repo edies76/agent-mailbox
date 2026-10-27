@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.22
+
+- Fix the workspace dashboard statistics call used by SQLite deployments and add idempotent rotation epoch handling.
+- Keep the AWS independent deployment on the same commit as Cloud Run after production verification.
+
 ## 0.3.21
 
 - Require an instance token or per-instance recovery secret before reissuing an existing session's credential; new profile tokens no longer derive from the profile enrollment key.
