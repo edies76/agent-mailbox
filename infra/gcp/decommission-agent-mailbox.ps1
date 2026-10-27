@@ -14,9 +14,9 @@ $service = 'agent-mailbox'
 $secretNames = @('agent-mailbox-admin-key', 'agent-mailbox-join-key')
 $runtimeAccount = "agent-mailbox-runtime@$CloudProject.iam.gserviceaccount.com"
 
-function Invoke-Gcloud([string[]]$Args) {
-    & gcloud @Args
-    if ($LASTEXITCODE -ne 0) { throw "gcloud failed: gcloud $($Args -join ' ')" }
+function Invoke-Gcloud([string[]]$CommandArgs) {
+    & gcloud @CommandArgs
+    if ($LASTEXITCODE -ne 0) { throw "gcloud failed: gcloud $($CommandArgs -join ' ')" }
 }
 
 Write-Host "Agent Mailbox GCP inventory: project=$CloudProject region=$Region firestore=$FirestoreDatabase"

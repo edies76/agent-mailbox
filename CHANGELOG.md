@@ -16,6 +16,10 @@
 - Add a dry-run-first GCP decommission runbook scoped to Agent Mailbox resources only.
 - Fix Cloud Run deployment host parsing when `run.googleapis.com/urls` is already a PowerShell array.
 
+## 0.3.27
+
+- Fix the GCP decommission inventory helper's PowerShell argument forwarding.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.
