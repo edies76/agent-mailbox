@@ -108,6 +108,16 @@ class CollaborationStore:
                     created_at REAL NOT NULL, last_login_at REAL, disabled_at REAL,
                     workspace_id TEXT NOT NULL DEFAULT 'workspace-default'
                 );
+                CREATE TABLE IF NOT EXISTS account_registration_keys (
+                    user_id TEXT PRIMARY KEY REFERENCES account_users(id) ON DELETE CASCADE,
+                    workspace_id TEXT NOT NULL,
+                    key_hash TEXT UNIQUE NOT NULL,
+                    key_prefix TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    rotated_at REAL,
+                    revoked_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS account_registration_key_hash_idx ON account_registration_keys(key_hash);
                 CREATE TABLE IF NOT EXISTS account_sessions (
                     id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES account_users(id) ON DELETE CASCADE,
                     token_hash TEXT UNIQUE NOT NULL, csrf_hash TEXT NOT NULL, created_at REAL NOT NULL,
@@ -498,6 +508,66 @@ class CollaborationStore:
         else:
             self.client.collection("account_sessions").document(row["id"]).create(row, timeout=15)
         return row
+
+    def account_registration_key(self, user_id):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT user_id,workspace_id,key_prefix,created_at,rotated_at,revoked_at FROM account_registration_keys WHERE user_id = ?", (user_id,)).fetchone()
+                return dict(row) if row else None
+        ref = self.client.collection("account_registration_keys").document(user_id)
+        snapshot = ref.get(timeout=15)
+        return snapshot.to_dict() if snapshot.exists else None
+
+    def create_or_rotate_account_registration_key(self, user_id, workspace_id, key_hash, key_prefix, now):
+        row = {"user_id": user_id, "workspace_id": workspace_id, "key_hash": key_hash,
+               "key_prefix": key_prefix, "created_at": now, "rotated_at": None, "revoked_at": None}
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("BEGIN IMMEDIATE")
+                old = db.execute("SELECT created_at FROM account_registration_keys WHERE user_id = ?", (user_id,)).fetchone()
+                if old:
+                    row["created_at"] = old["created_at"]
+                    row["rotated_at"] = now
+                db.execute("INSERT INTO account_registration_keys (user_id,workspace_id,key_hash,key_prefix,created_at,rotated_at,revoked_at) VALUES (?,?,?,?,?,?,NULL) "
+                           "ON CONFLICT(user_id) DO UPDATE SET workspace_id=excluded.workspace_id,key_hash=excluded.key_hash,key_prefix=excluded.key_prefix,created_at=excluded.created_at,rotated_at=excluded.rotated_at,revoked_at=NULL",
+                           tuple(row[key] for key in ("user_id","workspace_id","key_hash","key_prefix","created_at","rotated_at")))
+            return row
+        ref = self.client.collection("account_registration_keys").document(user_id)
+        snapshot = ref.get(timeout=15)
+        if snapshot.exists:
+            row["created_at"] = snapshot.to_dict().get("created_at", now)
+            row["rotated_at"] = now
+        ref.set(row, timeout=15)
+        return row
+
+    def revoke_account_registration_key(self, user_id, now):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                cursor = db.execute("UPDATE account_registration_keys SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", (now, user_id))
+                return bool(cursor.rowcount)
+        ref = self.client.collection("account_registration_keys").document(user_id)
+        snapshot = ref.get(timeout=15)
+        if not snapshot.exists or snapshot.to_dict().get("revoked_at") is not None:
+            return False
+        ref.update({"revoked_at": now}, timeout=15)
+        return True
+
+    def account_by_registration_key_hash(self, key_hash):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                row = db.execute("SELECT k.user_id,k.workspace_id,k.key_hash,k.revoked_at,u.username,u.role,u.disabled_at FROM account_registration_keys k JOIN account_users u ON u.id=k.user_id WHERE k.key_hash = ? AND k.revoked_at IS NULL AND u.disabled_at IS NULL", (key_hash,)).fetchone()
+                return dict(row) if row else None
+        query = self.where(self.client.collection("account_registration_keys"), "key_hash", "==", key_hash).limit(1)
+        docs = list(query.stream(timeout=15))
+        if not docs:
+            return None
+        row = docs[0].to_dict()
+        if row.get("revoked_at") is not None:
+            return None
+        account = self.account_by_id(row.get("user_id"))
+        if not account:
+            return None
+        return row | {"username": account["username"], "role": account["role"], "disabled_at": account.get("disabled_at")}
 
     def account_session_by_hash(self, token_hash, now):
         if hasattr(self, "database"):

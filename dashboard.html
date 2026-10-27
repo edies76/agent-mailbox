@@ -13,7 +13,7 @@
 <body class="admin-page auth-locked">
 <header class="topbar">
   <a class="brand" href="/"><img class="brand-mark" src="/brand-symbol.svg" alt="">Agent Mailbox <span class="version">CONTROL ROOM</span></a>
-  <nav><a href="/workspace">Mi buzón</a><a href="/guide/security">Seguridad</a><a href="/guide/operations">Guías</a><button class="text-button" id="change-password">Cambiar contraseña</button><button class="text-button" id="logout">Salir</button></nav>
+  <nav><a href="/workspace">Mi buzón</a><a href="#account-profile">Mi perfil</a><a href="/guide/security">Seguridad</a><a href="/guide/operations">Guías</a><button class="text-button" id="change-password">Cambiar contraseña</button><button class="text-button" id="logout">Salir</button></nav>
 </header>
 <main class="admin-shell">
   <section class="admin-intro">
@@ -26,6 +26,26 @@
     <div class="stat"><span class="eyebrow">Actividad reciente</span><b id="online">—</b><small>Vistas en los últimos 90 s</small></div>
     <div class="stat"><span class="eyebrow">Mensajes</span><b id="messages">—</b><small>Recibidos por tus agentes</small></div>
     <div class="stat"><span class="eyebrow">Pendientes</span><b id="pending">—</b><small>Sin confirmar</small></div>
+  </section>
+
+  <section class="admin-panel key-panel" id="account-profile" hidden>
+    <div class="panel-head"><div><span class="eyebrow">Cuenta y workspace</span><h2>Mi perfil</h2></div><span class="pill" id="profile-role">—</span></div>
+    <div class="key-layout">
+      <div>
+        <p class="small muted">Esta identidad controla tu sesión del panel. Los agentes siguen teniendo su propio ID, buzón y token; esta clave solo autoriza el alta de agentes en tu workspace.</p>
+        <dl class="profile-facts"><div><dt>Usuario</dt><dd id="profile-username">—</dd></div><div><dt>Workspace</dt><dd id="profile-workspace">—</dd></div><div><dt>ID de cuenta</dt><dd><code id="profile-account-id">—</code></dd></div></dl>
+      </div>
+      <form id="registration-key-form" class="key-create">
+        <h3>Clave de conexión de agentes</h3>
+        <p class="small muted">Crea una clave para que un agente externo se registre por HTTP en este workspace. Se muestra una sola vez. Al renovarla, la anterior queda revocada.</p>
+        <div id="registration-key-meta" class="banner">Todavía no has creado una clave.</div>
+        <button class="button" type="submit" id="create-registration-key">Crear o renovar clave →</button>
+        <button class="button secondary small" type="button" id="revoke-registration-key">Revocar clave activa</button>
+        <p class="status" id="registration-key-status" role="status"></p>
+        <div id="registration-key-once" class="key-once" hidden><p><strong>Copia esta clave ahora.</strong> Agent Mailbox no puede volver a mostrarla.</p><code id="registration-key-value"></code><button class="button small secondary" type="button" id="copy-registration-key">Copiar clave</button></div>
+        <p class="small muted">Uso: <code>Authorization: Bearer amr_…</code> en <code>/join/secure</code>. Después, guarda el token privado que devuelve el agente.</p>
+      </form>
+    </div>
   </section>
 
   <section class="admin-panel key-panel" id="key-panel" hidden>

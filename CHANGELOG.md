@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.24
+
+- Add account profiles to the dashboard with workspace identity, role and account metadata.
+- Add per-account agent registration keys: one-time display, rotation, revocation and workspace scoping.
+- Allow `/join/secure` and `/agents/secure` to use an account registration key without exposing the server-wide join key.
+- Document registration-key capability in `/capabilities` and keep old join-key behavior compatible.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

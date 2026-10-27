@@ -711,6 +711,12 @@ def create_app():
         if api_key is not None:
             return {"admin": False, "id": api_key["id"], "credential_type": "api_key",
                     "api_key_id": api_key["api_key_id"]}
+        registration = store.account_by_registration_key_hash(credential_hash)
+        if registration is not None:
+            return {"admin": False, "control_user": True, "registration_key": True,
+                    "id": registration["user_id"], "username": registration["username"],
+                    "name": registration["username"], "role": registration["role"],
+                    "workspace_id": registration["workspace_id"], "workspace_scoped": True}
         if identifier is None:
             user = store.control_user_by_hash(hashlib.sha256(token.encode()).hexdigest())
             if user:
@@ -915,6 +921,52 @@ def create_app():
         clear_session_cookies(response, request)
         return response
 
+    @app.get("/account/profile")
+    def account_profile(request: Request):
+        session = current_account_session(request)
+        account = store.account_by_id(session["user_id"])
+        if not account:
+            raise HTTPException(404, "Account not found")
+        workspace_id = account.get("workspace_id") or DEFAULT_WORKSPACE_ID
+        registration = store.account_registration_key(account["id"])
+        return JSONResponse({"account": {key: account.get(key) for key in ("id", "username", "role", "created_at", "last_login_at", "workspace_id")},
+                             "workspace": store.workspace_info(workspace_id),
+                             "registration_key": public_registration_key(registration) if registration else None,
+                             "registration": {"enabled": account.get("role") in ("owner", "workspace_owner", "operator"),
+                                               "endpoint": "/join/secure", "header": "Authorization: Bearer <registration_key>",
+                                               "scope": "Only agents registered with this key enter this account's workspace."}},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/account/registration-key")
+    def rotate_account_registration_key(request: Request):
+        session = current_account_session(request)
+        account = store.account_by_id(session["user_id"])
+        if not account:
+            raise HTTPException(404, "Account not found")
+        if account.get("role") not in ("owner", "workspace_owner", "operator"):
+            raise HTTPException(403, "This account cannot register agents")
+        token = "amr_" + secrets.token_urlsafe(32)
+        row = store.create_or_rotate_account_registration_key(
+            account["id"], account.get("workspace_id") or DEFAULT_WORKSPACE_ID,
+            hashlib.sha256(token.encode()).hexdigest(), token[:16], time.time())
+        store.record_control_event(account["id"], "account_registration_key_rotated", account["id"])
+        return JSONResponse({"registration_key": token, "metadata": public_registration_key(row),
+                             "warning": "Copy this key now. It is never shown again; rotating it revokes the previous key."},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.delete("/account/registration-key")
+    def revoke_account_registration_key(request: Request):
+        session = current_account_session(request)
+        account = store.account_by_id(session["user_id"])
+        if not account:
+            raise HTTPException(404, "Account not found")
+        if account.get("role") not in ("owner", "workspace_owner", "operator"):
+            raise HTTPException(403, "This account cannot manage agent registration")
+        revoked = store.revoke_account_registration_key(account["id"], time.time())
+        if revoked:
+            store.record_control_event(account["id"], "account_registration_key_revoked", account["id"])
+        return {"revoked": revoked}
+
     def agent_id(identity):
         if identity["admin"] or identity.get("control_user"):
             raise HTTPException(403, "Use an agent token for messaging and presence")
@@ -929,6 +981,12 @@ def create_app():
         if identity.get("id") and not identity.get("admin") and not identity.get("control_user"):
             return store.workspace_for_agent(identity["id"])
         return DEFAULT_WORKSPACE_ID
+
+    def workspace_registration_seed(workspace_id):
+        return hmac.new(hub_key.encode(), ("agent-mailbox-workspace:" + (workspace_id or DEFAULT_WORKSPACE_ID)).encode(), hashlib.sha256).hexdigest()
+
+    def public_registration_key(row):
+        return {key: row.get(key) for key in ("user_id", "workspace_id", "key_prefix", "created_at", "rotated_at", "revoked_at")}
 
     def visible_workspace_ids(identity):
         workspace_id = identity_workspace(identity)
@@ -1441,17 +1499,26 @@ def create_app():
     @app.post("/join", status_code=201)
     def join(body: AgentRegistration, request: Request, credentials: Credential):
         local_open = local_keyless_registration_request(request)
+        registration = store.account_by_registration_key_hash(hashlib.sha256(credentials.credentials.encode()).hexdigest()) if credentials else None
         if credentials is not None:
-            if not join_key or not secrets.compare_digest(credentials.credentials.encode(), join_key.encode()):
+            if registration is not None:
+                if registration.get("role") not in ("owner", "workspace_owner", "operator"):
+                    raise HTTPException(403, "This account cannot register agents")
+                registration_seed = workspace_registration_seed(registration["workspace_id"])
+                workspace_id = registration["workspace_id"]
+            elif not join_key or not secrets.compare_digest(credentials.credentials.encode(), join_key.encode()):
                 raise HTTPException(401, "Clave de acceso incorrecta o ausente", headers={"WWW-Authenticate": "Bearer"})
-            registration_seed = hub_key
+            else:
+                registration_seed = hub_key
+                workspace_id = DEFAULT_WORKSPACE_ID
         elif local_open:
             registration_seed = local_instance_seed
+            workspace_id = DEFAULT_WORKSPACE_ID
         elif not join_key:
             raise HTTPException(503, "Self-registration is not configured")
         else:
             raise HTTPException(401, "Clave de acceso incorrecta o ausente", headers={"WWW-Authenticate": "Bearer"})
-        result = create_registration(body, registration_seed,
+        result = create_registration(body, registration_seed, workspace_id,
                                      instance_token=request.headers.get("x-mailbox-instance-token"),
                                      recovery_secret=request.headers.get("x-mailbox-recovery-secret"),
                                      require_existing_proof=True,
@@ -1471,6 +1538,9 @@ def create_app():
         return {"version": APP_VERSION, "profiles": True, "private_instance_inboxes": True,
                 "secure_registration": {"version": 1, "recovery_secret": True,
                                         "secure_paths": ["/join/secure", "/agents/secure", "/profiles/{id}/instances/secure"]},
+                "account_registration_keys": {"enabled": True, "endpoint": "/account/registration-key",
+                                               "scope": "per-account workspace", "shown_once": True,
+                                               "rotation_revokes_previous": True},
                 "workspaces": {"enabled": True, "one_time_invites": True,
                                "directory": "own workspace and accepted connections",
                                "message_access": "only between agents in the same or connected workspaces",
@@ -1498,7 +1568,9 @@ def create_app():
         if not can_manage_agents(identity):
             raise HTTPException(403, "Agent registration requires an owner or operator key")
         workspace_id = identity_workspace(identity)
-        registration_seed = local_instance_seed if local_first_run else hub_key
+        registration_seed = (workspace_registration_seed(workspace_id)
+                             if identity.get("registration_key") else
+                             (local_instance_seed if local_first_run else hub_key))
         if workspace_id != DEFAULT_WORKSPACE_ID:
             registration_seed = hmac.new(hub_key.encode(), workspace_id.encode(), hashlib.sha256).hexdigest()
         authorization = request.headers.get("authorization", "")

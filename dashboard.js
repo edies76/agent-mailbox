@@ -51,6 +51,7 @@
     try {
       const session=await api('/auth/session');currentUser={...session.user,auth_method:session.auth_method};
       const data=await api('/dashboard/data'); view=data; render(data); byId('login').hidden=true;document.body.classList.remove('auth-locked');byId('connection').textContent=`Conectado · ${currentUser.username}`;byId('change-password').hidden=currentUser.auth_method!=='password';
+      loadAccountProfile();
       if(data.permissions.can_manage_users){loadAccounts();loadLegacyControlUsers();} else byId('key-panel').hidden=true;
       if(data.permissions.can_manage_workspace)loadWorkspace();else byId('workspace-panel').hidden=true;
     } catch(error) {
@@ -67,6 +68,18 @@
     byId('content-scope').textContent=permissions.can_read_message_content?(permissions.can_delete_messages?'Puedes ver contenido reciente y eliminar mensajes.':'Puedes ver contenido reciente y gestionar instancias; la limpieza de mensajes corresponde al propietario.'):'Vista de observador: conteos, rutas y estados; los asuntos, cuerpos y adjuntos permanecen ocultos.';
     byId('key-panel').hidden=!permissions.can_manage_users;byId('new-agent').hidden=!permissions.can_manage_agents;byId('workspace-panel').hidden=!permissions.can_manage_workspace;
     renderAgents(agents,permissions);renderMessages(messages,agents,permissions);
+  }
+  async function loadAccountProfile(){
+    const panel=byId('account-profile');
+    try{
+      const data=await api('/account/profile');const account=data.account, workspace=data.workspace||{};
+      panel.hidden=false;byId('profile-role').textContent={owner:'Propietario',workspace_owner:'Dueño de espacio',operator:'Operador',observer:'Observador'}[account.role]||account.role;
+      byId('profile-username').textContent=account.username;byId('profile-workspace').textContent=workspace.name||account.workspace_id;byId('profile-account-id').textContent=account.id;
+      const meta=byId('registration-key-meta'),create=byId('create-registration-key'),revoke=byId('revoke-registration-key');
+      create.disabled=!data.registration.enabled;revoke.disabled=!data.registration.enabled||!data.registration_key;
+      if(data.registration_key){meta.textContent=`Activa · ${data.registration_key.key_prefix}… · creada ${fmtTime(data.registration_key.created_at)}${data.registration_key.rotated_at?` · renovada ${fmtTime(data.registration_key.rotated_at)}`:''}`;}
+      else meta.textContent=data.registration.enabled?'Todavía no has creado una clave.':'Tu rol puede consultar el perfil, pero no registrar agentes.';
+    }catch(error){panel.hidden=true;}
   }
   function renderAgents(agents,permissions) {
     const list=byId('agent-list');list.replaceChildren();
@@ -177,6 +190,9 @@
   byId('confirm-rotated-agent').onclick=()=>{if(rotationPendingAgent)sessionStorage.removeItem(`agent-mailbox-rotation:${rotationPendingAgent}`);rotationPendingAgent=null;byId('rotate-agent-dialog').close();};
   byId('rotate-agent-dialog').addEventListener('close',()=>{byId('rotated-agent-token').value='';});
   byId('legacy-key-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;try{const result=await api('/dashboard/users','POST',{name:byId('legacy-key-name').value,role:byId('legacy-key-role').value});byId('legacy-key-value').textContent=result.access_key;byId('legacy-key-once').hidden=false;byId('legacy-key-name').value='';byId('legacy-key-status').textContent='Clave creada y visible una sola vez.';await loadLegacyControlUsers();}catch(error){byId('legacy-key-status').textContent=error.message;}finally{button.disabled=false;}});
+  byId('registration-key-form').addEventListener('submit',async event=>{event.preventDefault();const button=byId('create-registration-key'),status=byId('registration-key-status');button.disabled=true;status.className='status';status.textContent='Generando clave…';try{const result=await api('/account/registration-key','POST',{});byId('registration-key-value').textContent=result.registration_key;byId('registration-key-once').hidden=false;status.className='status success';status.textContent='Clave creada. Cópiala y guárdala en el gestor de secretos del agente.';await loadAccountProfile();}catch(error){status.className='status error';status.textContent=error.message;}finally{button.disabled=false;}});
+  byId('revoke-registration-key').addEventListener('click',async()=>{if(!await confirmAction('Revocar la clave de inscripción. Los agentes que aún no se hayan registrado ya no podrán usarla.','Revocar clave'))return;const status=byId('registration-key-status');try{await api('/account/registration-key','DELETE');byId('registration-key-once').hidden=true;status.className='status success';status.textContent='Clave revocada.';await loadAccountProfile();}catch(error){status.className='status error';status.textContent=error.message;}});
+  byId('copy-registration-key').addEventListener('click',async()=>{const value=byId('registration-key-value').textContent;try{await navigator.clipboard.writeText(value);byId('registration-key-status').textContent='Clave copiada.';}catch{byId('registration-key-value').focus();}});
   byId('change-password').onclick=()=>{byId('password-status').textContent='';byId('password-form').reset();byId('password-dialog').showModal();};
   byId('password-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;const status=byId('password-status');try{await api('/auth/password','POST',{current_password:byId('current-password').value,new_password:byId('new-password').value});event.currentTarget.reset();status.className='status success';status.textContent='Contraseña actualizada. Se cerraron las demás sesiones.';await load();}catch(error){status.className='status error';status.textContent=error.message;}finally{button.disabled=false;}});
   document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>byId(button.dataset.close).close()));

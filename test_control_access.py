@@ -367,6 +367,29 @@ class AccountSessionTests(unittest.TestCase):
         self.assertEqual(recovered["user"]["role"], "owner")
         self.request("GET", "/dashboard/data", self.admin)
 
+    def test_account_profile_registration_key_is_scoped_and_rotatable(self):
+        cookies = http.cookiejar.CookieJar()
+        browser = build_opener(HTTPCookieProcessor(cookies))
+        self.browser_request(browser, "/auth/setup", "POST", {
+            "setup_key": self.admin, "username": "ProfileOwner", "password": "profile-owner-password-42"}, expected=201)
+        csrf = next(cookie.value for cookie in cookies if "csrf" in cookie.name)
+        headers = {"X-CSRF-Token": csrf}
+        profile = self.browser_request(browser, "/account/profile")
+        self.assertIsNone(profile["registration_key"])
+        created = self.browser_request(browser, "/account/registration-key", "POST", {}, headers=headers)
+        registration_key = created["registration_key"]
+        self.assertTrue(registration_key.startswith("amr_"))
+        self.assertNotIn(registration_key, json.dumps(self.browser_request(browser, "/account/profile")))
+        agent = self.request("POST", "/join/secure", registration_key,
+                            {"name": "Profile agent", "kind": "codex", "session_key": "profile-session"}, 201)
+        directory = self.request("GET", "/agents", registration_key)
+        self.assertIn(agent["agent"]["id"], {row["id"] for row in directory["agents"]})
+        old_key = registration_key
+        rotated = self.browser_request(browser, "/account/registration-key", "POST", {}, headers=headers)["registration_key"]
+        self.assertNotEqual(old_key, rotated)
+        self.request("POST", "/join/secure", old_key,
+                     {"name": "Should fail", "kind": "other", "session_key": "old-key-session"}, 401)
+
 
 class LocalBootstrapTests(unittest.TestCase):
     setUpClass = classmethod(http_tests.MailboxTests.setUpClass.__func__)
