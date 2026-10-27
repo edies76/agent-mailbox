@@ -437,6 +437,48 @@ class AccountRegistrationKeyTests(unittest.TestCase):
         self.assertEqual(profile["workspace"]["name"], "Independent Agents")
 
 
+class WorkspaceMemberInviteTests(unittest.TestCase):
+    setUpClass = classmethod(http_tests.MailboxTests.setUpClass.__func__)
+    tearDownClass = classmethod(http_tests.MailboxTests.tearDownClass.__func__)
+    start_server = classmethod(http_tests.MailboxTests.start_server.__func__)
+    stop_server = classmethod(http_tests.MailboxTests.stop_server.__func__)
+    setUp = http_tests.MailboxTests.setUp
+    request = http_tests.MailboxTests.request
+
+    def browser_request(self, opener, path, method="GET", body=None, headers=None, expected=200):
+        request = Request(self.url + path, data=json.dumps(body).encode() if body is not None else None,
+                          headers={"Content-Type": "application/json", **(headers or {})}, method=method)
+        try:
+            with opener.open(request, timeout=20) as response:
+                status, data = response.status, json.load(response)
+        except HTTPError as error:
+            with error:
+                status, data = error.code, json.load(error)
+        self.assertEqual(status, expected, data)
+        return data
+
+    def test_member_invitation_creates_account_in_inviter_workspace_and_provenance(self):
+        owner_cookies = http.cookiejar.CookieJar()
+        owner = build_opener(HTTPCookieProcessor(owner_cookies))
+        self.browser_request(owner, "/auth/setup", "POST", {"setup_key": self.admin,
+                             "username": "WorkspaceOwner", "password": "workspace-owner-password-42"}, expected=201)
+        csrf = next(cookie.value for cookie in owner_cookies if "csrf" in cookie.name)
+        invite = self.browser_request(owner, "/dashboard/member-invitations", "POST", {"expires_in_hours": 24, "mode": "member"}, {"X-CSRF-Token": csrf}, 201)
+        member_cookies = http.cookiejar.CookieJar()
+        member = build_opener(HTTPCookieProcessor(member_cookies))
+        created = self.browser_request(member, "/auth/register-member", "POST", {"invite_code": invite["code"], "username": "MemberOne", "password": "member-password-long-42"}, expected=201)
+        self.assertEqual(created["user"]["role"], "workspace_member")
+        profile = self.browser_request(member, "/account/profile")
+        self.assertEqual(profile["account"]["role"], "workspace_member")
+        self.assertTrue(profile["registration"]["enabled"])
+        member_csrf = next(cookie.value for cookie in member_cookies if "csrf" in cookie.name)
+        key = self.browser_request(member, "/account/registration-key", "POST", {}, {"X-CSRF-Token": member_csrf}, 200)["registration_key"]
+        agent = self.request("POST", "/join/secure", key, {"name": "Member agent", "kind": "zcode", "session_key": "member-agent"}, 201)
+        dashboard = self.browser_request(member, "/dashboard/data")
+        listed = next(row for row in dashboard["agents"] if row["id"] == agent["agent"]["id"])
+        self.assertEqual(listed["added_by"]["username"], "MemberOne")
+
+
 class LocalBootstrapTests(unittest.TestCase):
     setUpClass = classmethod(http_tests.MailboxTests.setUpClass.__func__)
     tearDownClass = classmethod(http_tests.MailboxTests.tearDownClass.__func__)

@@ -69,6 +69,9 @@ class CollaborationStore:
                            "description": "TEXT NOT NULL DEFAULT ''",
                            "capabilities_json": "TEXT NOT NULL DEFAULT '[]'",
                            "workspace_id": f"TEXT NOT NULL DEFAULT '{DEFAULT_WORKSPACE_ID}'",
+                           "created_by_account_id": "TEXT",
+                           "created_by_username": "TEXT NOT NULL DEFAULT ''",
+                           "registration_method": "TEXT NOT NULL DEFAULT 'unknown'",
                            "credential_epoch": "INTEGER NOT NULL DEFAULT 0",
                            "credential_rotated_at": "REAL", "recovery_hash": "TEXT", "last_rotation_hash": "TEXT"},
                 "agent_api_keys": {"credential_epoch": "INTEGER NOT NULL DEFAULT 0"},
@@ -136,7 +139,7 @@ class CollaborationStore:
                 CREATE TABLE IF NOT EXISTS workspace_invites (
                     id TEXT PRIMARY KEY, code_hash TEXT UNIQUE NOT NULL, workspace_id TEXT NOT NULL,
                     created_by TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL,
-                    used_at REAL, revoked_at REAL
+                    used_at REAL, revoked_at REAL, mode TEXT NOT NULL DEFAULT 'workspace'
                 );
                 CREATE INDEX IF NOT EXISTS workspace_invite_hash_idx ON workspace_invites(code_hash);
                 CREATE TABLE IF NOT EXISTS workspace_connections (
@@ -147,6 +150,9 @@ class CollaborationStore:
             account_columns = {row[1] for row in db.execute("PRAGMA table_info(account_users)")}
             if "workspace_id" not in account_columns:
                 db.execute("ALTER TABLE account_users ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'workspace-default'")
+            invite_columns = {row[1] for row in db.execute("PRAGMA table_info(workspace_invites)")}
+            if "mode" not in invite_columns:
+                db.execute("ALTER TABLE workspace_invites ADD COLUMN mode TEXT NOT NULL DEFAULT 'workspace'")
             db.execute("INSERT OR IGNORE INTO workspaces (id,name,created_at) VALUES (?,?,?)",
                        (DEFAULT_WORKSPACE_ID, "Workspace principal", time.time()))
             db.execute("UPDATE agents SET workspace_id = ? WHERE workspace_id IS NULL OR workspace_id = ''",
@@ -236,11 +242,11 @@ class CollaborationStore:
     def create_workspace_invite(self, row):
         if hasattr(self, "database"):
             with self.database() as db:
-                db.execute("INSERT INTO workspace_invites (id,code_hash,workspace_id,created_by,created_at,expires_at,used_at,revoked_at) "
-                           "VALUES (?,?,?,?,?,?,NULL,NULL)",
-                           tuple(row[key] for key in ("id","code_hash","workspace_id","created_by","created_at","expires_at")))
+                db.execute("INSERT INTO workspace_invites (id,code_hash,workspace_id,created_by,created_at,expires_at,used_at,revoked_at,mode) "
+                           "VALUES (?,?,?,?,?,?,NULL,NULL,?)",
+                           tuple(row[key] for key in ("id","code_hash","workspace_id","created_by","created_at","expires_at")) + (row.get("mode", "workspace"),))
         else:
-            self.client.collection("workspace_invites").document(row["id"]).create(row | {"used_at": None,"revoked_at": None}, timeout=15)
+            self.client.collection("workspace_invites").document(row["id"]).create(row | {"used_at": None,"revoked_at": None,"mode": row.get("mode", "workspace")}, timeout=15)
         return row
 
     def accept_workspace_invite(self, code_hash, user, workspace):
@@ -253,6 +259,13 @@ class CollaborationStore:
                     raise HTTPException(410, "Invitation is invalid, expired or already used")
                 if db.execute("SELECT 1 FROM account_users WHERE username_norm=?", (user["username_norm"],)).fetchone():
                     raise HTTPException(409, "Username is already taken")
+                if invite["mode"] == "member":
+                    db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at,workspace_id) "
+                               "VALUES (?,?,?,?,?,?,?,?,?)",
+                               (user["id"], user["username"], user["username_norm"], user["password_hash"], "workspace_member",
+                                user["created_at"], user["last_login_at"], None, invite["workspace_id"]))
+                    db.execute("UPDATE workspace_invites SET used_at=? WHERE id=? AND used_at IS NULL", (now, invite["id"]))
+                    return user | {"workspace_id": invite["workspace_id"], "role": "workspace_member"}
                 db.execute("INSERT INTO workspaces (id,name,created_at) VALUES (?,?,?)",
                            (workspace["id"], workspace["name"], workspace["created_at"]))
                 db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at,workspace_id) "
@@ -271,7 +284,27 @@ class CollaborationStore:
         if not matches:
             raise HTTPException(410, "Invitation is invalid, expired or already used")
         invite_ref = matches[0].reference
-        inviter_workspace = matches[0].to_dict()["workspace_id"]
+        invite_data = matches[0].to_dict()
+        inviter_workspace = invite_data["workspace_id"]
+        if invite_data.get("mode", "workspace") == "member":
+            user_ref = self.client.collection("account_users").document(user["id"])
+            username_ref = self.client.collection("account_usernames").document(user["username_norm"])
+            invite_ref = matches[0].reference
+            @self.firestore.transactional
+            def create_member(transaction):
+                invite_snapshot = invite_ref.get(transaction=transaction)
+                username_snapshot = username_ref.get(transaction=transaction)
+                if not invite_snapshot.exists or username_snapshot.exists:
+                    raise HTTPException(409 if username_snapshot.exists else 410, "Invitation is invalid or username is already taken")
+                current = invite_snapshot.to_dict()
+                now = user["created_at"]
+                if current.get("used_at") is not None or current.get("revoked_at") is not None or current.get("expires_at", 0) <= now:
+                    raise HTTPException(410, "Invitation is invalid, expired or already used")
+                transaction.create(user_ref, user | {"role": "workspace_member", "workspace_id": inviter_workspace})
+                transaction.create(username_ref, {"user_id": user["id"]})
+                transaction.update(invite_ref, {"used_at": now})
+            create_member(self.client.transaction(max_attempts=5))
+            return user | {"workspace_id": inviter_workspace, "role": "workspace_member"}
         workspace_id = workspace["id"]
         a, b = sorted((inviter_workspace, workspace_id))
         workspace_ref = self.client.collection("workspaces").document(workspace_id)
@@ -351,11 +384,11 @@ class CollaborationStore:
     def workspace_invites(self, workspace_id):
         if hasattr(self, "database"):
             with self.database() as db:
-                rows = db.execute("SELECT id,workspace_id,created_by,created_at,expires_at,used_at,revoked_at "
+                rows = db.execute("SELECT id,workspace_id,created_by,created_at,expires_at,used_at,revoked_at,mode "
                                   "FROM workspace_invites WHERE workspace_id=? ORDER BY created_at DESC", (workspace_id,)).fetchall()
                 return [dict(row) for row in rows]
         docs = self.where(self.client.collection("workspace_invites"), "workspace_id", "==", workspace_id).stream(timeout=15)
-        fields = ("id","workspace_id","created_by","created_at","expires_at","used_at","revoked_at")
+        fields = ("id","workspace_id","created_by","created_at","expires_at","used_at","revoked_at","mode")
         return sorted(({key: doc.to_dict().get(key) for key in fields} for doc in docs),
                       key=lambda row: row["created_at"], reverse=True)
 
@@ -744,7 +777,10 @@ class CollaborationStore:
                 description = description or agent["description"]
                 capabilities = capabilities or json.loads(agent["capabilities_json"] or "[]")
                 profile.update(description=description, capabilities=capabilities,
-                               workspace_id=agent["workspace_id"] or DEFAULT_WORKSPACE_ID)
+                               workspace_id=agent["workspace_id"] or DEFAULT_WORKSPACE_ID,
+                               created_by_account_id=agent["created_by_account_id"],
+                               created_by_username=agent["created_by_username"],
+                               registration_method="profile_created_from_instance")
                 db.execute("INSERT INTO profiles VALUES (?, ?)", (profile["id"], json.dumps(profile)))
                 db.execute("UPDATE agents SET profile_id = ?, instance_name = name WHERE id = ?",
                            (profile["id"], identifier))
@@ -757,7 +793,10 @@ class CollaborationStore:
                     raise HTTPException(409, "Instance is already grouped or no longer exists")
                 profile.update(description=description or agent.get("description", ""),
                                capabilities=capabilities or agent.get("capabilities", []),
-                               workspace_id=agent.get("workspace_id") or DEFAULT_WORKSPACE_ID)
+                               workspace_id=agent.get("workspace_id") or DEFAULT_WORKSPACE_ID,
+                               created_by_account_id=agent.get("created_by_account_id"),
+                               created_by_username=agent.get("created_by_username", ""),
+                               registration_method="profile_created_from_instance")
                 transaction.create(self.client.collection("profiles").document(profile["id"]), profile)
                 transaction.update(ref, {"profile_id": profile["id"], "instance_name": agent["name"]})
             create(self.client.transaction(max_attempts=5))
@@ -967,7 +1006,7 @@ class CollaborationStore:
                 verify(dict(old) if old else None, workspace_id)
                 if old:
                     return False
-                columns = ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "profile_id", "instance_name", "description", "capabilities_json", "workspace_id", "recovery_hash")
+                columns = ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "profile_id", "instance_name", "description", "capabilities_json", "workspace_id", "recovery_hash", "created_by_account_id", "created_by_username", "registration_method")
                 db.execute(f"INSERT INTO agents ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
                            tuple(json.dumps(row["capabilities"], ensure_ascii=False) if key == "capabilities_json" else row.get(key)
                                  for key in columns))

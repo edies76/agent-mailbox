@@ -51,6 +51,13 @@
 
 - Clarify the complete ZCode CLI injection form, MSYS path failure and the missing queue evidence.
 
+## 0.3.35
+
+- Add account provenance to agents, instances and profiles, including the registration method.
+- Add workspace-member invitations and `/join-member` so invited users join the existing workspace.
+- Scope workspace-member dashboards and token rotation to agents registered by that account.
+- Improve dashboard/profile UX with provenance labels and clearer member versus independent-workspace flows.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

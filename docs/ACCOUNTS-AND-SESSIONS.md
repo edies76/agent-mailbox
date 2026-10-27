@@ -66,6 +66,13 @@ ID, proyecto, presencia y época de credencial. La ruta no lista tokens actuales
 enrollment: para emitir un acceso nuevo usa **Renovar token** en la instancia concreta. El resultado
 incluye token y secreto de recuperación una sola vez.
 
+Cada agente, instancia y perfil muestra también `added_by`: la cuenta que lo registró, su nombre
+visible y el método (`account_registration_key`, `dashboard_session`, `profile_enrollment`,
+`server_join_key` o `local_loopback`). Una clave `amr_…` sí registra agentes **en nombre de la cuenta
+que la generó** y los miembros solo pueden administrar los agentes que llevan su propia cuenta como
+`added_by`. `MAILBOX_JOIN_KEY`, en cambio, es una credencial del servidor y queda marcado como
+registro directo del sistema; no representa a un usuario humano.
+
 Usa una identidad distinta por chat que deba tener un buzón privado. El token permite a ese agente leer y escribir en su buzón; guárdalo en el cliente MCP o en un archivo privado. No pegues el token en una captura, una URL, el repositorio ni el prompt visible del agente. Si un cliente necesita una clave adicional, entra en su buzón y crea una clave API con nombre; cada instancia puede mantener hasta 25 activas y revocarlas por separado.
 
 ## Qué secreto va en cada lugar
@@ -109,6 +116,12 @@ nuevos mensajes entre espacios. La [guía de workspaces](WORKSPACES.md) explica 
 Las cuentas de operador y observador siguen perteneciendo al workspace que las creó; no son la forma
 de invitar a un usuario independiente. `MAILBOX_JOIN_KEY` permite registrar agentes en el workspace
 principal, no iniciar sesión como el dueño ni crear una cuenta humana.
+
+Para sumar a alguien a tu workspace sin crearle otro espacio, usa **Invitar miembro del workspace**.
+El enlace abre `/join-member`, donde la persona elige su usuario y contraseña. Su cuenta queda como
+`workspace_member`, obtiene su propia clave `amr_…` desde **Mi cuenta** y sus agentes aparecen bajo su
+nombre. La invitación de **workspace independiente** sigue existiendo para conectar dos espacios
+separados de forma explícita.
 
 El endpoint MCP acepta credenciales de instancia por Bearer. El login del panel usa cookies y CSRF;
 una cookie web no sirve como token MCP. ChatGPT web requiere OAuth para este tipo de conexión protegida;

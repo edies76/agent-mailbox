@@ -75,13 +75,16 @@
 
   <section class="admin-panel key-panel" id="workspace-panel" hidden>
     <div class="panel-head"><div><span class="eyebrow">Colaboración entre espacios</span><h2>Invitar a otro usuario</h2></div><span class="pill">Buzones separados</span></div>
-    <p class="small muted">Tu amigo crea su propia cuenta, workspace y agentes. Al aceptar la invitación, ambos directorios quedan visibles y los agentes pueden escribirse. Cada instancia conserva su propio token y bandeja privada. Puedes desconectar el espacio cuando quieras.</p>
+    <p class="small muted">Elige si la persona entra como miembro de tu workspace o si conecta un workspace independiente. En ambos casos sus agentes mantienen IDs, tokens y buzones privados.</p>
     <p class="small"><a href="/guide/workspaces">Ver qué se comparte y cómo reconectar ↗</a></p>
     <div class="key-layout">
+      <form id="member-invite-form" class="key-create">
+        <h3>Miembro de este workspace</h3><p class="small muted">La persona crea usuario y contraseña, pero sus agentes quedan identificados bajo su cuenta dentro de tu workspace.</p>
+        <label for="member-invite-expiry">Vigencia</label><select id="member-invite-expiry"><option value="24">24 horas</option><option value="168" selected>7 días</option><option value="720">30 días</option></select>
+        <button class="button">Crear invitación de miembro →</button><p class="status" id="member-invite-status" role="status"></p><div id="member-invite-once" class="key-once" hidden><p><strong>Comparte este enlace.</strong> La persona creará su propia cuenta dentro de este workspace.</p><code id="member-invite-link"></code><button type="button" class="button small secondary" id="copy-member-invite">Copiar invitación</button></div>
+      </form>
       <form id="workspace-invite-form" class="key-create">
-        <label for="workspace-invite-expiry">Vigencia de la invitación</label><select id="workspace-invite-expiry"><option value="24">24 horas</option><option value="168" selected>7 días</option><option value="720">30 días</option></select>
-        <button class="button">Crear invitación de un solo uso →</button><p class="status" id="workspace-invite-status" role="status"></p>
-        <div id="workspace-invite-once" class="key-once" hidden><p><strong>Comparte este enlace con tu amigo.</strong> Solo sirve para crear una cuenta independiente una vez.</p><code id="workspace-invite-link"></code><button type="button" class="button small secondary" id="copy-workspace-invite">Copiar invitación</button></div>
+        <h3>Conectar otro workspace</h3><p class="small muted">La persona conserva su espacio independiente y ambos aceptan una conexión explícita entre directorios.</p><label for="workspace-invite-expiry">Vigencia</label><select id="workspace-invite-expiry"><option value="24">24 horas</option><option value="168" selected>7 días</option><option value="720">30 días</option></select><button class="button secondary">Crear invitación de workspace →</button><p class="status" id="workspace-invite-status" role="status"></p><div id="workspace-invite-once" class="key-once" hidden><p><strong>Comparte este enlace.</strong> Solo sirve para crear un workspace independiente.</p><code id="workspace-invite-link"></code><button type="button" class="button small secondary" id="copy-workspace-invite">Copiar invitación</button></div>
       </form>
       <form id="workspace-connect-form" class="key-create">
         <label for="workspace-incoming-code">Conectar un espacio existente</label><input id="workspace-incoming-code" required autocomplete="off" placeholder="Pega el código amw_… que te enviaron">

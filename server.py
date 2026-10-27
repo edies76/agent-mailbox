@@ -177,6 +177,13 @@ class WorkspaceSignup(BaseModel):
     workspace_name: str = Field(min_length=2, max_length=80)
 
 
+class MemberSignup(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    invite_code: str = Field(min_length=20, max_length=128)
+    username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
+    password: str = Field(min_length=12, max_length=256)
+
+
 class AccountSignup(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
@@ -187,6 +194,7 @@ class AccountSignup(BaseModel):
 class WorkspaceInviteCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expires_in_hours: int = Field(default=168, ge=1, le=720)
+    mode: Literal["workspace", "member"] = "workspace"
 
 
 class WorkspaceConnectionAccept(BaseModel):
@@ -497,6 +505,8 @@ def create_app():
         ("/workspace", "workspace.html", "text/html"), ("/guide.js", "guide.js", "application/javascript"),
         ("/join-workspace.js", "join-workspace.js", "application/javascript"),
         ("/join-workspace", "join-workspace.html", "text/html"),
+        ("/join-member.js", "join-member.js", "application/javascript"),
+        ("/join-member", "join-member.html", "text/html"),
         ("/favicon.svg", "favicon.svg", "image/svg+xml"),
         ("/brand-symbol.svg", "assets/brand-symbol.svg", "image/svg+xml"),
         ("/social-card.png", "assets/social-card.png", "image/png"),
@@ -869,6 +879,26 @@ def create_app():
         store.record_control_event("workspace-invite", "workspace_owner_registered", account["id"])
         return establish_account_session(account, request, status_code=201)
 
+    @app.post("/auth/register-member", status_code=201)
+    def register_workspace_member(body: MemberSignup, request: Request):
+        username = body.username.strip()
+        rate_key = account_login_rate_key(username.casefold(), request)
+        if not store.account_login_allowed(rate_key, time.time()):
+            raise HTTPException(429, "Too many account attempts. Retry in 15 minutes.", headers={"Retry-After": "900"})
+        now = time.time()
+        user = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
+                "password_hash": request_password_hash(body.password), "role": "workspace_member",
+                "created_at": now, "last_login_at": now, "disabled_at": None}
+        workspace = {"id": str(uuid4()), "name": "", "created_at": now}
+        try:
+            account = store.accept_workspace_invite(hashlib.sha256(body.invite_code.strip().encode()).hexdigest(), user, workspace)
+        except HTTPException:
+            store.record_account_login(rate_key, now, False)
+            raise
+        store.record_account_login(rate_key, now, True)
+        store.record_control_event("workspace-member-invite", "workspace_member_registered", account["id"])
+        return establish_account_session(account, request, status_code=201)
+
     @app.post("/auth/signup", status_code=201)
     def signup_workspace_account(body: AccountSignup, request: Request):
         if not store.owner_account_exists():
@@ -963,7 +993,7 @@ def create_app():
         return JSONResponse({"account": {key: account.get(key) for key in ("id", "username", "role", "created_at", "last_login_at", "workspace_id")},
                              "workspace": store.workspace_info(workspace_id),
                              "registration_key": public_registration_key(registration) if registration else None,
-                             "registration": {"enabled": account.get("role") in ("owner", "workspace_owner", "operator"),
+                             "registration": {"enabled": account.get("role") in ("owner", "workspace_owner", "operator", "workspace_member"),
                                                "endpoint": "/join/secure", "header": "Authorization: Bearer <registration_key>",
                                                "scope": "Only agents registered with this key enter this account's workspace."}},
                             headers={"Cache-Control": "no-store"})
@@ -974,7 +1004,7 @@ def create_app():
         account = store.account_by_id(session["user_id"])
         if not account:
             raise HTTPException(404, "Account not found")
-        if account.get("role") not in ("owner", "workspace_owner", "operator"):
+        if account.get("role") not in ("owner", "workspace_owner", "operator", "workspace_member"):
             raise HTTPException(403, "This account cannot register agents")
         token = "amr_" + secrets.token_urlsafe(32)
         row = store.create_or_rotate_account_registration_key(
@@ -991,7 +1021,7 @@ def create_app():
         account = store.account_by_id(session["user_id"])
         if not account:
             raise HTTPException(404, "Account not found")
-        if account.get("role") not in ("owner", "workspace_owner", "operator"):
+        if account.get("role") not in ("owner", "workspace_owner", "operator", "workspace_member"):
             raise HTTPException(403, "This account cannot manage agent registration")
         revoked = store.revoke_account_registration_key(account["id"], time.time())
         if revoked:
@@ -1004,7 +1034,7 @@ def create_app():
         return identity["id"]
 
     def can_manage_agents(identity):
-        return identity.get("admin", False) or (identity.get("control_user") and identity.get("role") in ("operator", "workspace_owner"))
+        return identity.get("admin", False) or (identity.get("control_user") and identity.get("role") in ("operator", "workspace_owner", "workspace_member"))
 
     def identity_workspace(identity):
         if identity.get("workspace_id"):
@@ -1033,9 +1063,13 @@ def create_app():
 
     def require_manage_own_agent(identity, identifier):
         if not can_manage_agents(identity):
-            raise HTTPException(403, "Agent management requires an owner or operator account")
+            raise HTTPException(403, "Agent management requires a workspace account")
         if store.workspace_for_agent(identifier) != identity_workspace(identity):
             raise HTTPException(404, "Agent not found in your workspace")
+        if identity.get("role") == "workspace_member":
+            agent = store.get_agent(identifier)
+            if not agent or agent.get("created_by_account_id") != identity.get("id"):
+                raise HTTPException(403, "This member can manage only agents registered by their account")
 
     def require_admin(identity):
         if not identity.get("admin"):
@@ -1051,6 +1085,10 @@ def create_app():
                       instance_name=row.get("instance_name") or row["name"],
                       description=row.get("description") or profile.get("description", ""),
                       capabilities=row.get("capabilities") or profile.get("capabilities", []))
+        result["workspace_id"] = row.get("workspace_id") or profile.get("workspace_id") or DEFAULT_WORKSPACE_ID
+        result["added_by"] = {"account_id": row.get("created_by_account_id") or profile.get("created_by_account_id"),
+                               "username": row.get("created_by_username") or profile.get("created_by_username") or "Sistema / registro directo",
+                               "method": row.get("registration_method") or profile.get("registration_method") or "unknown"}
         result["online"] = row["last_seen"] >= now - online_seconds
         return result
 
@@ -1122,7 +1160,7 @@ def create_app():
 
     def create_registration(body, registration_seed, workspace_id=DEFAULT_WORKSPACE_ID,
                             instance_token=None, recovery_secret=None, require_existing_proof=False,
-                            forbidden_secret=None):
+                            forbidden_secret=None, registrar=None):
         if recovery_secret:
             validate_recovery_secret(recovery_secret, (forbidden_secret,))
         session_key = body.session_key or secrets.token_urlsafe(24)
@@ -1150,7 +1188,10 @@ def create_app():
             row = dict(id=identifier, name=body.name, kind=body.kind, project=body.project,
                        description=body.description, capabilities=body.capabilities,
                        token_hash=token_hash, created_at=now, last_seen=now, workspace_id=workspace_id,
-                       recovery_hash=hashlib.sha256(recovery_secret.encode()).hexdigest() if recovery_secret else None)
+                       recovery_hash=hashlib.sha256(recovery_secret.encode()).hexdigest() if recovery_secret else None,
+                       created_by_account_id=(registrar or {}).get("account_id"),
+                       created_by_username=(registrar or {}).get("username", ""),
+                       registration_method=(registrar or {}).get("method", "join_key"))
             if store.register(row) is False:
                 existing = store.get_agent(identifier)
                 token = (existing_instance_token(existing, identifier, instance_token, recovery_secret)
@@ -1167,8 +1208,13 @@ def create_app():
                 "onboarding": onboarding_handoff(agent, session_key)}
 
     def public_profile(row):
-        return {key: row.get(key, [] if key == "capabilities" else "") for key in
-                ("id", "name", "kind", "project", "created_at", "description", "capabilities")}
+        result = {key: row.get(key, [] if key == "capabilities" else "") for key in
+                  ("id", "name", "kind", "project", "created_at", "description", "capabilities")}
+        result["workspace_id"] = row.get("workspace_id") or DEFAULT_WORKSPACE_ID
+        result["added_by"] = {"account_id": row.get("created_by_account_id"),
+                               "username": row.get("created_by_username") or "Sistema / registro directo",
+                               "method": row.get("registration_method") or "unknown"}
+        return result
 
     def profiles_directory(workspace_ids=None):
         agents = store.all_agents()
@@ -1317,6 +1363,8 @@ def create_app():
         workspace_id = identity_workspace(identity)
         workspace_ids = visible_workspace_ids(identity)
         all_agents = store.all_agents()
+        if identity.get("role") == "workspace_member":
+            all_agents = [row for row in all_agents if row.get("created_by_account_id") == identity.get("id")]
         agents_by_id = {row["id"]: row for row in all_agents}
         agents = directory_agents(now, workspace_ids, all_agents)
         agents = [{**row, "can_manage": (agents_by_id[row["id"]].get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id,
@@ -1351,6 +1399,8 @@ def create_app():
         profile = store.profile_get(profile_id)
         if not profile or (profile.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id:
             raise HTTPException(404, "Profile not found in your workspace")
+        if identity.get("role") == "workspace_member" and profile.get("created_by_account_id") != identity.get("id"):
+            raise HTTPException(403, "This member can view only profiles registered by their account")
         return profile, workspace_id
 
     @app.get("/dashboard/profiles")
@@ -1358,6 +1408,8 @@ def create_app():
         require_dashboard_identity(identity)
         workspace_id = identity_workspace(identity)
         agents = [row for row in store.all_agents() if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id]
+        if identity.get("role") == "workspace_member":
+            agents = [row for row in agents if row.get("created_by_account_id") == identity.get("id")]
         profile_ids = {row.get("profile_id") for row in agents if row.get("profile_id")}
         now = time.time()
         result = []
@@ -1471,14 +1523,24 @@ def create_app():
             raise HTTPException(409, "Workspace has 20 active invitations; revoke or wait for one to expire")
         row = {"id": str(uuid4()), "code_hash": hashlib.sha256(code.encode()).hexdigest(),
                "workspace_id": workspace_id, "created_by": identity.get("id", "owner"),
-               "created_at": now, "expires_at": now + body.expires_in_hours * 3600}
+               "created_at": now, "expires_at": now + body.expires_in_hours * 3600,
+               "mode": body.mode}
         store.create_workspace_invite(row)
         store.record_control_event(identity.get("id", "owner"), "workspace_invitation_created", row["id"])
         return JSONResponse({"invitation": {key: row[key] for key in
                              ("id", "workspace_id", "created_at", "expires_at")},
-                             "code": code, "url": "/join-workspace#invite=" + code,
-                             "warning": "One-time code. The recipient creates their own account and workspace."},
+                             "code": code,
+                             "url": ("/join-member#invite=" if body.mode == "member" else "/join-workspace#invite=") + code,
+                             "mode": body.mode,
+                             "warning": ("One-time code. The recipient creates a member account inside this workspace."
+                                         if body.mode == "member" else
+                                         "One-time code. The recipient creates their own account and workspace.")},
                             status_code=201, headers={"Cache-Control": "no-store"})
+
+    @app.post("/dashboard/member-invitations", status_code=201)
+    def create_member_invitation(body: WorkspaceInviteCreate, identity: Identity):
+        body.mode = "member"
+        return create_workspace_invitation(body, identity)
 
     @app.delete("/dashboard/workspace-invitations/{invite_id}")
     def revoke_workspace_invitation(invite_id: str, identity: Identity):
@@ -1593,20 +1655,24 @@ def create_app():
     def join(body: AgentRegistration, request: Request, credentials: Credential):
         local_open = local_keyless_registration_request(request)
         registration = store.account_by_registration_key_hash(hashlib.sha256(credentials.credentials.encode()).hexdigest()) if credentials else None
+        registrar = None
         if credentials is not None:
             if registration is not None:
-                if registration.get("role") not in ("owner", "workspace_owner", "operator"):
+                if registration.get("role") not in ("owner", "workspace_owner", "operator", "workspace_member"):
                     raise HTTPException(403, "This account cannot register agents")
                 registration_seed = workspace_registration_seed(registration["workspace_id"])
                 workspace_id = registration["workspace_id"]
+                registrar = {"account_id": registration["user_id"], "username": registration["username"], "method": "account_registration_key"}
             elif not join_key or not secrets.compare_digest(credentials.credentials.encode(), join_key.encode()):
                 raise HTTPException(401, "Clave de acceso incorrecta o ausente", headers={"WWW-Authenticate": "Bearer"})
             else:
                 registration_seed = hub_key
                 workspace_id = DEFAULT_WORKSPACE_ID
+                registrar = {"method": "server_join_key", "username": "Servidor"}
         elif local_open:
             registration_seed = local_instance_seed
             workspace_id = DEFAULT_WORKSPACE_ID
+            registrar = {"method": "local_loopback", "username": "Este equipo"}
         elif not join_key:
             raise HTTPException(503, "Self-registration is not configured")
         else:
@@ -1615,7 +1681,8 @@ def create_app():
                                      instance_token=request.headers.get("x-mailbox-instance-token"),
                                      recovery_secret=request.headers.get("x-mailbox-recovery-secret"),
                                      require_existing_proof=True,
-                                     forbidden_secret=credentials.credentials if credentials else None)
+                                     forbidden_secret=credentials.credentials if credentials else None,
+                                     registrar=registrar)
         # A shared join key authorizes registration only; each chat gets its own bearer token.
         from fastapi.responses import JSONResponse
         return JSONResponse({**result, "instructions_url": "/connect.md"}, status_code=201,
@@ -1644,7 +1711,7 @@ def create_app():
                                             "requires_join_key": False,
                                             "scope": "loopback client and local host only"},
                 "bound_replies": True, "transactional_final_reply": True, "idempotent_delivery": True,
-                "control_roles": ["owner", "operator", "observer"], "local_file_bank": True,
+                "control_roles": ["owner", "workspace_owner", "workspace_member", "operator", "observer"], "local_file_bank": True,
                 "peer_discovery": {"enabled": True, "agent_card_description_chars": 500,
                                    "capabilities_per_card": 20,
                                    "directory_scope": "same workspace and explicitly connected workspaces"},
@@ -1663,6 +1730,8 @@ def create_app():
         if not can_manage_agents(identity):
             raise HTTPException(403, "Agent registration requires an owner or operator key")
         workspace_id = identity_workspace(identity)
+        registrar = {"account_id": identity.get("id"), "username": identity.get("username", ""),
+                     "method": "account_registration_key" if identity.get("registration_key") else "dashboard_session"}
         registration_seed = (workspace_registration_seed(workspace_id)
                              if identity.get("registration_key") else
                              (local_instance_seed if local_first_run else hub_key))
@@ -1673,7 +1742,8 @@ def create_app():
         result = create_registration(body, registration_seed, workspace_id,
                                      instance_token=request.headers.get("x-mailbox-instance-token"),
                                      recovery_secret=request.headers.get("x-mailbox-recovery-secret"),
-                                     require_existing_proof=True, forbidden_secret=bearer_value)
+                                     require_existing_proof=True, forbidden_secret=bearer_value,
+                                     registrar=registrar)
         if identity.get("control_user"):
             store.record_control_event(identity["id"], "agent_registered", result["agent"]["id"])
         return JSONResponse(result, status_code=201, headers={"Cache-Control": "no-store"})
@@ -1762,6 +1832,9 @@ def create_app():
                    description=body.description, capabilities=body.capabilities,
                    token_hash=hashlib.sha256(token.encode()).hexdigest(),
                    recovery_hash=hashlib.sha256(recovery_secret.encode()).hexdigest() if recovery_secret else None,
+                   created_by_account_id=profile.get("created_by_account_id"),
+                   created_by_username=profile.get("created_by_username", ""),
+                   registration_method="profile_enrollment",
                    workspace_id=profile.get("workspace_id") or DEFAULT_WORKSPACE_ID)
         created = store.enroll_profile_instance(profile_id, row)
         if not created and not (proof or recovery_secret):

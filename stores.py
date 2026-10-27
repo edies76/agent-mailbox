@@ -151,9 +151,10 @@ class SQLiteStore(CollaborationStore):
     def register(self, row):
         with self.database() as db:
             try:
-                db.execute("INSERT INTO agents (id, name, kind, project, token_hash, created_at, last_seen, description, capabilities_json, workspace_id, recovery_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                db.execute("INSERT INTO agents (id, name, kind, project, token_hash, created_at, last_seen, description, capabilities_json, workspace_id, recovery_hash, created_by_account_id, created_by_username, registration_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                            tuple(row.get(k, "") for k in ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "description")) +
-                           (json.dumps(row.get("capabilities", []), ensure_ascii=False), row.get("workspace_id", DEFAULT_WORKSPACE_ID), row.get("recovery_hash")))
+                           (json.dumps(row.get("capabilities", []), ensure_ascii=False), row.get("workspace_id", DEFAULT_WORKSPACE_ID), row.get("recovery_hash"),
+                            row.get("created_by_account_id"), row.get("created_by_username", ""), row.get("registration_method", "unknown")))
             except sqlite3.IntegrityError:
                 if db.execute("SELECT 1 FROM agents WHERE id=?", (row["id"],)).fetchone():
                     return False
