@@ -42,11 +42,12 @@
     clearInterval(timer);currentUser=null;document.body.classList.add('auth-locked');
     try{const status=await api('/auth/status');setupRequired=status.setup_required;byId('setup-form').hidden=!setupRequired;byId('login-form').hidden=setupRequired;const localSetup=setupRequired&&status.local_setup_available;byId('setup-key-field').hidden=localSetup;byId('setup-key').required=!localSetup;byId('setup-local-hint').hidden=!localSetup;}
     catch{setupRequired=false;byId('setup-form').hidden=true;byId('login-form').hidden=false;}
-    byId('access-key-form').hidden=true;
+    byId('access-key-form').hidden=true;byId('signup-form').hidden=true;
     byId('login').hidden=false;byId('connection').textContent='Inicia sesión';
   }
-  function showAccessKeyLogin(){byId('login-form').hidden=true;byId('setup-form').hidden=true;byId('access-key-form').hidden=false;byId('access-key').focus();}
-  function showPasswordLogin(){byId('access-key-form').hidden=true;byId('setup-form').hidden=!setupRequired;byId('login-form').hidden=setupRequired;}
+  function showAccessKeyLogin(){byId('login-form').hidden=true;byId('signup-form').hidden=true;byId('setup-form').hidden=true;byId('access-key-form').hidden=false;byId('access-key').focus();}
+  function showPasswordLogin(){byId('access-key-form').hidden=true;byId('signup-form').hidden=true;byId('setup-form').hidden=!setupRequired;byId('login-form').hidden=setupRequired;}
+  function showSignup(){byId('login-form').hidden=true;byId('setup-form').hidden=true;byId('access-key-form').hidden=true;byId('signup-form').hidden=false;byId('signup-error').textContent='';byId('signup-username').focus();}
   async function load() {
     try {
       const session=await api('/auth/session');currentUser={...session.user,auth_method:session.auth_method};
@@ -199,8 +200,10 @@
   byId('agent-filter').addEventListener('input',()=>view&&renderAgents(view.agents,view.permissions));byId('agent-state').addEventListener('change',()=>view&&renderAgents(view.agents,view.permissions));byId('event-filter').addEventListener('change',()=>view&&renderMessages(view.messages,view.agents,view.permissions));
   byId('login-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;byId('login-error').textContent='';try{await api('/auth/login','POST',{username:byId('account-username').value,password:byId('account-password').value});byId('account-password').value='';await load();if(byId('login').hidden){clearInterval(timer);timer=setInterval(load,15000);}}catch(error){byId('login-error').textContent=error.message;}finally{button.disabled=false;}});
   byId('use-access-key').onclick=showAccessKeyLogin;byId('setup-use-access-key').onclick=showAccessKeyLogin;byId('use-password-login').onclick=showPasswordLogin;
+  byId('use-signup').onclick=showSignup;byId('signup-back').onclick=showPasswordLogin;
   byId('access-key-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;byId('access-key-error').textContent='';try{await api('/auth/key-login','POST',{access_key:byId('access-key').value});byId('access-key').value='';await load();if(byId('login').hidden){clearInterval(timer);timer=setInterval(load,15000);}}catch(error){byId('access-key-error').textContent=error.message;}finally{button.disabled=false;}});
   byId('setup-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;byId('setup-error').textContent='';try{await api('/auth/setup','POST',{setup_key:byId('setup-key-field').hidden?'':byId('setup-key').value,username:byId('setup-username').value,password:byId('setup-password').value});byId('setup-key').value='';byId('setup-password').value='';await load();if(byId('login').hidden){clearInterval(timer);timer=setInterval(load,15000);}}catch(error){byId('setup-error').textContent=error.message;}finally{button.disabled=false;}});
+  byId('signup-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;byId('signup-error').textContent='';try{await api('/auth/signup','POST',{username:byId('signup-username').value,password:byId('signup-password').value,workspace_name:byId('signup-workspace').value});byId('signup-password').value='';await load();if(byId('login').hidden){clearInterval(timer);timer=setInterval(load,15000);}}catch(error){byId('signup-error').textContent=error.message;}finally{button.disabled=false;}});
   byId('logout').addEventListener('click',async()=>{try{await api('/auth/logout','POST',{});}catch{}agentRegistrationSecrets.clear();newAgentAccess=null;rotationPendingAgent=null;byId('rotated-agent-token').value='';for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(key?.startsWith('agent-mailbox-rotation:'))sessionStorage.removeItem(key);}view=null;await showLogin();});
   let resizeFrame;new ResizeObserver(()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(()=>view&&renderMessages(view.messages,view.agents,view.permissions));}).observe(byId('map'));
   load().then(()=>{if(byId('login').hidden)timer=setInterval(load,15000);});

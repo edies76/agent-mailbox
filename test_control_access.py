@@ -410,6 +410,25 @@ class AccountRegistrationKeyTests(unittest.TestCase):
         self.request("POST", "/join/secure", old_key,
                      {"name": "Should fail", "kind": "other", "session_key": "old-key-session"}, 401)
 
+    def test_public_signup_creates_a_private_workspace_without_install_key(self):
+        owner_cookies = http.cookiejar.CookieJar()
+        owner = build_opener(HTTPCookieProcessor(owner_cookies))
+        status = self.browser_request(owner, "/auth/status")
+        if status["setup_required"]:
+            self.browser_request(owner, "/auth/setup", "POST", {
+                "setup_key": self.admin, "username": "SignupOwner", "password": "signup-owner-password-42"}, expected=201)
+        else:
+            self.browser_request(owner, "/auth/login", "POST", {
+                "username": "ProfileOwner", "password": "profile-owner-password-42"}, expected=200)
+        signup_cookies = http.cookiejar.CookieJar()
+        signup = build_opener(HTTPCookieProcessor(signup_cookies))
+        created = self.browser_request(signup, "/auth/signup", "POST", {
+            "username": "NewWorkspaceUser", "password": "new-workspace-password-42", "workspace_name": "Independent Agents"}, expected=201)
+        self.assertEqual(created["user"]["role"], "workspace_owner")
+        profile = self.browser_request(signup, "/account/profile")
+        self.assertEqual(profile["account"]["username"], "NewWorkspaceUser")
+        self.assertEqual(profile["workspace"]["name"], "Independent Agents")
+
 
 class LocalBootstrapTests(unittest.TestCase):
     setUpClass = classmethod(http_tests.MailboxTests.setUpClass.__func__)

@@ -177,6 +177,13 @@ class WorkspaceSignup(BaseModel):
     workspace_name: str = Field(min_length=2, max_length=80)
 
 
+class AccountSignup(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
+    password: str = Field(min_length=12, max_length=256)
+    workspace_name: str = Field(min_length=2, max_length=80)
+
+
 class WorkspaceInviteCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expires_in_hours: int = Field(default=168, ge=1, le=720)
@@ -451,7 +458,7 @@ def create_app():
 
     @app.middleware("http")
     async def account_csrf_guard(request, call_next):
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in {"/auth/login", "/auth/setup", "/auth/key-login", "/auth/register"} and not request.headers.get("authorization"):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in {"/auth/login", "/auth/setup", "/auth/key-login", "/auth/register", "/auth/signup"} and not request.headers.get("authorization"):
             session_token = request_session_token(request)
             if session_token:
                 session = web_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())
@@ -860,6 +867,30 @@ def create_app():
             raise
         store.record_account_login(rate_key, now, True)
         store.record_control_event("workspace-invite", "workspace_owner_registered", account["id"])
+        return establish_account_session(account, request, status_code=201)
+
+    @app.post("/auth/signup", status_code=201)
+    def signup_workspace_account(body: AccountSignup, request: Request):
+        if not store.owner_account_exists():
+            raise HTTPException(409, "The server owner must complete first-time setup before new accounts can sign up")
+        username = body.username.strip()
+        rate_key = account_login_rate_key(username.casefold(), request)
+        if not store.account_login_allowed(rate_key, time.time()):
+            raise HTTPException(429, "Too many account attempts. Retry in 15 minutes.",
+                                headers={"Retry-After": "900"})
+        now = time.time()
+        workspace = {"id": str(uuid4()), "name": body.workspace_name.strip(), "created_at": now}
+        user = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
+                "password_hash": request_password_hash(body.password), "role": "workspace_owner",
+                "created_at": now, "last_login_at": now, "disabled_at": None,
+                "workspace_id": workspace["id"]}
+        try:
+            account = store.create_workspace_account(user, workspace)
+        except HTTPException:
+            store.record_account_login(rate_key, now, False)
+            raise
+        store.record_account_login(rate_key, now, True)
+        store.record_control_event("self-signup", "workspace_account_registered", account["id"])
         return establish_account_session(account, request, status_code=201)
 
     @app.post("/auth/key-login")
@@ -1541,6 +1572,8 @@ def create_app():
                 "account_registration_keys": {"enabled": True, "endpoint": "/account/registration-key",
                                                "scope": "per-account workspace", "shown_once": True,
                                                "rotation_revokes_previous": True},
+                "account_signup": {"enabled": True, "endpoint": "/auth/signup",
+                                    "requires_owner_setup": True, "creates_private_workspace": True},
                 "workspaces": {"enabled": True, "one_time_invites": True,
                                "directory": "own workspace and accepted connections",
                                "message_access": "only between agents in the same or connected workspaces",

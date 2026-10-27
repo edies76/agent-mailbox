@@ -613,6 +613,30 @@ class CollaborationStore:
         create(self.client.transaction(max_attempts=5))
         return row
 
+    def create_workspace_account(self, row, workspace):
+        if hasattr(self, "database"):
+            with self.database() as db:
+                db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM account_users WHERE username_norm=?", (row["username_norm"],)).fetchone():
+                    raise HTTPException(409, "Username is already taken")
+                db.execute("INSERT INTO workspaces (id,name,created_at) VALUES (?,?,?)",
+                           (workspace["id"], workspace["name"], workspace["created_at"]))
+                db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at,workspace_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                           (row["id"], row["username"], row["username_norm"], row["password_hash"], row["role"], row["created_at"], row.get("last_login_at"), None, workspace["id"]))
+            return row | {"workspace_id": workspace["id"]}
+        workspace_ref = self.client.collection("workspaces").document(workspace["id"])
+        user_ref = self.client.collection("account_users").document(row["id"])
+        username_ref = self.client.collection("account_usernames").document(row["username_norm"])
+        @self.firestore.transactional
+        def create(transaction):
+            if username_ref.get(transaction=transaction).exists:
+                raise HTTPException(409, "Username is already taken")
+            transaction.create(workspace_ref, workspace)
+            transaction.create(user_ref, row | {"workspace_id": workspace["id"], "last_login_at": row.get("last_login_at"), "disabled_at": None})
+            transaction.create(username_ref, {"user_id": row["id"]})
+        create(self.client.transaction(max_attempts=5))
+        return row | {"workspace_id": workspace["id"]}
+
     def all_account_users(self, workspace_id=None):
         if hasattr(self, "database"):
             with self.database() as db:

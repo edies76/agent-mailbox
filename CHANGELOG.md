@@ -24,6 +24,11 @@
 
 - Document the account profile and per-account agent connection key workflow for humans and agents.
 
+## 0.3.29
+
+- Add visible self-service account creation from `/dashboard` with a private workspace per signup.
+- Keep first-owner bootstrap protected while allowing later users to register without an installation key.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

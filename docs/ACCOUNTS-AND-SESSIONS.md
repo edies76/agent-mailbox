@@ -17,6 +17,11 @@ gcloud secrets versions access latest --secret=agent-mailbox-admin-key --project
 
 Si ya existe una cuenta propietaria, las demás personas no necesitan esa clave: el propietario crea sus cuentas en **Control Room → Cuentas del equipo** y les da un usuario y una contraseña.
 
+También pueden crear una cuenta independiente desde **Crear cuenta nueva** en `/dashboard`. El alta
+solicita solo usuario, contraseña y nombre del workspace; crea un espacio privado como dueño de
+workspace y entra directamente al panel. La única excepción es un servidor que todavía no tiene
+propietario: primero debe completarse la configuración inicial de una sola vez.
+
 La aplicación guarda contraseñas con Argon2id (19 MiB, dos iteraciones, paralelo 1) y una sal aleatoria. Limita a cuatro los cálculos de contraseña simultáneos y bloquea temporalmente el inicio de sesión tras seis intentos fallidos dentro de 15 minutos. Las sesiones usan cookies `HttpOnly`, `Secure` en HTTPS y `SameSite=Strict`, además de verificación CSRF para acciones que cambian datos.
 
 El primer usuario tiene rol **Propietario**. Puede crear cuentas de equipo con los roles **Operador** y **Observador**, y desactivar sus accesos desde **Cuentas del equipo**. El operador administra instancias y puede ver el contenido del panel; el observador ve actividad redactada. Ambos usan cuentas separadas con contraseña y sesión propia.
