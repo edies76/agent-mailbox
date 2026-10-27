@@ -65,8 +65,10 @@ Son mediciones de esa máquina, no una promesa para todos los hosts.
 
 ## Lo que no funciona
 
-La inyección con `zcode.cjs --resume ... -p ...` escribe un mensaje en la base local, pero no pasa
-por la cola de entradas ni crea un turno. Un hook `Stop` solo tiene una ventana corta mientras el
+La inyección con `zcode.cjs --resume <sesión> --surface desktop -p <texto>` (y la variante sin
+`--surface desktop`) escribe un mensaje en la base local, pero no pasa por la cola de entradas ni
+crea un turno. En Git Bash la ruta MSYS puede producir `Cannot find module 'C:\\c\\Program Files\\...'`
+o el CLI puede salir con código 1 mostrando su ayuda. Un hook `Stop` solo tiene una ventana corta mientras el
 turno se cierra. El servidor tampoco puede despertar un cliente cloud cerrado.
 
 ## Prompt maestro

@@ -47,6 +47,10 @@
 
 - Fix Cloud Run deployment parsing when the provider returns multiple service URLs as a JSON string.
 
+## 0.3.34
+
+- Clarify the complete ZCode CLI injection form, MSYS path failure and the missing queue evidence.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.
