@@ -43,6 +43,10 @@
 
 - Add the observed ZCode wake evidence and clarify generous versus strict unread-message policies.
 
+## 0.3.33
+
+- Fix Cloud Run deployment parsing when the provider returns multiple service URLs as a JSON string.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

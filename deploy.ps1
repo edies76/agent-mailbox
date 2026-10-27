@@ -69,8 +69,8 @@ $serviceUrl = $serviceDescription.status.url
 $mcpHosts = @(([Uri]$serviceUrl).Host)
 $runUrls = $serviceDescription.metadata.annotations.'run.googleapis.com/urls'
 if ($runUrls) {
-    if ($runUrls -is [string]) { $runUrls = @($runUrls | ConvertFrom-Json) }
-    foreach ($runUrl in @($runUrls)) { $mcpHosts += ([Uri]([string]$runUrl)).Host }
+    $runUrlValues = if ($runUrls -is [string]) { ConvertFrom-Json -InputObject $runUrls } else { $runUrls }
+    foreach ($runUrl in $runUrlValues) { $mcpHosts += ([Uri]([string]$runUrl)).Host }
 }
 $previousHosts = $serviceDescription.spec.template.spec.containers[0].env | Where-Object name -eq 'MAILBOX_MCP_ALLOWED_HOSTS'
 if ($previousHosts.value) { $mcpHosts += $previousHosts.value -split ',' }
