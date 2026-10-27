@@ -4,16 +4,23 @@ import base64
 import io
 import json
 import hashlib
+import hmac
+import sqlite3
+import time
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from zipfile import ZipFile
+from uuid import UUID, uuid5
 
 import test_mailbox as http_tests
+from fastapi import HTTPException
+from stores import SQLiteStore
 from adapters.mailbox_hook import bind_session, format_context, handle_hook_event, hook_response
 
 
@@ -29,15 +36,18 @@ class CollaborationTests(unittest.TestCase):
         return self.request("POST", "/profiles", self.a_token,
                             {"name": "ZCode", "kind": "zcode", "project": "Lunar"}, 201)
 
-    def enroll(self, profile, key):
-        return self.request("POST", f"/profiles/{profile['profile']['id']}/instances",
-                            profile["enrollment_token"], {"instance_name": key, "session_key": key}, 201)
+    def enroll(self, profile, key, instance_token=None, expected=201, recovery_secret=None):
+        headers = ({"X-Mailbox-Instance-Token": instance_token} if instance_token else
+                   {"X-Mailbox-Recovery-Secret": recovery_secret} if recovery_secret else None)
+        return self.request("POST", f"/profiles/{profile['profile']['id']}/instances/secure",
+                            profile["enrollment_token"], {"instance_name": key, "session_key": key}, expected,
+                            extra_headers=headers)
 
     def test_all_registration_paths_deliver_the_same_instance_bound_onboarding(self):
         joined = self.request("POST", "/join", self.join_key, {"name": "HTTP newcomer"}, 201)
         profile = self.profile()
         enrolled = self.enroll(profile, "onboarding-native-chat")
-        resumed = self.enroll(profile, "onboarding-native-chat")
+        resumed = self.enroll(profile, "onboarding-native-chat", enrolled["token"])
         self.assertEqual(enrolled["agent"]["id"], resumed["agent"]["id"])
         self.assertTrue(resumed["resumed"])
         for registration in (self.a, joined, enrolled, resumed):
@@ -150,8 +160,12 @@ class CollaborationTests(unittest.TestCase):
     def test_profile_enrollment_resumes_native_chat_without_sharing_inbox(self):
         profile = self.profile()
         second = self.enroll(profile, "chat-native-2")
-        same = self.enroll(profile, "chat-native-2")
-        third = self.enroll(profile, "chat-native-3")
+        self.enroll(profile, "chat-native-2", expected=409)
+        self.enroll(profile, "chat-native-2", "wrong", expected=409)
+        same = self.enroll(profile, "chat-native-2", second["token"])
+        third = self.enroll(profile, "chat-native-3", recovery_secret="a" * 43)
+        self.assertNotEqual(third["token"], "a" * 43)
+        self.assertEqual(self.enroll(profile, "chat-native-3", recovery_secret="a" * 43)["token"], third["token"])
         self.assertEqual(second["agent"]["id"], same["agent"]["id"])
         self.assertEqual(second["token"], same["token"])
         self.assertNotEqual(second["agent"]["id"], third["agent"]["id"])
@@ -164,6 +178,57 @@ class CollaborationTests(unittest.TestCase):
         for instance in (self.a_id, second["agent"]["id"], third["agent"]["id"]):
             self.request("DELETE", f"/profiles/{profile['profile']['id']}/instances/{instance}", profile["enrollment_token"])
         self.request("DELETE", f"/profiles/{profile['profile']['id']}", profile["enrollment_token"])
+
+    def test_rotate_legacy_profile_token_keeps_inbox_and_revokes_derived_and_named_keys(self):
+        profile = self.profile()
+        session = "legacy-native-chat"
+        enrolled = self.enroll(profile, session)
+        instance_id = enrolled["agent"]["id"]
+        derived_id = str(uuid5(UUID(profile["profile"]["id"]), session))
+        legacy_token = hmac.new(profile["enrollment_token"].encode(), derived_id.encode(), hashlib.sha256).hexdigest()
+        self.assertNotEqual(enrolled["token"], legacy_token)
+        with closing(sqlite3.connect(self.db_path)) as db, db:
+            db.execute("UPDATE agents SET token_hash=? WHERE id=?",
+                       (hashlib.sha256(legacy_token.encode()).hexdigest(), instance_id))
+        self.request("GET", "/agents/me", legacy_token)
+        key = self.request("POST", "/agents/me/api-keys", legacy_token, {"name": "old client"}, 201)["token"]
+        message = self.request("POST", "/messages", self.b_token,
+                               {"to_agent_id": instance_id, "text": "Keep this history"}, 201)
+        recovery_secret = "r" * 43
+        rotation_headers = {"X-Mailbox-Recovery-Secret": recovery_secret, "X-Mailbox-Expected-Epoch": "0"}
+        rotated = self.request("POST", f"/dashboard/agents/{instance_id}/rotate-token", self.admin, {}, 200,
+                               extra_headers=rotation_headers)
+        self.request("GET", "/inbox", legacy_token, expected=401)
+        self.request("GET", "/inbox", key, expected=401)
+        with closing(sqlite3.connect(self.db_path)) as db:
+            legacy_query = db.execute("SELECT id FROM agent_api_keys WHERE token_hash=? AND revoked_at IS NULL",
+                                      (hashlib.sha256(key.encode()).hexdigest(),)).fetchone()
+        self.assertIsNone(legacy_query, "older releases must not accept a rotated API key")
+        with self.assertRaises(HTTPException) as failure:
+            SQLiteStore(self.db_path).create_agent_api_key(
+                {"id": "late-key", "agent_id": instance_id, "name": "racing client", "key_prefix": "test",
+                 "token_hash": hashlib.sha256(b"late-key").hexdigest(), "created_at": time.time()},
+                hashlib.sha256(legacy_token.encode()).hexdigest())
+        self.assertEqual(failure.exception.status_code, 401)
+        inbox = self.request("GET", "/inbox", rotated["token"])
+        self.assertEqual(inbox["messages"][0]["id"], message["id"])
+        new_key = self.request("POST", "/agents/me/api-keys", rotated["token"], {"name": "new client"}, 201)["token"]
+        replayed = self.request("POST", f"/dashboard/agents/{instance_id}/rotate-token", self.admin, {}, 200,
+                                extra_headers=rotation_headers)
+        self.assertTrue(replayed["replayed"])
+        self.assertEqual(replayed["token"], rotated["token"])
+        self.request("GET", "/inbox", new_key)
+        next_secret = "s" * 43
+        next_rotation = self.request("POST", f"/dashboard/agents/{instance_id}/rotate-token", self.admin, {}, 200,
+                                     extra_headers={"X-Mailbox-Recovery-Secret": next_secret, "X-Mailbox-Expected-Epoch": "1"})
+        self.request("POST", f"/dashboard/agents/{instance_id}/rotate-token", self.admin, {}, 409,
+                     extra_headers=rotation_headers)
+        self.request("GET", "/inbox", rotated["token"], expected=401)
+        self.request("GET", "/inbox", new_key, expected=401)
+        self.enroll(profile, session, legacy_token, expected=409)
+        resumed = self.enroll(profile, session, next_rotation["token"])
+        self.assertEqual(resumed["agent"]["id"], instance_id)
+        self.assertEqual(self.enroll(profile, session, recovery_secret=next_secret)["token"], next_rotation["token"])
 
     def test_codex_session_start_auto_binds_one_independent_instance_per_chat(self):
         config = {"url": "https://mail.example", "profile_id": "profile-codex",
@@ -285,13 +350,17 @@ class CollaborationTests(unittest.TestCase):
                       "on_message_command": ["python", "mailbox_spool.py", "--bank-dir", "private-bank"]}
             path = Path(directory) / "zcode.json"
             def response(request, **kwargs):
+                if request.get_method() == "GET":
+                    return io.BytesIO(json.dumps({"secure_registration": {"version": 1}}).encode())
                 key = json.loads(request.data)["session_key"]
-                return io.BytesIO(json.dumps({"agent": {"id": key}, "token": "private-token"}).encode())
+                secret = request.get_header("X-mailbox-recovery-secret")
+                token = hmac.new(secret.encode(), ("agent-mailbox-instance:" + key).encode(), hashlib.sha256).hexdigest()
+                return io.BytesIO(json.dumps({"agent": {"id": key, "profile_id": "p1"}, "token": token}).encode())
             with patch("adapters.mailbox_hook.urlopen", side_effect=response) as mocked:
                 first = bind_session(config, path, "zcode", "native-1")
                 same = bind_session(config, path, "zcode", "native-1")
                 other = bind_session(config, path, "zcode", "native-2")
-            self.assertEqual(mocked.call_count, 2)
+            self.assertEqual(mocked.call_count, 4)
             self.assertEqual(first["agent_id"], same["agent_id"])
             self.assertNotEqual(first["agent_id"], other["agent_id"])
             saved = json.loads(Path(first["bound_config_path"]).read_text(encoding="utf-8"))
@@ -300,8 +369,85 @@ class CollaborationTests(unittest.TestCase):
             context = format_context([], first)
             self.assertIn(first["agent_id"], context)
             self.assertIn("MASTER_PROMPT.md", context)
-            self.assertNotIn("private-token", context)
+            self.assertNotIn(first["token"], context)
+            self.assertNotIn(first["recovery_secret"], context)
             self.assertNotIn("private-key", context)
+
+    def test_hook_preserves_pending_proof_after_lost_response_and_rejects_wrong_server(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.json"
+            config = {"url": "https://mail.example", "profile_id": "p1", "enrollment_token": "key"}
+            proofs = []
+            def response(request, **kwargs):
+                if request.get_method() == "GET":
+                    return io.BytesIO(json.dumps({"secure_registration": {"version": 1}}).encode())
+                secret = request.get_header("X-mailbox-recovery-secret")
+                proofs.append(secret)
+                if len(proofs) == 1:
+                    raise OSError("simulated lost response")
+                token = hmac.new(secret.encode(), b"agent-mailbox-instance:agent", hashlib.sha256).hexdigest()
+                return io.BytesIO(json.dumps({"agent": {"id": "agent", "profile_id": "p1"}, "token": token}).encode())
+            with patch("adapters.mailbox_hook.urlopen", side_effect=response):
+                with self.assertRaises(OSError):
+                    bind_session(config, path, "codex", "session-1")
+                bound = bind_session(config, path, "codex", "session-1")
+            self.assertEqual(proofs[0], proofs[1])
+            self.assertEqual(bound["recovery_secret"], proofs[0])
+            self.assertNotEqual(bound["token"], proofs[0])
+            self.assertFalse(list(Path(directory).rglob("*.pending")))
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                bind_session({**config, "url": "https://other.example"}, path, "codex", "session-1")
+
+    def test_codex_hook_disables_only_its_generated_wake_when_opt_in_is_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.json"
+            config = {"url": "https://mail.example", "profile_id": "p1", "enrollment_token": "key", "wake_on_message": True}
+            def response(request, **kwargs):
+                if request.get_method() == "GET":
+                    return io.BytesIO(json.dumps({"secure_registration": {"version": 1}}).encode())
+                secret = request.get_header("X-mailbox-recovery-secret")
+                token = hmac.new(secret.encode(), b"agent-mailbox-instance:agent", hashlib.sha256).hexdigest()
+                return io.BytesIO(json.dumps({"agent": {"id": "agent", "profile_id": "p1"},
+                                             "token": token}).encode())
+            with patch("adapters.mailbox_hook.urlopen", side_effect=response):
+                enabled = bind_session(config, path, "codex", "session-1")
+            self.assertTrue(enabled["wake"]["enabled"])
+            disabled = bind_session({**config, "wake_on_message": False}, path, "codex", "session-1")
+            self.assertFalse(disabled["wake"]["enabled"])
+            self.assertNotIn("on_wake_command", disabled)
+            saved_path = Path(enabled["bound_config_path"])
+            legacy = json.loads(saved_path.read_text(encoding="utf-8"))
+            legacy["wake"]["enabled"] = True
+            legacy["on_message_command"] = enabled["on_wake_command"]
+            saved_path.write_text(json.dumps(legacy), encoding="utf-8")
+            disabled_legacy = bind_session({**config, "wake_on_message": False}, path, "codex", "session-1")
+            self.assertFalse(disabled_legacy["wake"]["enabled"])
+            self.assertNotIn("on_message_command", disabled_legacy)
+            custom = bind_session({**config, "wake_on_message": False, "on_wake_command": ["custom-adapter"]},
+                                  path, "codex", "session-1")
+            self.assertEqual(custom["on_wake_command"], ["custom-adapter"])
+
+    def test_hook_rejects_old_server_before_registering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = {"url": "https://old.example", "profile_id": "p1", "enrollment_token": "key"}
+            with patch("adapters.mailbox_hook.urlopen", return_value=io.BytesIO(b'{"version":"0.3.20"}')) as mocked:
+                with self.assertRaisesRegex(ValueError, "secure registration"):
+                    bind_session(config, Path(directory) / "profile.json", "codex", "session-1")
+            self.assertEqual(mocked.call_count, 1)
+            self.assertFalse(list(Path(directory).rglob("*.pending")))
+
+    def test_inbox_failure_reports_bound_instance_separately_from_binding_failure(self):
+        config = {"url": "https://mail.example", "profile_id": "p1", "enrollment_token": "private"}
+        bound = {**config, "agent_id": "instance-1", "bound_config_path": "private/chat.json",
+                 "client_script": "private/mailbox_client.py"}
+        with (patch("adapters.mailbox_hook.read_config", return_value=config),
+              patch("adapters.mailbox_hook.bind_session", return_value=bound),
+              patch("adapters.mailbox_hook.get_pending", side_effect=OSError("offline"))):
+            output = handle_hook_event("codex", {"hook_event_name": "SessionStart", "session_id": "chat"}, "private/profile.json")
+        context = output["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("binding succeeded", context)
+        self.assertIn("inbox check failed (OSError)", context)
+        self.assertIn("private/chat.json", context)
 
     def test_only_one_concurrent_final_reply_is_committed(self):
         message = self.request("POST", "/messages", self.a_token,

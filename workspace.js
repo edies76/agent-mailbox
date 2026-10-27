@@ -3,6 +3,8 @@ const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n=document.createElement(tag); if(cls)n.className=cls; if(text!==undefined)n.textContent=text; return n; };
 const labels={queued:'En cola',in_progress:'En análisis',completed:'Respondido',blocked:'Bloqueado',cancelled:'Cancelado'};
 const state={token:sessionStorage.getItem('mailbox-instance-token')||'',me:null,agents:[],box:'inbox',rows:[],cursor:0,more:false,selected:null,timer:null,busy:false,reloadQueued:false,readerGeneration:0};
+let attachmentLimit=8*1024*1024;
+fetch('/capabilities',{cache:'no-store'}).then(response=>response.json()).then(data=>{const limit=Number(data.attachments?.total_bytes);if(Number.isFinite(limit)&&limit>0)attachmentLimit=limit;const label=document.querySelector('label[for="request-files"]');if(label)label.textContent=`Archivos o imágenes · hasta 3 y ${attachmentLimit/(1024*1024)} MiB en total`;}).catch(()=>{});
 let imageURL=null;
 const retryKeys=new WeakMap();
 function retryBody(form,body){const payload=JSON.stringify(body), previous=retryKeys.get(form);const key=previous?.payload===payload?previous.key:crypto.randomUUID();retryKeys.set(form,{payload,key});return {...body,idempotency_key:key};}
@@ -102,7 +104,7 @@ function appendReply(reader,row){
   const progress=make('button','text-button small','Marcar en análisis');progress.onclick=async()=>{try{await api(`/messages/${row.id}/status`,'PATCH',{status:'in_progress',note:'Investigando la solicitud'});await openMessage(row.id);await loadMail(true);}catch(error){fail(error);}};reader.append(progress);
 }
 async function encodeFiles(files){
-  const list=[...files];if(list.length>3||list.reduce((n,f)=>n+f.size,0)>10*1024*1024)throw new Error('Máximo 3 archivos y 10 MiB en total.');
+  const list=[...files];if(list.length>3||list.reduce((n,f)=>n+f.size,0)>attachmentLimit)throw new Error(`Máximo 3 archivos y ${attachmentLimit/(1024*1024)} MiB en total para este servidor.`);
   return Promise.all(list.map(file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve({filename:file.name,media_type:file.type||'application/octet-stream',data_base64:String(reader.result).split(',')[1]});reader.onerror=()=>reject(new Error('No se pudo leer el archivo.'));reader.readAsDataURL(file);})));
 }
 async function download(id,file){

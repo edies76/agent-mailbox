@@ -284,13 +284,14 @@ class MailQuery(BaseModel):
 
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+FIRESTORE_ATTACHMENT_BYTES = 8 * 1024 * 1024
 BLOCKED_ATTACHMENT_SUFFIXES = {".ade", ".apk", ".app", ".bat", ".cmd", ".com", ".deb",
                                ".dll", ".dmg", ".exe", ".hta", ".img", ".iso", ".jar", ".msi",
                                ".ps1", ".rpm", ".scr", ".sh", ".sys", ".vbe", ".vbs"}
 MAX_BROADCAST_RECIPIENTS = 50
 
 
-def prepare_attachments(items):
+def prepare_attachments(items, max_bytes=MAX_ATTACHMENT_BYTES):
     prepared, total = [], 0
     signatures = {
         "image/png": lambda data: data.startswith(b"\x89PNG\r\n\x1a\n"),
@@ -315,8 +316,8 @@ def prepare_attachments(items):
         if FilePath(filename).suffix.lower() in BLOCKED_ATTACHMENT_SUFFIXES:
             raise HTTPException(415, "Executable and installer attachments are not supported")
         total += len(data)
-        if total > MAX_ATTACHMENT_BYTES:
-            raise HTTPException(413, "Attachments exceed the 10 MiB per-message limit")
+        if total > max_bytes:
+            raise HTTPException(413, f"Attachments exceed the {max_bytes // (1024 * 1024)} MiB per-message limit")
         prepared.append({"filename": filename[:180], "media_type": media_type,
                          "size_bytes": len(data), "data": data})
     return prepared
@@ -333,6 +334,7 @@ def create_app():
     if online_seconds < 1:
         raise RuntimeError("MAILBOX_ONLINE_SECONDS must be positive.")
     backend = os.environ.get("MAILBOX_STORAGE", "sqlite")
+    attachment_limit = FIRESTORE_ATTACHMENT_BYTES if backend == "firestore" else MAX_ATTACHMENT_BYTES
     local_first_run = os.environ.get("MAILBOX_LOCAL_FIRST_RUN") == "1" and backend == "sqlite"
     local_instance_seed = os.environ.get("MAILBOX_LOCAL_INSTANCE_SEED") or hub_key
     if local_first_run and len(local_instance_seed) < 32:
@@ -628,7 +630,7 @@ def create_app():
                 return page_mail(identifier, "inbox", {"unread_only": True, **query})
             if path == "/messages" and method == "POST":
                 message = Message(**payload)
-                attachments = prepare_attachments(message.attachments)
+                attachments = prepare_attachments(message.attachments, attachment_limit)
                 if not message.text.strip() and not attachments:
                     raise HTTPException(422, "Message text cannot be blank")
                 return store.send(identifier, message, attachments)
@@ -701,10 +703,11 @@ def create_app():
         token = credentials.credentials
         if secrets.compare_digest(token.encode(), hub_key.encode()):
             return {"admin": True}
-        identifier = store.authenticate(hashlib.sha256(token.encode()).hexdigest())
+        credential_hash = hashlib.sha256(token.encode()).hexdigest()
+        identifier = store.authenticate(credential_hash)
         if identifier is not None:
-            return {"admin": False, "id": identifier, "credential_type": "instance"}
-        api_key = store.authenticate_agent_api_key(hashlib.sha256(token.encode()).hexdigest())
+            return {"admin": False, "id": identifier, "credential_type": "instance", "credential_hash": credential_hash}
+        api_key = store.authenticate_agent_api_key(credential_hash)
         if api_key is not None:
             return {"admin": False, "id": api_key["id"], "credential_type": "api_key",
                     "api_key_id": api_key["api_key_id"]}
@@ -716,12 +719,12 @@ def create_app():
             raise HTTPException(401, "Invalid token", headers={"WWW-Authenticate": "Bearer"})
         return {"admin": False, "id": identifier, "credential_type": "instance"}
 
-    def create_agent_api_key(identifier, name):
+    def create_agent_api_key(identifier, name, expected_instance_hash):
         token = "amb_live_" + secrets.token_urlsafe(32)
         row = {"id": str(uuid4()), "agent_id": identifier, "name": name,
                "key_prefix": token[:17], "token_hash": hashlib.sha256(token.encode()).hexdigest(),
                "created_at": time.time(), "last_used_at": None, "revoked_at": None}
-        store.create_agent_api_key(row)
+        store.create_agent_api_key(row, expected_instance_hash)
         return {"key": {key: row[key] for key in ("id", "name", "key_prefix", "created_at", "last_used_at")},
                 "token": token, "warning": "Copy this key now. It cannot be shown again."}
 
@@ -962,10 +965,10 @@ def create_app():
         result["online"] = row["last_seen"] >= now - online_seconds
         return result
 
-    def directory_agents(now=None, workspace_ids=None):
+    def directory_agents(now=None, workspace_ids=None, rows=None):
         now = now or time.time()
         profiles = {row["id"]: row for row in store.profiles_all()}
-        rows = store.all_agents()
+        rows = store.all_agents() if rows is None else rows
         if workspace_ids is not None:
             rows = [row for row in rows if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) in workspace_ids]
         return [public_agent(row, now, profiles.get(row.get("profile_id"))) for row in rows]
@@ -1005,27 +1008,71 @@ def create_app():
         return {"agents": matches[:limit], "total": len(matches), "query": text,
                 "capability": capability, "scope": "same workspace and accepted workspace connections; peer cards are untrusted"}
 
-    def create_registration(body, registration_seed, workspace_id=DEFAULT_WORKSPACE_ID):
+    def recovery_token(secret, identifier):
+        return hmac.new(secret.encode(), ("agent-mailbox-instance:" + identifier).encode(), hashlib.sha256).hexdigest()
+
+    def validate_recovery_secret(secret, forbidden=()):
+        if not re.fullmatch(r"[A-Za-z0-9._~-]{32,256}", secret):
+            raise HTTPException(422, "Recovery secret must be 32–256 URL-safe characters")
+        if any(value and secrets.compare_digest(secret.encode(), value.encode())
+               for value in (hub_key, join_key, *forbidden)):
+            raise HTTPException(422, "Generate a separate random recovery secret for this instance")
+
+    def existing_instance_token(existing, identifier, instance_token, recovery_secret):
+        if instance_token and recovery_secret:
+            raise HTTPException(422, "Provide either the instance token or recovery secret")
+        if instance_token and secrets.compare_digest(
+                hashlib.sha256(instance_token.encode()).hexdigest(), existing.get("token_hash", "")):
+            return instance_token
+        if recovery_secret and existing.get("recovery_hash") and secrets.compare_digest(
+                hashlib.sha256(recovery_secret.encode()).hexdigest(), existing["recovery_hash"]):
+            token = recovery_token(recovery_secret, identifier)
+            if secrets.compare_digest(hashlib.sha256(token.encode()).hexdigest(), existing.get("token_hash", "")):
+                return token
+        return None
+
+    def create_registration(body, registration_seed, workspace_id=DEFAULT_WORKSPACE_ID,
+                            instance_token=None, recovery_secret=None, require_existing_proof=False,
+                            forbidden_secret=None):
+        if recovery_secret:
+            validate_recovery_secret(recovery_secret, (forbidden_secret,))
         session_key = body.session_key or secrets.token_urlsafe(24)
         namespace = uuid5(NAMESPACE_URL, "agent-mailbox-registration:" +
                           hashlib.sha256(registration_seed.encode()).hexdigest())
         identifier = str(uuid5(namespace, session_key))
-        token = hmac.new(registration_seed.encode(), identifier.encode(), hashlib.sha256).hexdigest()
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        derived_token = hmac.new(registration_seed.encode(), identifier.encode(), hashlib.sha256).hexdigest()
         with local_instance_lock:
             existing = store.get_agent(identifier)
             if existing:
-                if (not secrets.compare_digest(existing.get("token_hash", ""), token_hash) or
+                token = (existing_instance_token(existing, identifier, instance_token, recovery_secret)
+                         if require_existing_proof else derived_token)
+                token_hash = hashlib.sha256((token or "").encode()).hexdigest()
+                if (not token or not secrets.compare_digest(existing.get("token_hash", ""), token_hash) or
                         (existing.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id):
                     raise HTTPException(409, "Session ID is already bound to another credential.")
                 agent = public_agent(existing, time.time())
                 return {"agent": agent, "token": token, "session_id": session_key,
                         "resumed": True, "onboarding": onboarding_handoff(agent, session_key)}
             now = time.time()
+            if instance_token:
+                raise HTTPException(422, "An instance token can only resume an existing session")
+            token = recovery_token(recovery_secret, identifier) if recovery_secret else derived_token
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
             row = dict(id=identifier, name=body.name, kind=body.kind, project=body.project,
                        description=body.description, capabilities=body.capabilities,
-                       token_hash=token_hash, created_at=now, last_seen=now, workspace_id=workspace_id)
-            store.register(row)
+                       token_hash=token_hash, created_at=now, last_seen=now, workspace_id=workspace_id,
+                       recovery_hash=hashlib.sha256(recovery_secret.encode()).hexdigest() if recovery_secret else None)
+            if store.register(row) is False:
+                existing = store.get_agent(identifier)
+                token = (existing_instance_token(existing, identifier, instance_token, recovery_secret)
+                         if existing and require_existing_proof else derived_token)
+                if (not existing or not token or
+                        not secrets.compare_digest(existing.get("token_hash", ""), hashlib.sha256(token.encode()).hexdigest()) or
+                        (existing.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id):
+                    raise HTTPException(409, "Session ID is already bound to another credential.")
+                agent = public_agent(existing, time.time())
+                return {"agent": agent, "token": token, "session_id": session_key,
+                        "resumed": True, "onboarding": onboarding_handoff(agent, session_key)}
         agent = public_agent(row, now)
         return {"agent": agent, "token": token, "session_id": session_key, "resumed": False,
                 "onboarding": onboarding_handoff(agent, session_key)}
@@ -1097,7 +1144,7 @@ def create_app():
             raise HTTPException(409, "Reply context does not match this request; read it again by ID")
         message = Message(to_agent_id=original["from_agent_id"], in_reply_to=message_id, text=body.text,
                           subject=original["subject"], attachments=body.attachments, idempotency_key=body.idempotency_key)
-        attachments = prepare_attachments(message.attachments)
+        attachments = prepare_attachments(message.attachments, attachment_limit)
         if not message.text.strip() and not attachments:
             raise HTTPException(422, "Reply needs text or an attachment")
         sent = store.send(identifier, message, attachments, finalize={"status": body.status})
@@ -1167,11 +1214,14 @@ def create_app():
         now = time.time()
         workspace_id = identity_workspace(identity)
         workspace_ids = visible_workspace_ids(identity)
-        agents = directory_agents(now, workspace_ids)
-        agents = [{**row, "can_manage": store.workspace_for_agent(row["id"]) == workspace_id}
+        all_agents = store.all_agents()
+        agents_by_id = {row["id"]: row for row in all_agents}
+        agents = directory_agents(now, workspace_ids, all_agents)
+        agents = [{**row, "can_manage": (agents_by_id[row["id"]].get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id,
+                   "credential_epoch": agents_by_id[row["id"]].get("credential_epoch", 0)
+                       if (agents_by_id[row["id"]].get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id else None}
                   for row in agents]
-        own_agent_ids = [row["id"] for row in store.all_agents()
-                         if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id]
+        own_agent_ids = [row["id"] for row in all_agents if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id]
         messages = store.recent_messages(15, own_agent_ids)
         if identity.get("role") == "observer":
             messages = [{key: row.get(key) for key in
@@ -1184,7 +1234,7 @@ def create_app():
                        "can_manage_users": identity["admin"], "can_read_message_content": identity["admin"] or identity.get("role") == "operator",
                        "can_delete_messages": identity["admin"] or (identity.get("workspace_scoped") and identity.get("role") == "workspace_owner")}
         permissions["can_read_message_content"] = permissions["can_read_message_content"] or identity.get("role") == "workspace_owner"
-        return {"stats": {**store.workspace_stats(workspace_id, now - online_seconds), "online_window_seconds": online_seconds},
+        return {"stats": {**store.workspace_stats(workspace_id, now - online_seconds, all_agents), "online_window_seconds": online_seconds},
                 "agents": agents, "messages": messages, "permissions": permissions, "updated_at": now}
 
     @app.get("/dashboard/users")
@@ -1387,6 +1437,7 @@ def create_app():
                             media_type="text/x-python", headers={"Cache-Control": "no-store",
                                                                   "X-Content-Type-Options": "nosniff"})
 
+    @app.post("/join/secure", status_code=201)
     @app.post("/join", status_code=201)
     def join(body: AgentRegistration, request: Request, credentials: Credential):
         local_open = local_keyless_registration_request(request)
@@ -1400,7 +1451,11 @@ def create_app():
             raise HTTPException(503, "Self-registration is not configured")
         else:
             raise HTTPException(401, "Clave de acceso incorrecta o ausente", headers={"WWW-Authenticate": "Bearer"})
-        result = create_registration(body, registration_seed)
+        result = create_registration(body, registration_seed,
+                                     instance_token=request.headers.get("x-mailbox-instance-token"),
+                                     recovery_secret=request.headers.get("x-mailbox-recovery-secret"),
+                                     require_existing_proof=True,
+                                     forbidden_secret=credentials.credentials if credentials else None)
         # A shared join key authorizes registration only; each chat gets its own bearer token.
         from fastapi.responses import JSONResponse
         return JSONResponse({**result, "instructions_url": "/connect.md"}, status_code=201,
@@ -1414,6 +1469,8 @@ def create_app():
     @app.get("/capabilities")
     def capabilities():
         return {"version": APP_VERSION, "profiles": True, "private_instance_inboxes": True,
+                "secure_registration": {"version": 1, "recovery_secret": True,
+                                        "secure_paths": ["/join/secure", "/agents/secure", "/profiles/{id}/instances/secure"]},
                 "workspaces": {"enabled": True, "one_time_invites": True,
                                "directory": "own workspace and accepted connections",
                                "message_access": "only between agents in the same or connected workspaces",
@@ -1429,21 +1486,27 @@ def create_app():
                 "inbox_wait": {"enabled": True, "max_timeout_seconds": 25, "slots_per_process": 12,
                                "scope": "new unread messages for the authenticated instance only",
                                "mode": "opt-in; an open request can keep hosted compute active"},
-                "attachments": {"max_count": 3, "total_bytes": MAX_ATTACHMENT_BYTES},
+                "attachments": {"max_count": 3, "total_bytes": attachment_limit},
                 "a2a": {"enabled": True, "version": A2A_VERSION, "binding": "HTTP+JSON",
                         "agent_card": "/.well-known/agent-card.json", "base_path": "/a2a",
                         "streaming": False, "push_notifications": False},
                 "model_wake": "host-specific; event delivery does not itself start a model turn"}
 
+    @app.post("/agents/secure", status_code=201)
     @app.post("/agents", status_code=201)
-    def register(body: AgentRegistration, identity: Identity):
+    def register(body: AgentRegistration, request: Request, identity: Identity):
         if not can_manage_agents(identity):
             raise HTTPException(403, "Agent registration requires an owner or operator key")
         workspace_id = identity_workspace(identity)
         registration_seed = local_instance_seed if local_first_run else hub_key
         if workspace_id != DEFAULT_WORKSPACE_ID:
             registration_seed = hmac.new(hub_key.encode(), workspace_id.encode(), hashlib.sha256).hexdigest()
-        result = create_registration(body, registration_seed, workspace_id)
+        authorization = request.headers.get("authorization", "")
+        bearer_value = authorization[7:] if authorization.lower().startswith("bearer ") else None
+        result = create_registration(body, registration_seed, workspace_id,
+                                     instance_token=request.headers.get("x-mailbox-instance-token"),
+                                     recovery_secret=request.headers.get("x-mailbox-recovery-secret"),
+                                     require_existing_proof=True, forbidden_secret=bearer_value)
         if identity.get("control_user"):
             store.record_control_event(identity["id"], "agent_registered", result["agent"]["id"])
         return JSONResponse(result, status_code=201, headers={"Cache-Control": "no-store"})
@@ -1497,21 +1560,45 @@ def create_app():
 
     @app.get("/profiles/{profile_id}/activity")
     def get_profile_activity(profile_id: str, identity: Identity):
-        return store.profile_activity(identity.get("id"), profile_id, identity["admin"])
+        workspace_owner = identity.get("workspace_scoped") and identity.get("role") == "workspace_owner"
+        if identity["admin"] or workspace_owner:
+            profile = store.profile_get(profile_id)
+            if not profile or (profile.get("workspace_id") or DEFAULT_WORKSPACE_ID) != identity_workspace(identity):
+                raise HTTPException(404, "Profile not found in your workspace")
+            return store.profile_activity(None, profile_id, True)
+        return store.profile_activity(identity.get("id"), profile_id, False)
 
+    @app.post("/profiles/{profile_id}/instances/secure", status_code=201)
     @app.post("/profiles/{profile_id}/instances", status_code=201)
-    def enroll_instance(profile_id: str, body: InstanceRegistration, credentials: Credential):
+    def enroll_instance(profile_id: str, body: InstanceRegistration, request: Request, credentials: Credential):
         profile = store.authorize_profile(profile_id, credentials.credentials if credentials else "")
         session_key = body.session_key or secrets.token_urlsafe(24)
         identifier = str(uuid5(UUID(profile_id), session_key))
-        token = hmac.new(credentials.credentials.encode(), identifier.encode(), hashlib.sha256).hexdigest()
+        proof = request.headers.get("x-mailbox-instance-token")
+        recovery_secret = request.headers.get("x-mailbox-recovery-secret")
+        if recovery_secret:
+            validate_recovery_secret(recovery_secret, (credentials.credentials,))
+        if proof and recovery_secret:
+            raise HTTPException(422, "Provide either the instance token or recovery secret")
+        existing = store.get_agent(identifier)
+        if existing:
+            token = existing_instance_token(existing, identifier, proof, recovery_secret)
+            if not token:
+                raise HTTPException(409, "Existing session requires its original instance token or recovery secret")
+        else:
+            if proof:
+                raise HTTPException(422, "An instance token can only resume an existing session")
+            token = recovery_token(recovery_secret, identifier) if recovery_secret else secrets.token_urlsafe(32)
         now = time.time()
         row = dict(id=identifier, name=body.instance_name, kind=profile["kind"],
                    project=body.project or profile["project"], created_at=now, last_seen=now,
                    description=body.description, capabilities=body.capabilities,
                    token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                   recovery_hash=hashlib.sha256(recovery_secret.encode()).hexdigest() if recovery_secret else None,
                    workspace_id=profile.get("workspace_id") or DEFAULT_WORKSPACE_ID)
         created = store.enroll_profile_instance(profile_id, row)
+        if not created and not (proof or recovery_secret):
+            raise HTTPException(409, "Existing session requires its original instance token or recovery secret")
         agent = public_agent(store.get_agent(identifier), time.time())
         return JSONResponse({"agent": agent, "token": token, "resumed": not created,
                              "session_id": session_key,
@@ -1562,7 +1649,7 @@ def create_app():
             raise HTTPException(403, "Use the original instance token to create or revoke API keys")
         if sum(row.get("revoked_at") is None for row in store.agent_api_keys(identifier)) >= MAX_AGENT_API_KEYS:
             raise HTTPException(409, f"This instance already has {MAX_AGENT_API_KEYS} active API keys")
-        return JSONResponse(create_agent_api_key(identifier, body.name), status_code=201,
+        return JSONResponse(create_agent_api_key(identifier, body.name, identity["credential_hash"]), status_code=201,
                             headers={"Cache-Control": "no-store"})
 
     @app.delete("/agents/me/api-keys/{key_id}")
@@ -1596,6 +1683,37 @@ def create_app():
             store.record_control_event(identity["id"], "agent_renamed", identifier)
         return public_agent(row, time.time())
 
+    @app.post("/dashboard/agents/{identifier}/rotate-token")
+    def rotate_dashboard_agent_token(identifier: Annotated[str, Path(min_length=1, max_length=100,
+                                                                     pattern=r"^[A-Za-z0-9_-]+$")],
+                                     request: Request, identity: Identity):
+        require_workspace_manager(identity)
+        require_manage_own_agent(identity, identifier)
+        recovery_secret = request.headers.get("x-mailbox-recovery-secret", "")
+        authorization = request.headers.get("authorization", "")
+        bearer_value = authorization[7:] if authorization.lower().startswith("bearer ") else None
+        validate_recovery_secret(recovery_secret, (bearer_value,))
+        agent = store.get_agent(identifier)
+        profile = store.profile_get(agent["profile_id"]) if agent and agent.get("profile_id") else None
+        if agent and secrets.compare_digest(hashlib.sha256(recovery_secret.encode()).hexdigest(), agent.get("token_hash", "")):
+            raise HTTPException(422, "Generate a separate random recovery secret for this instance")
+        if profile and secrets.compare_digest(hashlib.sha256(recovery_secret.encode()).hexdigest(), profile.get("enrollment_hash", "")):
+            raise HTTPException(422, "Generate a separate random recovery secret for this instance")
+        expected_epoch_raw = request.headers.get("x-mailbox-expected-epoch", "")
+        if not re.fullmatch(r"[0-9]{1,10}", expected_epoch_raw):
+            raise HTTPException(422, "Provide the instance credential epoch from your dashboard")
+        expected_epoch = int(expected_epoch_raw)
+        token = recovery_token(recovery_secret, identifier)
+        now = time.time()
+        rotated = store.rotate_agent_token(identifier, hashlib.sha256(token.encode()).hexdigest(),
+                                           hashlib.sha256(recovery_secret.encode()).hexdigest(), expected_epoch, now)
+        if rotated:
+            store.record_control_event(identity.get("id", "owner"), "agent_token_rotated", identifier)
+        return JSONResponse({"agent": public_agent(store.get_agent(identifier), now), "token": token,
+                             "replayed": not rotated,
+                             "warning": "Update this instance's private config. Its previous token and named API keys are invalid."},
+                            headers={"Cache-Control": "no-store"})
+
     @app.delete("/agents/me")
     def unregister_me(identity: Identity):
         identifier = agent_id(identity)
@@ -1627,7 +1745,7 @@ def create_app():
             raise HTTPException(422, "Only a new message can use delivery_mode='wake'")
         if body.wake_backlog and body.delivery_mode != "wake":
             raise HTTPException(422, "wake_backlog requires delivery_mode='wake'")
-        attachments = prepare_attachments(body.attachments)
+        attachments = prepare_attachments(body.attachments, attachment_limit)
         if not body.text.strip() and not attachments:
             raise HTTPException(422, "Message text cannot be blank")
         return store.send(sender, body, attachments)
@@ -1777,7 +1895,7 @@ def create_app():
                 message_type="request", delivery_mode=delivery_mode, wake_backlog=wake_backlog,
                 idempotency_key="a2a-" + hashlib.sha256(a2a_message_id.encode("utf-8")).hexdigest(),
                 attachments=attachments)
-            prepared = prepare_attachments(body_message.attachments)
+            prepared = prepare_attachments(body_message.attachments, attachment_limit)
             if not body_message.text.strip() and not prepared:
                 raise HTTPException(422, "A2A task must include text or a file")
             sent = store.send(sender, body_message, prepared)

@@ -2,9 +2,13 @@
 
 import tempfile
 import unittest
+import io
+import json
 from pathlib import Path
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
-from adapters.mailbox_hook import filter_new_messages, format_context, hook_response
+from adapters.mailbox_hook import filter_new_messages, format_context, hook_response, get_pending
 from adapters.mailbox_wake import build_command, build_prompt
 
 
@@ -70,6 +74,31 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(filter_new_messages(config, cfg_path, "session-1", []), [])
             self.assertEqual(filter_new_messages(config, cfg_path, "session-1", [self.message]), [self.message])
             self.assertEqual(filter_new_messages(config, cfg_path, "session-1", [self.message], reset=True), [self.message])
+
+    def test_hook_reads_all_pages_even_when_old_requests_remain_blocked(self):
+        requests = []
+        def response(request, **kwargs):
+            cursor = int(parse_qs(urlsplit(request.full_url).query)["after_id"][0])
+            requests.append(cursor)
+            page = ({"messages": [{"id": i, "status": "blocked"} for i in range(1, 21)],
+                     "has_more": True, "next_after_id": 20} if cursor == 0 else
+                    {"messages": [{"id": 21, "status": "queued"}], "has_more": False, "next_after_id": 21})
+            return io.BytesIO(json.dumps(page).encode())
+        with patch("adapters.mailbox_hook.urlopen", side_effect=response):
+            pending = get_pending({"url": "https://mail.example", "token": "private"})
+        self.assertEqual(requests, [0, 20])
+        self.assertEqual([item["id"] for item in pending], list(range(1, 22)))
+
+    def test_bound_hook_uses_short_preview_and_requires_reading_every_page(self):
+        messages = [{"id": i, "from_agent_id": "sender", "text": "x" * 10000, "attachments": []}
+                    for i in range(1, 101)]
+        context = format_context(messages, {"agent_id": "instance", "bound_config_path": "private.json",
+                                            "client_script": "client.py"})
+        self.assertIn("100 pending messages", context)
+        self.assertIn('"id":100', context)
+        self.assertIn("read EVERY page", context)
+        self.assertNotIn("x" * 1000, context)
+        self.assertLess(len(context), 8000)
 
 
 if __name__ == "__main__":

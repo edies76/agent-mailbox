@@ -6,6 +6,7 @@ param(
     [string]$RuntimeServiceAccount = '',
     [string]$AdminSecretName = 'agent-mailbox-admin-key',
     [string]$JoinSecretName = 'agent-mailbox-join-key',
+    [int]$IndexWaitSeconds = 600,
     [switch]$SkipTests,
     [switch]$SkipIndexSetup
 )
@@ -38,6 +39,26 @@ if (-not $SkipIndexSetup) {
             if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear un indice requerido.' }
         }
     }
+    if ($IndexWaitSeconds -lt 1) { throw 'IndexWaitSeconds debe ser positivo.' }
+    $deadline = (Get-Date).AddSeconds($IndexWaitSeconds)
+    do {
+        $currentJson = & gcloud firestore indexes composite list --database=$FirestoreDatabase --project=$CloudProject --format=json
+        if ($LASTEXITCODE -ne 0) { throw 'No se pudo verificar el estado de los indices de Firestore.' }
+        $currentIndexes = @($currentJson | ConvertFrom-Json)
+        $waiting = @()
+        foreach ($index in $spec.indexes) {
+            $wanted = ($index.fields | ForEach-Object { "$($_.fieldPath):$($_.order)" }) -join '|'
+            $ready = @($currentIndexes | Where-Object {
+                $fields = ($_.fields | Where-Object fieldPath -ne '__name__' | ForEach-Object { "$($_.fieldPath):$($_.order)" }) -join '|'
+                $_.name -like "*/collectionGroups/$($index.collectionGroup)/indexes/*" -and $fields -eq $wanted -and $_.state -eq 'READY'
+            })
+            if ($ready.Count -eq 0) { $waiting += "$($index.collectionGroup):$wanted" }
+        }
+        if ($waiting.Count -eq 0) { break }
+        if ((Get-Date) -ge $deadline) { throw "Indices aun no listos: $($waiting -join ', ')" }
+        Write-Output "Esperando indices de Firestore: $($waiting -join ', ')"
+        Start-Sleep -Seconds 5
+    } while ($true)
 }
 & gcloud run deploy agent-mailbox --source . --project=$CloudProject --region=$Region --port=8795 --service-account=$RuntimeServiceAccount --allow-unauthenticated --ingress=all --cpu=1 --memory=512Mi --min=0 --max=2 --concurrency=40 --update-env-vars="MAILBOX_STORAGE=firestore,MAILBOX_FIRESTORE_DATABASE=$FirestoreDatabase,GOOGLE_CLOUD_PROJECT=$CloudProject,MAILBOX_RELEASE=$appVersion" --set-secrets="MAILBOX_ADMIN_KEY=$($AdminSecretName):latest,MAILBOX_JOIN_KEY=$($JoinSecretName):latest" --quiet
 if ($LASTEXITCODE -ne 0) { throw 'El despliegue no se completo.' }

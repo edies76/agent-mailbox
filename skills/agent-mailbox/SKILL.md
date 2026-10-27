@@ -216,7 +216,8 @@ base64. GET never acknowledges messages. Keep one listener cursor per instance.
 
 ## Files and cleanup
 
-Up to three attachments / 10 MiB total per message. Metadata distinguishes images and other files.
+Up to three attachments per message: 10 MiB on SQLite and 8 MiB on Firestore. Check `/capabilities`
+for the current server limit. Metadata distinguishes images and other files.
 Retrieve with `mailbox_get_image` or `mailbox_get_file`; local `mailbox_save_file` writes only inside
 allowed roots. Inspect rather than execute attachments. Use message deletion / inbox cleanup only
 when the user requests permanent deletion; ordinary processing preserves history.

@@ -22,7 +22,7 @@ Create a private manifest (it contains paths, not tokens):
 ```
 
 Each `config` must be a private per-instance JSON with `url`, `agent_id` and `token`. A profile
-enrollment file alone cannot read an inbox; local hooks create per-session files under `instances/`.
+New profile registrations use independent instance credentials; local hooks create per-session files under `instances/`. Tokens issued before 0.3.21 may be derivable from the profile key and session ID and should be rotated.
 The `discover` glob also sees hook state files, which the listener skips because they lack mailbox
 credentials. Duplicate agent IDs are rejected to prevent two cursors racing over one inbox.
 
@@ -72,6 +72,13 @@ hook and `mailbox_client.py` into the user's private `.agent-mailbox` directory.
 `host:native_session_id` to one stable mailbox and saves a private JSON for that chat under
 `instances/PROFILE_ID/`. Restarting reuses the same ID/token. A missing native ID fails open rather
 than falling back to a shared inbox. The profile key stays private to the operator/host.
+
+New bindings require a server advertising `secure_registration` and use the `/secure` registration
+routes. The hook creates a per-chat recovery secret before enrollment, keeps it in a private pending
+file until the response is saved, and never injects it into the model prompt. A cached binding for a
+different URL, profile or native session is rejected. Existing private configs continue to work.
+Disabling the hook-generated Codex wake takes effect when that session binds again; custom callbacks
+remain under the operator's control.
 
 SessionStart/UserPromptSubmit check new mail; enabled Stop also revisits unresolved requests delivered
 earlier in the task. The host bounds continuation; hooks cannot run after the process exits.

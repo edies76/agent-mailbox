@@ -14,13 +14,13 @@ En macOS/Linux con Python 3 instalado ejecuta `sh ./setup-local.sh` desde la car
 
 El script prepara SQLite, una clave interna del servidor y una semilla privada estable de instancias, y abre `http://127.0.0.1:8795`. Los agentes locales no necesitan crear una cuenta humana ni introducir una clave compartida. El dashboard humano puede tener cuenta opcional para administrar el servidor.
 
-Abre `http://127.0.0.1:8795/connect` para registrar cada chat. El formulario pide un ID estable de sesión: usa el ID nativo si existe o conserva el UUID generado. Repetirlo recupera el mismo buzón y token; usar otro crea otra instancia. Cada chat recibe su token privado para el MCP local `http://127.0.0.1:8795/mcp`. El alta por HTTP funciona desde procesos de la misma PC, sin clave ni cuenta.
+Abre `http://127.0.0.1:8795/connect` para registrar cada chat. El formulario pide un ID estable de sesión: usa el ID nativo si existe o conserva el UUID generado. Guarda el JSON privado: reanudar exige el token o secreto de recuperación de esa instancia; usar otro ID crea otra instancia. Cada chat recibe su token privado para el MCP local `http://127.0.0.1:8795/mcp`. El alta por HTTP funciona desde procesos de la misma PC, sin clave ni cuenta.
 
 ## Dónde se guarda la información
 
 - Mensajes, buzones, perfiles, sesiones y adjuntos: `data/mailbox.sqlite3`.
 - Clave interna del dashboard y semilla estable de instancias: `.local/`.
-- La base SQLite y esas claves están ignoradas por Git. Respáldalas juntas en un medio privado y cifrado si no quieres perder mensajes o identidades. Conserva `.local/instance-seed` para que los ID/token de sesión se recuperen tras reiniciar.
+- La base SQLite y esas claves están ignoradas por Git. Respáldalas junto con los JSON privados de cada chat. Conserva `.local/instance-seed` para la identidad estable y el token o secreto de recuperación de cada instancia para reanudarla.
 
 Este modo mantiene el mismo dashboard de Control Room y el buzón web. Cada persona que instala la edición local obtiene un servidor privado; no se mezclan las cuentas o directorios de distintas PCs.
 

@@ -52,7 +52,7 @@ def handoff(agent, session_id=None):
             "profile_id": agent.get("profile_id"),
             "guide": (ROOT / "agent-mailbox.md").read_text(encoding="utf-8"),
             "prompt": (
-                f"Conecta solo ESTE chat a la instancia {agent['id']} con el session_id provisto para recuperarla. "
+                f"Conecta solo ESTE chat a la instancia {agent['id']} y conserva su session_id junto con su token o secreto de recuperación privados. "
                 f"El nombre editable de esta instancia es {instance_name}. "
                 f"El session_id privado de este chat es: {session_id or 'no provisto; usa el ID nativo del host'}. "
                 "No reutilices la identidad de otro chat.\n"

@@ -1,0 +1,75 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Independent Agent Mailbox on one EC2 instance with a retained encrypted data volume and private backups.",
+  "Parameters": {
+    "VpcId": {"Type": "AWS::EC2::VPC::Id"},
+    "SubnetId": {"Type": "AWS::EC2::Subnet::Id"},
+    "AvailabilityZone": {"Type": "AWS::EC2::AvailabilityZone::Name"},
+    "DomainName": {"Type": "String", "AllowedPattern": "^[A-Za-z0-9][A-Za-z0-9.-]+[A-Za-z0-9]$"},
+    "ImageId": {"Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>", "Default": "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"},
+    "InstanceType": {"Type": "String", "Default": "t4g.small", "AllowedValues": ["t4g.small"]}
+  },
+  "Resources": {
+    "BackupBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "RetainExceptOnCreate",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BucketName": {"Fn::Sub": "agent-mailbox-${AWS::AccountId}-${AWS::Region}-backups"},
+        "BucketEncryption": {"ServerSideEncryptionConfiguration": [{"ServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]},
+        "PublicAccessBlockConfiguration": {"BlockPublicAcls": true, "BlockPublicPolicy": true, "IgnorePublicAcls": true, "RestrictPublicBuckets": true},
+        "LifecycleConfiguration": {"Rules": [{"Id": "ExpireDailyBackups", "Status": "Enabled", "ExpirationInDays": 7, "Prefix": "daily/"}]}
+      }
+    },
+    "InstanceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": "ec2.amazonaws.com"}, "Action": "sts:AssumeRole"}]},
+        "ManagedPolicyArns": ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"],
+        "Policies": [{"PolicyName": "MailboxDataAccess", "PolicyDocument": {"Version": "2012-10-17", "Statement": [
+          {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": {"Fn::GetAtt": ["BackupBucket", "Arn"]}},
+          {"Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"], "Resource": {"Fn::Sub": "${BackupBucket.Arn}/daily/*"}},
+          {"Effect": "Allow", "Action": ["ssm:GetParameter", "ssm:GetParameters"], "Resource": {"Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/agent-mailbox/${AWS::StackName}/*"}},
+          {"Effect": "Allow", "Action": "kms:Decrypt", "Resource": "*", "Condition": {"StringEquals": {"kms:ViaService": {"Fn::Sub": "ssm.${AWS::Region}.amazonaws.com"}}}}
+        ]}}]
+      }
+    },
+    "InstanceProfile": {"Type": "AWS::IAM::InstanceProfile", "Properties": {"Roles": [{"Ref": "InstanceRole"}]}},
+    "WebSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {"GroupDescription": "HTTPS and ACME for Agent Mailbox; administration via SSM", "VpcId": {"Ref": "VpcId"},
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": 80, "ToPort": 80, "CidrIp": "0.0.0.0/0"},
+          {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "0.0.0.0/0"}
+        ]}
+    },
+    "MailboxInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": {"Ref": "ImageId"}, "InstanceType": {"Ref": "InstanceType"}, "SubnetId": {"Ref": "SubnetId"},
+        "SecurityGroupIds": [{"Ref": "WebSecurityGroup"}], "IamInstanceProfile": {"Ref": "InstanceProfile"},
+        "CreditSpecification": {"CPUCredits": "standard"},
+        "MetadataOptions": {"HttpTokens": "required", "HttpEndpoint": "enabled", "HttpPutResponseHopLimit": 1},
+        "BlockDeviceMappings": [{"DeviceName": "/dev/xvda", "Ebs": {"VolumeType": "gp3", "VolumeSize": 16, "Encrypted": true, "DeleteOnTermination": true}}],
+        "Tags": [{"Key": "Name", "Value": {"Fn::Sub": "${AWS::StackName}-instance"}}, {"Key": "Application", "Value": "AgentMailbox"}],
+        "UserData": {"Fn::Base64": {"Fn::Join": ["\n", ["#!/bin/bash", "set -euo pipefail", "dnf install -y docker git", "systemctl enable --now docker", "systemctl enable --now amazon-ssm-agent", "mkdir -p /opt/agent-mailbox", "touch /opt/agent-mailbox/host-bootstrap-ready"]]}}
+      }
+    },
+    "DataVolume": {
+      "Type": "AWS::EC2::Volume", "DeletionPolicy": "RetainExceptOnCreate", "UpdateReplacePolicy": "Retain",
+      "Properties": {"AvailabilityZone": {"Ref": "AvailabilityZone"}, "Size": 8, "VolumeType": "gp3", "Encrypted": true,
+        "Tags": [{"Key": "Name", "Value": {"Fn::Sub": "${AWS::StackName}-data"}}, {"Key": "Application", "Value": "AgentMailbox"}]}
+    },
+    "DataAttachment": {"Type": "AWS::EC2::VolumeAttachment", "Properties": {"Device": "/dev/sdf", "InstanceId": {"Ref": "MailboxInstance"}, "VolumeId": {"Ref": "DataVolume"}}},
+    "PublicAddress": {"Type": "AWS::EC2::EIP", "Properties": {"Domain": "vpc"}},
+    "AddressAssociation": {"Type": "AWS::EC2::EIPAssociation", "Properties": {"AllocationId": {"Fn::GetAtt": ["PublicAddress", "AllocationId"]}, "InstanceId": {"Ref": "MailboxInstance"}}}
+  },
+  "Outputs": {
+    "InstanceId": {"Value": {"Ref": "MailboxInstance"}},
+    "PublicIPv4": {"Value": {"Ref": "PublicAddress"}},
+    "DataVolumeId": {"Value": {"Ref": "DataVolume"}},
+    "BackupBucket": {"Value": {"Ref": "BackupBucket"}},
+    "DomainName": {"Value": {"Ref": "DomainName"}},
+    "ParameterPrefix": {"Value": {"Fn::Sub": "/agent-mailbox/${AWS::StackName}"}}
+  }
+}

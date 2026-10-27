@@ -438,9 +438,10 @@ def mailbox_send_image(to_agent_id: str, image_path: str, text: str = "", in_rep
     media_type = media_types.get(file_path.suffix.lower())
     if not media_type:
         raise ValueError("La imagen debe ser PNG, JPEG, GIF o WebP")
+    limit = min(MAX_ATTACHMENT_BYTES, int(api("/capabilities")["attachments"]["total_bytes"]))
+    if file_path.stat().st_size > limit:
+        raise ValueError(f"La imagen excede el límite del servidor de {limit // (1024 * 1024)} MiB")
     data = file_path.read_bytes()
-    if len(data) > MAX_ATTACHMENT_BYTES:
-        raise ValueError("La imagen excede el límite de 10 MiB por mensaje")
     payload = {"to_agent_id": to_agent_id, "text": text, "delivery_mode": delivery_mode,
                "wake_backlog": wake_backlog,
                "attachments": [{"filename": file_path.name, "media_type": media_type,
@@ -451,15 +452,16 @@ def mailbox_send_image(to_agent_id: str, image_path: str, text: str = "", in_rep
 @local_mcp.tool()
 def mailbox_send_file(to_agent_id: str, file_path: str, text: str = "", in_reply_to: int | None = None,
                       delivery_mode: Literal["inbox", "wake"] = "inbox", wake_backlog: bool = False) -> dict:
-    """Envía archivo (hasta 10 MiB) como mensaje normal o despierta la sesión destinataria."""
+    """Envía un archivo dentro del límite anunciado por el servidor."""
     if in_reply_to is not None:
         raise ValueError("Use mailbox_reply with the exact fingerprint and file attachment for a reply")
     file = resolve_allowed_path(file_path, "file")
     if is_sensitive(file) or file.suffix.lower() in BLOCKED_ATTACHMENT_SUFFIXES:
         raise ValueError("Este archivo está bloqueado por seguridad")
+    limit = min(MAX_ATTACHMENT_BYTES, int(api("/capabilities")["attachments"]["total_bytes"]))
+    if file.stat().st_size < 1 or file.stat().st_size > limit:
+        raise ValueError(f"El archivo debe medir entre 1 byte y {limit // (1024 * 1024)} MiB")
     data = file.read_bytes()
-    if not data or len(data) > MAX_ATTACHMENT_BYTES:
-        raise ValueError("El archivo debe medir entre 1 byte y 10 MiB")
     media_type = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
     payload = {"to_agent_id": to_agent_id, "text": text, "delivery_mode": delivery_mode,
                "wake_backlog": wake_backlog,

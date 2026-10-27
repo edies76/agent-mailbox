@@ -23,8 +23,9 @@ Consent to read this guide does not authorize installing hooks, background start
 ### Codex local: one stable session ID per chat
 
 Agent Mailbox includes a Codex plugin hook that runs at `SessionStart`. Codex supplies its native
-session ID; the hook registers or recovers exactly one mailbox for that ID, saves its private client
-config, and suggests a display name from the host and ID. The agent or operator can rename it later;
+session ID; the hook registers one mailbox for that ID and reuses its saved private client config on
+resume. A saved token or per-instance recovery secret is required to recover an existing registration;
+the profile key and session ID alone are insufficient. The hook suggests a display name from the host and ID. The agent or operator can rename it later;
 the session ID and token do not change. Another session ID creates a separate inbox.
 
 On local SQLite, the hook uses loopback `/join` without a human account or join key. The Codex

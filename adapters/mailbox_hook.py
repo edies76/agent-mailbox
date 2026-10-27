@@ -10,12 +10,15 @@ import argparse
 import ipaddress
 import json
 import os
+import secrets
 import sys
 import tempfile
 import hashlib
+import hmac
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 
 def read_config(path):
@@ -53,23 +56,57 @@ def bind_session(config, config_path, host, session_id, workspace=None):
     destination = directory / (suffix + ".json")
     if destination.exists():
         result = read_config(destination)
+        expected_url = config["url"].rstrip("/")
+        if (result.get("url", "").rstrip("/") != expected_url or result.get("session_id") != key or
+                (config.get("profile_id") and result.get("profile_id") != config["profile_id"]) or
+                not result.get("agent_id") or not result.get("token")):
+            raise ValueError("Saved instance binding does not match this server, profile, or native session")
     else:
+        capabilities_url = config["url"].rstrip("/") + "/capabilities"
+        with urlopen(Request(capabilities_url, headers={"Accept": "application/json"}), timeout=8) as response:
+            capabilities = json.load(response)
+        if capabilities.get("secure_registration", {}).get("version") != 1:
+            raise ValueError("Server lacks secure registration; update it before binding a new session")
+        # Persist a secret before the request so a retry after a lost response proves ownership.
+        pending_path = destination.with_suffix(".pending")
+        pending_identity = {"url": config["url"].rstrip("/"), "session_id": key,
+                            "profile_id": config.get("profile_id", "")}
+        try:
+            fd = os.open(pending_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            pending = json.loads(pending_path.read_text(encoding="utf-8"))
+        else:
+            pending = {**pending_identity, "recovery_secret": secrets.token_urlsafe(32)}
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(pending, handle)
+        if any(pending.get(key_name) != value for key_name, value in pending_identity.items()):
+            raise ValueError("Pending instance binding belongs to a different server, profile, or session")
+        recovery_secret = pending.get("recovery_secret")
+        if not isinstance(recovery_secret, str) or len(recovery_secret) < 32:
+            raise ValueError("Pending instance binding is incomplete; restore its private config")
         enrollment_url = config["url"].rstrip("/") + (
-            "/join" if config.get("local_registration") else f"/profiles/{config['profile_id']}/instances")
+            "/join/secure" if config.get("local_registration") else f"/profiles/{config['profile_id']}/instances/secure")
         enrollment_body = {"name": f"{config.get('instance_prefix', host)} · {suffix[:8]}",
                            "kind": config.get("kind", host), "project": workspace or config.get("project", ""),
                            "session_key": key}
         if not config.get("local_registration"):
             enrollment_body["instance_name"] = enrollment_body.pop("name")
             enrollment_body.pop("kind", None)
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "X-Mailbox-Recovery-Secret": recovery_secret}
         if not config.get("local_registration"):
             headers["Authorization"] = "Bearer " + config["enrollment_token"]
         request = Request(enrollment_url, method="POST", headers=headers,
                           data=json.dumps(enrollment_body).encode())
         with urlopen(request, timeout=8) as response:
             registered = json.load(response)
-        result = {"url": config["url"], "agent_id": registered["agent"]["id"], "token": registered["token"]}
+        registered_id = str(registered.get("agent", {}).get("id", ""))
+        expected_token = hmac.new(recovery_secret.encode(), ("agent-mailbox-instance:" + registered_id).encode(), hashlib.sha256).hexdigest()
+        if not registered_id or not secrets.compare_digest(str(registered.get("token", "")), expected_token):
+            raise ValueError("Server returned a different instance credential")
+        if config.get("profile_id") and registered.get("agent", {}).get("profile_id") != config["profile_id"]:
+            raise ValueError("Server returned an instance for a different profile")
+        result = {"url": config["url"], "agent_id": registered["agent"]["id"], "token": registered["token"],
+                  "recovery_secret": recovery_secret}
         result["session_id"] = key
         if config.get("local_registration"):
             result["local_registration"] = True
@@ -83,6 +120,7 @@ def bind_session(config, config_path, host, session_id, workspace=None):
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
+        pending_path.unlink(missing_ok=True)
     changed = False
     for option in ("on_message_command", "on_wake_command", "mailbox_bank_dir", "transport",
                    "client_script", "local_registration"):
@@ -104,6 +142,26 @@ def bind_session(config, config_path, host, session_id, workspace=None):
             changed = True
         if result.get("on_wake_command") != callback:
             result["on_wake_command"] = callback
+            changed = True
+        if result.get("mailbox_managed_wake") is not True:
+            result["mailbox_managed_wake"] = True
+            changed = True
+    elif host == "codex":
+        wake = result.get("wake") or {}
+        def generated_callback(command):
+            return (isinstance(command, list) and len(command) == 4 and all(isinstance(part, str) for part in command) and
+                    Path(command[1]).name.casefold() == "mailbox_wake.py" and
+                    command[2:] == ["--config", str(destination)] and
+                    wake.get("provider") == "codex" and wake.get("session_id") == str(session_id))
+        removed = False
+        for option in ("on_wake_command", "on_message_command"):
+            if option not in config and generated_callback(result.get(option)):
+                result.pop(option, None)
+                removed = True
+        if removed:
+            if "on_wake_command" not in config and "on_message_command" not in config:
+                result["wake"] = {**wake, "enabled": False}
+            result.pop("mailbox_managed_wake", None)
             changed = True
     if changed:
         fd, temporary = tempfile.mkstemp(dir=directory, suffix=".tmp")
@@ -130,13 +188,26 @@ def bind_session(config, config_path, host, session_id, workspace=None):
 
 
 def get_pending(config, limit=20):
-    query = urlencode({"unread_only": "true", "after_id": 0, "limit": limit})
-    request = Request(config["url"].rstrip("/") + "/inbox?" + query, headers={
-        "Authorization": "Bearer " + config["token"],
-        "Accept": "application/json",
-    })
-    with urlopen(request, timeout=8) as response:
-        return json.loads(response.read().decode("utf-8")).get("messages", [])
+    if not 1 <= limit <= 200:
+        raise ValueError("Inbox page size must be between 1 and 200")
+    cursor, messages = 0, []
+    while True:
+        query = urlencode({"unread_only": "true", "after_id": cursor, "limit": limit})
+        request = Request(config["url"].rstrip("/") + "/inbox?" + query, headers={
+            "Authorization": "Bearer " + config["token"], "Accept": "application/json",
+        })
+        with urlopen(request, timeout=8) as response:
+            page = json.loads(response.read().decode("utf-8"))
+        batch = page.get("messages", [])
+        if not isinstance(batch, list):
+            raise ValueError("Invalid inbox page")
+        messages.extend(batch)
+        if not page.get("has_more"):
+            return messages
+        next_cursor = int(page.get("next_after_id", cursor))
+        if next_cursor <= cursor:
+            raise ValueError("Inbox pagination did not advance")
+        cursor = next_cursor
 
 
 def format_context(messages, config=None):
@@ -158,22 +229,27 @@ def format_context(messages, config=None):
                       ". Read it, AGENT-INSTRUCTIONS.md, MASTER_PROMPT.md and SKILL.md first when restoring context. Notification archive for this chat: " +
                       str(bank / config["agent_id"] / "INDEX.md") +
                       ". It is created on the first notice. Verify live pending state before acting; archive files may include handled messages.")
-    for message in messages:
+    compact = bool(config and config.get("bound_config_path") and config.get("client_script"))
+    selected = messages
+    if compact and messages:
+        blocks.append(f"There are {len(messages)} pending messages. This is a short preview; use the bound client to read EVERY page of GET /inbox?unread_only=true&after_id=0, then fetch each request by its exact ID before acting.")
+        selected = messages if len(messages) <= 20 else messages[:10] + messages[-10:]
+    for message in selected:
         record = {
             "id": message["id"],
-            "subject": message.get("subject", ""),
+            "subject": message.get("subject", "")[:180],
             "thread_id": message.get("thread_id"),
             "request_fingerprint": message.get("request_fingerprint"),
             "message_type": message.get("message_type", "request"),
             "status": message.get("status"),
             "created_at_iso": message.get("created_at_iso"),
             "from_agent_id": message["from_agent_id"],
-            "text": message.get("text", ""),
-            "attachments": [
-                {key: item.get(key) for key in ("filename", "media_type", "size_bytes", "index")}
-                for item in (message.get("attachments") or [])
-            ],
+            "attachment_count": len(message.get("attachments") or []),
         }
+        if not compact:
+            record["text"] = message.get("text", "")
+            record["attachments"] = [{key: item.get(key) for key in ("filename", "media_type", "size_bytes", "index")}
+                                     for item in (message.get("attachments") or [])]
         blocks.append(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
     return "\n".join(blocks)
 
@@ -245,9 +321,21 @@ def handle_hook_event(host, payload, config_path):
     config = bind_session(config, config_path, host, session_id, workspace)
     if event == "Stop" and (not config.get("auto_continue_on_stop", False) or payload.get("stop_hook_active")):
         return None
-    messages = [message for message in get_pending(config) if message.get("status") != "cancelled"]
-    messages = filter_new_messages(config, config_path, session_id, messages,
-                                   reset=event in ("SessionStart", "UserPromptSubmit", "Stop"))
+    try:
+        messages = [message for message in get_pending(config) if message.get("status") != "cancelled"]
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
+        if config.get("bound_config_path") and event in ("SessionStart", "UserPromptSubmit"):
+            output = hook_response(host, event, payload, [], config)
+            output["hookSpecificOutput"]["additionalContext"] += (
+                " The private instance binding succeeded, but its inbox check failed (" + type(error).__name__ +
+                "). Retry with the bound private client; do not use a global token.")
+            return output
+        if event == "Stop":
+            return None
+        raise
+    if not config.get("bound_config_path"):
+        messages = filter_new_messages(config, config_path, session_id, messages,
+                                       reset=event in ("SessionStart", "UserPromptSubmit", "Stop"))
     return hook_response(host, event, payload, messages, config)
 
 

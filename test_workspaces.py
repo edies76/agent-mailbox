@@ -6,8 +6,50 @@ import secrets
 import unittest
 from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 from urllib.error import HTTPError
+from unittest.mock import Mock
+from types import SimpleNamespace
 
 import test_mailbox as http_tests
+from stores import FirestoreStore
+
+
+class FirestoreSafetyTests(unittest.TestCase):
+    def fake_store(self):
+        store = FirestoreStore.__new__(FirestoreStore)
+        store.client = Mock()
+        store.agents = Mock()
+        store.firestore = SimpleNamespace(transactional=lambda function: function)
+        return store, store.client.transaction.return_value
+
+    def test_rotation_physically_revokes_old_keys_and_replay_is_idempotent(self):
+        store, transaction = self.fake_store()
+        agent_ref = store.agents.document.return_value
+        agent_ref.get.return_value.to_dict.return_value = {"token_hash": "old", "credential_epoch": 0, "api_key_revision": 2}
+        key_doc = Mock()
+        key_doc.to_dict.return_value = {"revoked_at": None}
+        query = Mock()
+        query.stream.return_value = [key_doc]
+        store.where = Mock(return_value=query)
+        self.assertTrue(store.rotate_agent_token("agent", "new", "recovery", 0, 123.0))
+        transaction.update.assert_any_call(key_doc.reference, {"revoked_at": 123.0})
+        transaction.update.assert_any_call(agent_ref, {"token_hash": "new", "credential_epoch": 1,
+                                                      "credential_rotated_at": 123.0, "recovery_hash": "recovery",
+                                                      "last_rotation_hash": "recovery",
+                                                      "api_key_revision": 3})
+        agent_ref.get.return_value.to_dict.return_value = {"token_hash": "new", "recovery_hash": "recovery",
+                                                          "last_rotation_hash": "recovery", "credential_epoch": 1}
+        transaction.reset_mock()
+        self.assertFalse(store.rotate_agent_token("agent", "new", "recovery", 0, 124.0))
+        transaction.update.assert_not_called()
+
+    def test_invite_revocation_reads_consumption_inside_transaction(self):
+        store, transaction = self.fake_store()
+        ref = store.client.collection.return_value.document.return_value
+        ref.get.return_value.exists = True
+        ref.get.return_value.to_dict.return_value = {"workspace_id": "owner", "used_at": 10, "revoked_at": None}
+        self.assertFalse(store.revoke_workspace_invite("owner", "invite", 20))
+        ref.get.assert_called_once_with(transaction=transaction)
+        transaction.update.assert_not_called()
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -78,6 +120,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIn(self.a_id, first_ids)
         self.assertNotIn(second_agent["id"], first_ids)
         self.request("DELETE", f"/agents/{second_agent['id']}", self.admin, expected=404)
+        self.request("POST", f"/dashboard/agents/{second_agent['id']}/rotate-token", self.admin, {}, 404)
         first_dashboard = first["get"]("/dashboard/data")
         self.assertEqual(first_dashboard["stats"]["agents_total"], 1)
 
@@ -100,6 +143,17 @@ class WorkspaceTests(unittest.TestCase):
         first["post"]("/dashboard/workspace-connections", {"invite_code": reconnect_invite["code"]}, 201)
         self.assertIn(self.a_id, {agent["id"] for agent in first["get"]("/agents")["agents"]})
         self.assertTrue(first_invite["code"].startswith("amw_"))
+
+    def test_profile_activity_is_private_to_its_workspace_even_for_server_owner(self):
+        friend = self.create_workspace(self.invite(), "Espacio privado")
+        agent = friend["create_agent"]("Agente privado")
+        profile = self.request("POST", "/profiles", agent["token"],
+                               {"name": "Perfil privado", "kind": "test"}, 201)
+        path = f"/profiles/{profile['profile']['id']}/activity"
+        self.request("GET", path, self.admin, expected=404)
+        self.assertEqual(friend["get"](path)["instances"][0]["instance_id"], agent["agent"]["id"])
+        self.request("DELETE", f"/dashboard/workspace-connections/{friend['workspace']['workspace_id']}", self.admin)
+        self.request("GET", path, self.admin, expected=404)
 
 
 if __name__ == "__main__":

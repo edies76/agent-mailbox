@@ -16,6 +16,8 @@ import time
 import unittest
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from fastapi import HTTPException
+from server import Attachment, FIRESTORE_ATTACHMENT_BYTES, prepare_attachments
 
 
 class MailboxTests(unittest.TestCase):
@@ -75,8 +77,9 @@ class MailboxTests(unittest.TestCase):
         cls.log.close()
         cls.directory.cleanup()
 
-    def request(self, method, path, token=None, body=None, expected=200):
+    def request(self, method, path, token=None, body=None, expected=200, extra_headers=None):
         headers = {"Content-Type": "application/json"}
+        headers.update(extra_headers or {})
         if token:
             headers["Authorization"] = "Bearer " + token
         payload = None if body is None else json.dumps(body).encode()
@@ -328,6 +331,48 @@ class MailboxTests(unittest.TestCase):
         message = self.request("POST", "/messages", token,
                                {"to_agent_id": self.a_id, "text": "Registrado por mi cuenta"}, 201)
         self.assertEqual(self.request("GET", "/inbox", self.a_token)["messages"][0]["id"], message["id"])
+
+    def test_join_key_cannot_recover_existing_instance_without_its_token(self):
+        body = {"name": "Independent agent", "session_key": "known-session-id"}
+        first = self.request("POST", "/join", self.join_key, body, 201)
+        self.request("POST", "/join", self.join_key, body, 409)
+        self.request("POST", "/join", self.join_key, body, 409,
+                     extra_headers={"X-Mailbox-Instance-Token": "incorrect"})
+        resumed = self.request("POST", "/join", self.join_key, body, 201,
+                               extra_headers={"X-Mailbox-Instance-Token": first["token"]})
+        self.assertTrue(resumed["resumed"])
+        self.assertEqual(resumed["token"], first["token"])
+
+    def test_join_accepts_client_generated_token_for_safe_retry_after_lost_response(self):
+        body = {"name": "Resilient agent", "session_key": "new-client-session"}
+        secret = secrets.token_urlsafe(32)
+        headers = {"X-Mailbox-Recovery-Secret": secret}
+        created = self.request("POST", "/join/secure", self.join_key, body, 201, extra_headers=headers)
+        resumed = self.request("POST", "/join/secure", self.join_key, body, 201, extra_headers=headers)
+        self.assertNotEqual(created["token"], secret)
+        self.assertEqual(resumed["token"], created["token"])
+        self.assertTrue(resumed["resumed"])
+        another = self.request("POST", "/join/secure", self.join_key,
+                               {"name": "Other chat", "session_key": "another-client-session"}, 201,
+                               extra_headers=headers)
+        self.assertNotEqual(another["token"], created["token"])
+
+    def test_concurrent_secure_registration_with_same_recovery_secret_is_idempotent(self):
+        body = {"name": "Concurrent chat", "session_key": "concurrent-secure-session"}
+        headers = {"X-Mailbox-Recovery-Secret": secrets.token_urlsafe(32)}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(lambda _: self.request("POST", "/join/secure", self.join_key,
+                                                            body, 201, extra_headers=headers), range(4)))
+        self.assertEqual(len({row["agent"]["id"] for row in results}), 1)
+        self.assertEqual(len({row["token"] for row in results}), 1)
+        self.assertEqual(sum(not row["resumed"] for row in results), 1)
+
+    def test_firestore_attachment_limit_reserves_transaction_overhead(self):
+        content = base64.b64encode(b"x" * (FIRESTORE_ATTACHMENT_BYTES + 1)).decode("ascii")
+        item = Attachment(filename="data.txt", media_type="text/plain", data_base64=content)
+        with self.assertRaises(HTTPException) as failure:
+            prepare_attachments([item], FIRESTORE_ATTACHMENT_BYTES)
+        self.assertEqual(failure.exception.status_code, 413)
 
     def test_restart_retains_tokens_messages_and_acknowledgements(self):
         acknowledged = self.send("already handled")

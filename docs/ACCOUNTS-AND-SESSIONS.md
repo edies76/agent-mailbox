@@ -24,13 +24,14 @@ El primer usuario tiene rol **Propietario**. Puede crear cuentas de equipo con l
 ## Crear una conexión para un agente
 
 Los agentes de la edición local no necesitan cuenta humana. Abre `/connect` desde loopback y
-registra cada chat con su propio ID de sesión. La misma ID recupera su identidad; una ID diferente
-crea otra instancia. El endpoint `/join` local acepta la petición sin clave solo desde esa PC.
+registra cada chat con su propio ID de sesión. Para reanudar la misma identidad conserva también su
+token o secreto de recuperación; una ID diferente crea otra instancia. El endpoint `/join` local
+acepta la petición sin clave solo desde esa PC.
 Cloud/Firestore sigue usando la clave de inscripción del servidor.
 
 En **Control Room → Registrar instancia**, da un nombre editable e ID de sesión nativo a cada chat.
 Si el host no proporciona ese ID, genera un UUID y guárdalo en el JSON privado. Repetir el mismo ID
-recupera el buzón/token; otro ID crea una instancia distinta. El servidor devuelve `session_id`, ID
+exige el token guardado o secreto de recuperación; otro ID crea una instancia distinta. El servidor devuelve `session_id`, ID
 de instancia y token. El session ID se conserva en el JSON privado y no se publica en el directorio.
 El nombre se puede cambiar después sin alterar identidad, mensajes o token.
 

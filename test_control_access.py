@@ -7,6 +7,7 @@ import io
 import json
 import os
 import subprocess
+import shutil
 import sqlite3
 import sys
 import http.cookiejar
@@ -84,6 +85,52 @@ class ControlAccessTests(unittest.TestCase):
         self.stop_server()
         self.start_server()
         self.request("GET", "/dashboard/data", user["access_key"], expected=401)
+
+    def test_operator_cannot_recover_or_rotate_an_existing_instance_by_session_id(self):
+        body = {"name": "Owner instance", "session_key": "known-native-session"}
+        owner_instance = self.request("POST", "/agents", self.admin, body, 201)
+        operator = self.key("operator")["access_key"]
+        self.request("POST", "/agents", operator, body, 409)
+        self.request("POST", f"/dashboard/agents/{owner_instance['agent']['id']}/rotate-token",
+                     operator, {}, 403, extra_headers={"X-Mailbox-Recovery-Secret": "r" * 43, "X-Mailbox-Expected-Epoch": "0"})
+        resumed = self.request("POST", "/agents", self.admin, body, 201,
+                               extra_headers={"X-Mailbox-Instance-Token": owner_instance["token"]})
+        self.assertEqual(resumed["agent"]["id"], owner_instance["agent"]["id"])
+
+    def test_rotation_rejects_reusing_registration_recovery_secret(self):
+        secret = "r" * 43
+        body = {"name": "Registered securely", "session_key": "registration-secret-session"}
+        agent = self.request("POST", "/agents/secure", self.admin, body, 201,
+                             extra_headers={"X-Mailbox-Recovery-Secret": secret})
+        key = self.request("POST", "/agents/me/api-keys", agent["token"], {"name": "client"}, 201)["token"]
+        self.request("POST", f"/dashboard/agents/{agent['agent']['id']}/rotate-token", self.admin, {}, 409,
+                     extra_headers={"X-Mailbox-Recovery-Secret": secret, "X-Mailbox-Expected-Epoch": "0"})
+        self.request("GET", "/inbox", key)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is not installed")
+    def test_registration_script_saves_and_reuses_private_recovery_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "register-agent.ps1"
+            shutil.copy2(Path(__file__).parent / "register-agent.ps1", script)
+            environment = dict(os.environ, MAILBOX_ADMIN_KEY=self.admin)
+            command = [shutil.which("pwsh"), "-NoProfile", "-NonInteractive"]
+            if os.name == "nt":
+                command += ["-ExecutionPolicy", "Bypass"]
+            first = subprocess.run(command + ["-File", str(script), "-Name", "Script agent", "-BaseUrl", self.url,
+                                                "-SessionId", "script-native-session"], cwd=directory, env=environment,
+                                   text=True, capture_output=True, timeout=45)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            files = list((Path(directory) / ".local" / "agents").glob("*.json"))
+            self.assertEqual(len(files), 1)
+            saved = json.loads(files[0].read_text(encoding="utf-8-sig"))
+            self.assertTrue(saved.get("recovery_secret"))
+            self.assertNotIn(saved["token"], first.stdout)
+            second = subprocess.run(command + ["-File", str(script), "-Name", "Script agent", "-ExistingConfig", str(files[0])],
+                                    cwd=directory, env=environment, text=True, capture_output=True, timeout=45)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            resumed = json.loads(files[0].read_text(encoding="utf-8-sig"))
+            self.assertEqual(resumed["agent_id"], saved["agent_id"])
+            self.assertEqual(resumed["token"], saved["token"])
 
     def test_workflow_delivers_master_and_guides_have_real_assets(self):
         workflow = self.request("GET", "/workflow")

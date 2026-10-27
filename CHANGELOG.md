@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.21
+
+- Require an instance token or per-instance recovery secret before reissuing an existing session's credential; new profile tokens no longer derive from the profile enrollment key.
+- Add scoped, retryable instance-token rotation that preserves inboxes and invalidates named API keys; restrict profile activity to its own workspace.
+- Page the complete pending inbox at hook boundaries, keep bound context previews short, reject stale session bindings and disable generated Codex wakes when their opt-in is removed.
+- Add Firestore dashboard indexes and wait for them before deployment; cap Firestore attachments at 8 MiB to leave transaction headroom.
+- Harden browser, PowerShell and hook registration against unsupported servers and lost responses; serialize Firestore invitation revocation.
+
 ## 0.3.20
 
 - Add isolated user workspaces, one-use time-limited invitations and direct connections from the dashboard.

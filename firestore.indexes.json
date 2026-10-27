@@ -5,12 +5,20 @@
       {"fieldPath": "id", "order": "ASCENDING"}
     ]},
     {"collectionGroup": "messages", "queryScope": "COLLECTION", "fields": [
+      {"fieldPath": "from_agent_id", "order": "ASCENDING"},
+      {"fieldPath": "id", "order": "DESCENDING"}
+    ]},
+    {"collectionGroup": "messages", "queryScope": "COLLECTION", "fields": [
       {"fieldPath": "thread_id", "order": "ASCENDING"},
       {"fieldPath": "id", "order": "ASCENDING"}
     ]},
     {"collectionGroup": "messages", "queryScope": "COLLECTION", "fields": [
       {"fieldPath": "to_agent_id", "order": "ASCENDING"},
       {"fieldPath": "id", "order": "ASCENDING"}
+    ]},
+    {"collectionGroup": "messages", "queryScope": "COLLECTION", "fields": [
+      {"fieldPath": "to_agent_id", "order": "ASCENDING"},
+      {"fieldPath": "id", "order": "DESCENDING"}
     ]},
     {"collectionGroup": "messages", "queryScope": "COLLECTION", "fields": [
       {"fieldPath": "to_agent_id", "order": "ASCENDING"},

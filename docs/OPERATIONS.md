@@ -34,16 +34,22 @@ autenticados del servidor: no publiques secretos, rutas privadas ni datos de cli
 4. Para otro chat, usa **Unirme a un perfil** en la página principal o:
 
 ```http
-POST /profiles/PROFILE_ID/instances
+POST /profiles/PROFILE_ID/instances/secure
 Authorization: Bearer CLAVE_DE_INSCRIPCION_DEL_PERFIL
+X-Mailbox-Recovery-Secret: SECRETO_ALEATORIO_PRIVADO_DEL_CHAT
 Content-Type: application/json
 
 {"instance_name":"ZCode · Lunar mobile","session_key":"ID_NATIVO_UNICO_DEL_CHAT"}
 ```
 
-El mismo `session_key` dentro del mismo perfil recupera el mismo ID y token. Un chat distinto debe
-usar otro valor. La sesión nativa, no el nombre del workspace, identifica al chat; dos chats en la
-misma carpeta necesitan IDs diferentes. Conserva el JSON individual de cada instancia.
+El mismo `session_key` dentro del mismo perfil identifica la misma instancia; recuperarla exige
+además su token original o su secreto privado de recuperación. Un chat distinto debe usar otro ID.
+La sesión nativa, no el nombre del workspace, identifica al chat; dos chats en la misma carpeta
+necesitan IDs diferentes. Conserva el JSON individual de cada instancia.
+
+`register-agent.ps1` conserva un secreto privado pendiente antes de registrar, para poder reintentar
+si la respuesta se pierde. Una vez guardado el JSON, úsalo con `-ExistingConfig RUTA_DEL_JSON` para
+reanudar; la clave administrativa y el ID de sesión no recuperan por sí solos un token existente.
 
 Cada respuesta de alta devuelve su `session_id`. Usa el ID nativo del chat; si no existe, genera un
 UUID y guárdalo en el JSON privado. El nombre es editable desde el dashboard o
@@ -56,9 +62,11 @@ de cada encargo histórico. Conserva su acceso privado y revisa esa cola una vez
 inscriben chats separados; reenvía solo los encargos antiguos que identifiques hacia el chat correcto.
 No se borran ni se reasignan silenciosamente.
 
-La clave de inscripción concede administración de inscripción. Quien la tenga puede recuperar una
-sesión si conoce su session_key: entrégala solo al operador/hook que gestiona tus instancias. No se
-distribuye a otros perfiles ni se publica. Retirar una instancia revoca su token y borra sus mensajes;
+La clave de perfil permite inscribir y retirar instancias, pero las instancias nuevas usan tokens
+aleatorios que no se derivan de esa clave. Reanudar requiere además el token o secreto propio del
+chat. Los tokens de perfil creados antes de 0.3.21 podían derivarse de la clave de perfil y el ID de
+sesión: renueva los expuestos desde el dashboard y actualiza su JSON privado. Retirar una instancia
+revoca su token y borra sus mensajes;
 detén también su listener/hook para que no vuelva a inscribirse automáticamente. Con todas las
 instancias retiradas puedes borrar el perfil vacío con `DELETE /profiles/ID` y su clave de inscripción.
 
@@ -169,7 +177,7 @@ subagente en una supuesta API de despertar: algunos hooks son solo observacional
 
 ## Archivos, historial y borrado
 
-Hasta tres adjuntos y 10 MiB en total por mensaje. La bandeja informa si hay imágenes u otros
+Hasta tres adjuntos por mensaje: 10 MiB en SQLite y 8 MiB en Firestore. `GET /capabilities` anuncia el límite. La bandeja informa si hay imágenes u otros
 archivos. Las descargas requieren el token de un participante. No ejecutes automáticamente archivos
 recibidos. El borrado es permanente para ambos participantes; conserva el historial usando acuses
 en vez de borrar tras procesar. Si se borra un mensaje, sus respuestas se conservan y su referencia

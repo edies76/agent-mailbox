@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 import time
 import json
+import secrets
 
 from fastapi import HTTPException
 from collaboration import (CollaborationStore, DEFAULT_WORKSPACE_ID, workspace_connection_id,
@@ -93,7 +94,8 @@ class SQLiteStore(CollaborationStore):
 
     def authenticate_agent_api_key(self, digest):
         with self.database() as db:
-            row = db.execute("SELECT id, agent_id FROM agent_api_keys WHERE token_hash = ? AND revoked_at IS NULL",
+            row = db.execute("SELECT k.id,k.agent_id FROM agent_api_keys k JOIN agents a ON a.id=k.agent_id "
+                             "WHERE k.token_hash = ? AND k.revoked_at IS NULL AND k.credential_epoch=a.credential_epoch",
                              (digest,)).fetchone()
             if not row:
                 return None
@@ -102,19 +104,43 @@ class SQLiteStore(CollaborationStore):
             db.execute("UPDATE agents SET last_seen = ? WHERE id = ?", (seen, row["agent_id"]))
             return {"id": row["agent_id"], "api_key_id": row["id"]}
 
-    def create_agent_api_key(self, row):
+    def create_agent_api_key(self, row, expected_instance_hash):
         with self.database() as db:
+            db.execute("BEGIN IMMEDIATE")
+            agent = db.execute("SELECT token_hash,credential_epoch FROM agents WHERE id=?", (row["agent_id"],)).fetchone()
+            if not agent or not secrets.compare_digest(agent["token_hash"], expected_instance_hash):
+                raise HTTPException(401, "Instance credential changed; sign in again")
             db.execute("""INSERT INTO agent_api_keys
-                (id,agent_id,name,key_prefix,token_hash,created_at,last_used_at,revoked_at)
-                VALUES (?,?,?,?,?,?,NULL,NULL)""",
-                (row["id"], row["agent_id"], row["name"], row["key_prefix"], row["token_hash"], row["created_at"]))
+                (id,agent_id,name,key_prefix,token_hash,created_at,last_used_at,revoked_at,credential_epoch)
+                VALUES (?,?,?,?,?,?,NULL,NULL,?)""",
+                (row["id"], row["agent_id"], row["name"], row["key_prefix"], row["token_hash"], row["created_at"], agent["credential_epoch"]))
         return row
 
     def agent_api_keys(self, agent_id):
         with self.database() as db:
-            return [dict(row) for row in db.execute(
-                "SELECT id,agent_id,name,key_prefix,created_at,last_used_at,revoked_at FROM agent_api_keys WHERE agent_id = ? ORDER BY created_at DESC",
-                (agent_id,))]
+            rows = db.execute("SELECT k.id,k.agent_id,k.name,k.key_prefix,k.created_at,k.last_used_at,k.revoked_at,"
+                              "k.credential_epoch,a.credential_epoch AS current_epoch,a.credential_rotated_at "
+                              "FROM agent_api_keys k JOIN agents a ON a.id=k.agent_id WHERE k.agent_id=? ORDER BY k.created_at DESC",
+                              (agent_id,)).fetchall()
+            return [dict(row) | {"revoked_at": row["revoked_at"] or (row["credential_rotated_at"] if row["credential_epoch"] != row["current_epoch"] else None)}
+                    for row in rows]
+
+    def rotate_agent_token(self, agent_id, token_hash, recovery_hash, expected_epoch, now):
+        with self.database() as db:
+            db.execute("BEGIN IMMEDIATE")
+            agent = db.execute("SELECT token_hash,recovery_hash,last_rotation_hash,credential_epoch FROM agents WHERE id=?", (agent_id,)).fetchone()
+            if not agent:
+                raise HTTPException(404, "Agent not found")
+            if agent["token_hash"] == token_hash and agent["recovery_hash"] == recovery_hash:
+                if agent["last_rotation_hash"] == recovery_hash and agent["credential_epoch"] == expected_epoch + 1:
+                    return False
+                raise HTTPException(409, "Choose a new recovery secret for token rotation")
+            if agent["credential_epoch"] != expected_epoch:
+                raise HTTPException(409, "Instance credential changed; refresh before rotating")
+            db.execute("UPDATE agents SET token_hash=?,credential_epoch=credential_epoch+1,credential_rotated_at=?,recovery_hash=?,last_rotation_hash=? WHERE id=?",
+                       (token_hash, now, recovery_hash, recovery_hash, agent_id))
+            db.execute("UPDATE agent_api_keys SET revoked_at=? WHERE agent_id=? AND revoked_at IS NULL", (now, agent_id))
+            return True
 
     def revoke_agent_api_key(self, agent_id, key_id):
         with self.database() as db:
@@ -124,9 +150,15 @@ class SQLiteStore(CollaborationStore):
 
     def register(self, row):
         with self.database() as db:
-            db.execute("INSERT INTO agents (id, name, kind, project, token_hash, created_at, last_seen, description, capabilities_json, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                       tuple(row.get(k, "") for k in ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "description")) +
-                       (json.dumps(row.get("capabilities", []), ensure_ascii=False), row.get("workspace_id", DEFAULT_WORKSPACE_ID)))
+            try:
+                db.execute("INSERT INTO agents (id, name, kind, project, token_hash, created_at, last_seen, description, capabilities_json, workspace_id, recovery_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                           tuple(row.get(k, "") for k in ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "description")) +
+                           (json.dumps(row.get("capabilities", []), ensure_ascii=False), row.get("workspace_id", DEFAULT_WORKSPACE_ID), row.get("recovery_hash")))
+            except sqlite3.IntegrityError:
+                if db.execute("SELECT 1 FROM agents WHERE id=?", (row["id"],)).fetchone():
+                    return False
+                raise
+        return True
 
     @staticmethod
     def agent_output(row):
@@ -376,19 +408,70 @@ class FirestoreStore(CollaborationStore):
         row = rows[0].to_dict()
         if row.get("revoked_at") is not None:
             return None
+        agent_ref = self.agents.document(row["agent_id"])
+        agent = agent_ref.get(timeout=15).to_dict()
+        if not agent or row.get("credential_epoch", 0) != agent.get("credential_epoch", 0):
+            return None
         seen = time.time()
         rows[0].reference.update({"last_used_at": seen}, timeout=15)
-        self.agents.document(row["agent_id"]).update({"last_seen": seen}, timeout=15)
+        agent_ref.update({"last_seen": seen}, timeout=15)
         return {"id": row["agent_id"], "api_key_id": rows[0].id}
 
-    def create_agent_api_key(self, row):
-        self.client.collection("agent_api_keys").document(row["id"]).create(row, timeout=15)
+    def create_agent_api_key(self, row, expected_instance_hash):
+        agent_ref = self.agents.document(row["agent_id"])
+        key_ref = self.client.collection("agent_api_keys").document(row["id"])
+        @self.firestore.transactional
+        def create(transaction):
+            agent = agent_ref.get(transaction=transaction).to_dict()
+            if not agent or not secrets.compare_digest(agent.get("token_hash", ""), expected_instance_hash):
+                raise HTTPException(401, "Instance credential changed; sign in again")
+            transaction.create(key_ref, row | {"credential_epoch": agent.get("credential_epoch", 0)})
+            transaction.update(agent_ref, {"api_key_revision": agent.get("api_key_revision", 0) + 1})
+        create(self.client.transaction(max_attempts=5))
         return row
 
     def agent_api_keys(self, agent_id):
         rows = list(self.where(self.client.collection("agent_api_keys"), "agent_id", "==", agent_id)
                     .stream(timeout=15))
-        return sorted((doc.to_dict() for doc in rows), key=lambda row: row["created_at"], reverse=True)
+        agent = self.agents.document(agent_id).get(timeout=15).to_dict() or {}
+        current_epoch = agent.get("credential_epoch", 0)
+        result = []
+        for doc in rows:
+            row = doc.to_dict()
+            if row.get("credential_epoch", 0) != current_epoch and row.get("revoked_at") is None:
+                row["revoked_at"] = agent.get("credential_rotated_at") or time.time()
+            result.append(row)
+        return sorted(result, key=lambda row: row["created_at"], reverse=True)
+
+    def rotate_agent_token(self, agent_id, token_hash, recovery_hash, expected_epoch, now):
+        ref = self.agents.document(agent_id)
+        @self.firestore.transactional
+        def rotate(transaction):
+            agent = ref.get(transaction=transaction).to_dict()
+            if not agent:
+                raise HTTPException(404, "Agent not found")
+            current_epoch = agent.get("credential_epoch", 0)
+            if agent.get("token_hash") == token_hash and agent.get("recovery_hash") == recovery_hash:
+                if agent.get("last_rotation_hash") == recovery_hash and current_epoch == expected_epoch + 1:
+                    return False
+                raise HTTPException(409, "Choose a new recovery secret for token rotation")
+            if current_epoch != expected_epoch:
+                raise HTTPException(409, "Instance credential changed; refresh before rotating")
+            query = self.where(self.client.collection("agent_api_keys"), "agent_id", "==", agent_id)
+            active_keys = [doc for doc in query.stream(transaction=transaction, timeout=15)
+                           if doc.to_dict().get("revoked_at") is None]
+            if len(active_keys) > 400:
+                raise HTTPException(409, "Too many active API keys to rotate atomically; revoke keys first")
+            for doc in active_keys:
+                transaction.update(doc.reference, {"revoked_at": now})
+            transaction.update(ref, {"token_hash": token_hash,
+                                     "credential_epoch": agent.get("credential_epoch", 0) + 1,
+                                     "credential_rotated_at": now,
+                                     "recovery_hash": recovery_hash,
+                                     "last_rotation_hash": recovery_hash,
+                                     "api_key_revision": agent.get("api_key_revision", 0) + 1})
+            return True
+        return rotate(self.client.transaction(max_attempts=5))
 
     def revoke_agent_api_key(self, agent_id, key_id):
         ref = self.client.collection("agent_api_keys").document(key_id)
@@ -402,7 +485,12 @@ class FirestoreStore(CollaborationStore):
         return True
 
     def register(self, row):
-        self.agents.document(row["id"]).create(row, timeout=15)
+        from google.api_core.exceptions import AlreadyExists
+        try:
+            self.agents.document(row["id"]).create(row, timeout=15)
+        except AlreadyExists:
+            return False
+        return True
 
     def update_agent_card(self, identifier, fields):
         ref = self.agents.document(identifier)

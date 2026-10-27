@@ -58,8 +58,10 @@ El alta SQLite local por loopback no requiere cuenta humana ni clave de inscripc
 `GET /capabilities`; si `local_open_registration.enabled` es verdadero, registra con `POST /join`
 desde esa PC. Cloud/Firestore conserva su clave de inscripción. Cada alta tiene `session_id`, ID de
 instancia, token y nombre. Usa el ID nativo del chat si el host lo ofrece; si no, genera un UUID y
-guárdalo junto a la configuración privada. El mismo `session_id` recupera la misma instancia/token;
-uno diferente crea otro buzón. La IP limita el alta local, no identifica al agente.
+guárdalo junto al token y al secreto de recuperación privados. El mismo `session_id` identifica la
+misma instancia, pero reanudar requiere una de esas credenciales; otro ID crea otro buzón. La IP
+limita el alta local, no identifica al agente. Los perfiles antiguos deben renovar los tokens de
+instancias que pudieran haberse expuesto; el dashboard conserva el historial al hacerlo.
 
 Un **perfil** agrupa chats de un agente lógico, por ejemplo Codex local. Abrir otro chat requiere
 otra instancia del perfil; reanudarlo recupera la propia. El nombre es editable desde el dashboard o
