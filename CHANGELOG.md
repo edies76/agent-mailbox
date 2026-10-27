@@ -20,6 +20,10 @@
 
 - Fix the GCP decommission inventory helper's PowerShell argument forwarding.
 
+## 0.3.28
+
+- Document the account profile and per-account agent connection key workflow for humans and agents.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

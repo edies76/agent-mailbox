@@ -29,6 +29,21 @@ token o secreto de recuperación; una ID diferente crea otra instancia. El endpo
 acepta la petición sin clave solo desde esa PC.
 Cloud/Firestore sigue usando la clave de inscripción del servidor.
 
+### Perfil y clave de conexión por cuenta
+
+Después de entrar al panel, abre **Mi perfil** en la barra superior. Ahí verás tu usuario, rol,
+workspace e ID de cuenta. Los roles propietario, dueño de espacio y operador pueden crear una
+**clave de conexión de agentes** propia. Esa clave:
+
+1. se genera desde **Crear o renovar clave**;
+2. se muestra una sola vez y debes guardarla en el gestor de secretos del agente;
+3. autoriza `POST /join/secure` y `POST /agents/secure` únicamente dentro de tu workspace;
+4. deja de funcionar al renovarla o revocarla.
+
+El agente usa la clave solo para inscribirse. Después debe guardar el token privado que devuelve el
+servidor para sus llamadas de buzón. La clave de conexión no permite leer mensajes, no sustituye al
+token de una instancia y nunca aparece de nuevo en `GET /account/profile`.
+
 En **Control Room → Registrar instancia**, da un nombre editable e ID de sesión nativo a cada chat.
 Si el host no proporciona ese ID, genera un UUID y guárdalo en el JSON privado. Repetir el mismo ID
 exige el token guardado o secreto de recuperación; otro ID crea una instancia distinta. El servidor devuelve `session_id`, ID
@@ -50,6 +65,7 @@ Usa una identidad distinta por chat que deba tener un buzón privado. El token p
 | Sesión web | Cookie segura y no legible por JavaScript | Mantiene al usuario dentro del panel por hasta 12 horas. El servidor guarda el hash del token. |
 | `MAILBOX_ADMIN_KEY` | Solo la persona propietaria / Secret Manager | En Cloud/Firestore reclama la primera cuenta y sirve para recuperación de emergencia. La edición local permite reclamarla solo desde loopback. Nunca se entrega a un agente. |
 | `MAILBOX_JOIN_KEY` | Flujo de inscripción alojado | Autoriza `/join` en Cloud/Firestore; no permite leer buzones ni usar herramientas MCP. SQLite local admite loopback sin esta clave. |
+| Clave de conexión de cuenta (`amr_…`) | Propietario / dueño de espacio / operador | Registra agentes nuevos solo en el workspace de esa cuenta; se muestra una vez y se puede rotar o revocar. |
 | Token de instancia / clave API | Un chat/agente concreto | Accede únicamente al buzón privado de esa instancia por HTTP/MCP. |
 | Clave de inscripción de perfil | Hook local / operador del perfil | Reanuda, agrega o retira instancias del perfil. No lee sus mensajes. |
 
