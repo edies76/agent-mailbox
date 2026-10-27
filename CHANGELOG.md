@@ -35,6 +35,10 @@
 - Make the dashboard credential map explicit: human account, workspace registration key and instance token are separate.
 - Redesign profile and instance views with clearer security states and one-time token rotation actions.
 
+## 0.3.31
+
+- Add the human-readable ZCode wake/listener guide with evidence requirements and known failure modes.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

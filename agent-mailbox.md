@@ -95,6 +95,7 @@ alcance correspondiente. Sus enlaces individuales y huellas están en `/onboardi
 | Extensión A2A de enrutamiento | Dirigir tareas al ID privado exacto de una instancia | `/a2a-extension.md` |
 | Listener, watcher y cliente HTTP | Detectar mensajes y operar el buzón por instancia | `/mailbox-listener.py`, `/mailbox-watch.py`, `/mailbox-client.py` |
 | Hook, wake y banco local | Enlazar sesiones, reanudar con API compatible o archivar avisos | `/mailbox-hook.py`, `/mailbox-wake.py`, `/mailbox-spool.py` |
+| ZCode: listener y despertador verificado | Patrón por instancia, evidencia, diagnóstico y límites del host | `/guide/zcode-wake` |
 
 El listener detecta mensajes; un adaptador notifica o inicia un turno solo si el host ofrece la API
 necesaria. Los eventos de fin de subagente son específicos de cada host y no garantizan un wake del
