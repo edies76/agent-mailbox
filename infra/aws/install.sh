@@ -31,7 +31,7 @@ unset admin_key join_key
 docker build --pull -t "agent-mailbox:$(cat "$repo/VERSION")" "$repo"
 docker rm -f agent-mailbox agent-mailbox-caddy >/dev/null 2>&1 || true
 docker run -d --name agent-mailbox --restart unless-stopped --read-only --tmpfs /tmp --publish 127.0.0.1:8795:8795 \
-  --env-file "$private/app.env" --volume "$data/data:/data" "agent-mailbox:$(cat "$repo/VERSION")" >/dev/null
+  --env-file "$private/app.env" --volume "$data/data:/data" --volume "$data/backup-staging:/backup-staging" "agent-mailbox:$(cat "$repo/VERSION")" >/dev/null
 
 cat > "$data/caddy-config/Caddyfile" <<EOF
 $AGENT_MAILBOX_DOMAIN {
@@ -50,7 +50,7 @@ cat > /usr/local/sbin/agent-mailbox-backup <<EOF
 set -euo pipefail
 stamp=\$(date -u +%Y%m%dT%H%M%SZ)
 target="$data/backup-staging/mailbox-\$stamp.sqlite3"
-docker exec -e MAILBOX_BACKUP_NAME="mailbox-\$stamp.sqlite3" agent-mailbox python -c 'import os,sqlite3; src=sqlite3.connect("/data/mailbox.sqlite3"); dst=sqlite3.connect("/data/backup-staging/"+os.environ["MAILBOX_BACKUP_NAME"]); src.backup(dst); dst.close(); src.close()'
+docker exec -e MAILBOX_BACKUP_NAME="mailbox-\$stamp.sqlite3" agent-mailbox python -c 'import os,sqlite3; src=sqlite3.connect("/data/mailbox.sqlite3"); dst=sqlite3.connect("/backup-staging/"+os.environ["MAILBOX_BACKUP_NAME"]); src.backup(dst); dst.close(); src.close()'
 aws s3 cp "\$target" "s3://$AGENT_MAILBOX_BUCKET/daily/\$(basename "\$target")" --sse AES256 --region "$AGENT_MAILBOX_REGION" >/dev/null
 rm -f "\$target"
 EOF

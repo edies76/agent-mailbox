@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.23
+
+- Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.
+
 ## 0.3.22
 
 - Fix the workspace dashboard statistics call used by SQLite deployments and add idempotent rotation epoch handling.
