@@ -998,6 +998,21 @@ def create_app():
                                                "scope": "Only agents registered with this key enter this account's workspace."}},
                             headers={"Cache-Control": "no-store"})
 
+    @app.get("/account/members")
+    def account_members(request: Request):
+        session = current_account_session(request)
+        account = store.account_by_id(session["user_id"])
+        if not account:
+            raise HTTPException(404, "Account not found")
+        workspace_id = account.get("workspace_id") or DEFAULT_WORKSPACE_ID
+        members = []
+        for row in store.all_account_users(workspace_id):
+            members.append({key: row.get(key) for key in
+                            ("id", "username", "role", "created_at", "last_login_at", "disabled_at", "workspace_id")})
+        return JSONResponse({"workspace_id": workspace_id, "members": members,
+                             "count": len(members), "current_user_id": account["id"]},
+                            headers={"Cache-Control": "no-store"})
+
     @app.post("/account/registration-key")
     def rotate_account_registration_key(request: Request):
         session = current_account_session(request)

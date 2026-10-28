@@ -87,6 +87,11 @@
 
 - Separate the profile index HTML route from its authenticated JSON data endpoint at `/dashboard/profiles/data`.
 
+## 0.3.42
+
+- Show workspace users directly in `/dashboard/account` with role, active state and last access.
+- Keep account membership data separate from agent profile data and tokens.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.
