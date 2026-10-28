@@ -106,6 +106,11 @@
 - Add richer account onboarding fields: display name, organization, project and description.
 - Add editable user profile details at `/dashboard/account`.
 
+## 0.3.46
+
+- Fix public workspace-member signup CSRF rejection.
+- Replace long visible wake prompts with compact notification metadata; agents fetch the full body privately.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

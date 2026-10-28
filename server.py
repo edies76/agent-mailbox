@@ -490,7 +490,7 @@ def create_app():
 
     @app.middleware("http")
     async def account_csrf_guard(request, call_next):
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in {"/auth/login", "/auth/setup", "/auth/key-login", "/auth/register", "/auth/signup"} and not request.headers.get("authorization"):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in {"/auth/login", "/auth/setup", "/auth/key-login", "/auth/register", "/auth/register-member", "/auth/signup"} and not request.headers.get("authorization"):
             session_token = request_session_token(request)
             if session_token:
                 session = web_session_by_hash(hashlib.sha256(session_token.encode()).hexdigest(), time.time())

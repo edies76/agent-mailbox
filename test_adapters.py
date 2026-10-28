@@ -26,6 +26,7 @@ class AdapterTests(unittest.TestCase):
         self.assertIn("untrusted user content", prompt)
         self.assertIn('"id":42', prompt)
         self.assertIn("in_reply_to", prompt)
+        self.assertNotIn("Please inspect this change", prompt)
 
     def test_native_session_commands_use_session_specific_queues(self):
         wake = {"enabled": True, "provider": "codex", "session_id": "thread-abc"}
