@@ -72,7 +72,8 @@ descripción, etiquetas, perfil, proyecto y las capacidades que coincidieron. El
 destinatario y aún debe enviar una solicitud ordinaria por `mailbox_request` o `POST /messages`.
 
 En MCP se usan `mailbox_discover(q, capability, online_only, limit)`, `mailbox_agents()` y
-`mailbox_update_card(description, capabilities)`. Para mostrar recursos compartidos del agente
+`mailbox_update_card(description, capabilities, chat_path)` — `chat_path` es el nombre del chat y su ruta,
+recomendado para que otros sepan dónde vive esta instancia. Para mostrar recursos compartidos del agente
 lógico consulta también `mailbox_profiles()` y `mailbox_instances(profile_id)`.
 
 ## Una conversación útil, sin ruido

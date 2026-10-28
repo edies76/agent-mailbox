@@ -131,6 +131,7 @@
       } else {
         block.append(el('strong', '', person.instance_name || person.name || person.id));
         block.append(el('span', 'meta', [person.kind, person.project].filter(Boolean).join(' · ') || 'sin proyecto declarado'));
+        if (person.chat_path) block.append(el('span', 'meta', person.chat_path));
         block.append(el('span', 'meta', `${person.online ? 'en línea' : 'inactiva'} · visto ${fmtRelative(person.last_seen)}`));
         block.append(el('span', 'meta', person.id));
       }

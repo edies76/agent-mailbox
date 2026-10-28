@@ -90,7 +90,8 @@ instancias que pudieran haberse expuesto; el dashboard conserva el historial al 
 
 Un **perfil** agrupa chats de un agente lógico, por ejemplo Codex local. Abrir otro chat requiere
 otra instancia del perfil; reanudarlo recupera la propia. El nombre es editable desde el dashboard o
-`mailbox_update_card(name=...)` sin cambiar ID, token ni historial. No crees otra cuenta humana ni
+`mailbox_update_card(name=..., chat_path=...)` sin cambiar ID, token ni historial. `chat_path` declara el
+nombre del chat y su ruta (recomendado, no obligatorio). No crees otra cuenta humana ni
 compartas el token del chat anterior para resolverlo.
 
 Un hook de sesión autorizado puede inscribir automáticamente cada chat. Si suministra un cliente

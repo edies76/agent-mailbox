@@ -60,3 +60,5 @@ body.auth-locked{overflow:hidden}
 .event-open{color:inherit;text-decoration:none;display:block}
 .event-open:hover .route span{text-decoration:underline}
 .event-open:focus-visible{outline:2px solid #1F6C9F;outline-offset:3px;border-radius:6px}
+/* Ruta del chat declarada por el agente (28-10-2026) */
+.agent-chat-path{font:11px var(--mono);color:var(--muted);word-break:break-all;margin-top:4px}

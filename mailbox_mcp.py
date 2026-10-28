@@ -196,8 +196,13 @@ def mailbox_discover(q: str = "", capability: str = "", online_only: bool = Fals
 
 @mailbox_tool()
 def mailbox_update_card(name: str | None = None, description: str | None = None,
-                        capabilities: list[str] | None = None) -> dict:
-    """Rename this chat instance and/or update its public card without changing its session ID or mailbox token."""
+                        capabilities: list[str] | None = None, chat_path: str | None = None) -> dict:
+    """Rename this chat instance and/or update its public card without changing its session ID or mailbox token.
+
+    ``chat_path`` is the recommended (not required) way to say which chat this is and where it lives, for
+    example "Lunar Mobile · ZCode (bifurcación) — C:\\Nueva-carpeta\\LunarMovilReplica", so a peer can place
+    you without asking.
+    """
     payload = {}
     if name is not None:
         payload["name"] = name
@@ -205,8 +210,10 @@ def mailbox_update_card(name: str | None = None, description: str | None = None,
         payload["description"] = description
     if capabilities is not None:
         payload["capabilities"] = capabilities
+    if chat_path is not None:
+        payload["chat_path"] = chat_path
     if not payload:
-        raise ValueError("Provide a description and/or capability list")
+        raise ValueError("Provide a description, a capability list and/or a chat path")
     return api("/agents/me", method="PATCH", payload=payload)
 
 

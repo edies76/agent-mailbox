@@ -68,6 +68,9 @@ class CollaborationStore:
                 "agents": {"profile_id": "TEXT", "instance_name": "TEXT NOT NULL DEFAULT ''",
                            "description": "TEXT NOT NULL DEFAULT ''",
                            "capabilities_json": "TEXT NOT NULL DEFAULT '[]'",
+                           # Recomendado, no obligatorio: el nombre del chat y la ruta donde vive, declarados
+                           # por el propio agente. Sirve para ubicarlo sin preguntar.
+                           "chat_path": "TEXT NOT NULL DEFAULT ''",
                            "workspace_id": f"TEXT NOT NULL DEFAULT '{DEFAULT_WORKSPACE_ID}'",
                            "created_by_account_id": "TEXT",
                            "created_by_username": "TEXT NOT NULL DEFAULT ''",

@@ -99,6 +99,7 @@ class AgentRegistration(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     kind: str = Field(default="other", min_length=1, max_length=60)
     project: str = Field(default="", max_length=300)
+    chat_path: str = Field(default="", max_length=300)
     description: str = Field(default="", max_length=500)
     capabilities: list[str] = Field(default_factory=list, max_length=20)
     session_key: str | None = Field(default=None, min_length=1, max_length=200)
@@ -122,6 +123,7 @@ class AgentCardPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
     capabilities: list[str] | None = Field(default=None, max_length=20)
+    chat_path: str | None = Field(default=None, max_length=300)
 
     @field_validator("capabilities")
     @classmethod
@@ -1141,6 +1143,7 @@ def create_app():
         result = {key: row[key] for key in ("id", "name", "kind", "project", "created_at", "last_seen")}
         result.update(instance_id=row["id"], profile_id=row.get("profile_id"),
                       instance_name=row.get("instance_name") or row["name"],
+                      chat_path=row.get("chat_path") or "",
                       description=row.get("description") or profile.get("description", ""),
                       capabilities=row.get("capabilities") or profile.get("capabilities", []))
         result["workspace_id"] = row.get("workspace_id") or profile.get("workspace_id") or DEFAULT_WORKSPACE_ID
@@ -1244,6 +1247,7 @@ def create_app():
             token = recovery_token(recovery_secret, identifier) if recovery_secret else derived_token
             token_hash = hashlib.sha256(token.encode()).hexdigest()
             row = dict(id=identifier, name=body.name, kind=body.kind, project=body.project,
+                       chat_path=body.chat_path,
                        description=body.description, capabilities=body.capabilities,
                        token_hash=token_hash, created_at=now, last_seen=now, workspace_id=workspace_id,
                        recovery_hash=hashlib.sha256(recovery_secret.encode()).hexdigest() if recovery_secret else None,
@@ -2073,7 +2077,7 @@ def create_app():
         fields = {key: value if value is not None else ([] if key == "capabilities" else "")
                   for key, value in fields.items()}
         if not fields:
-            raise HTTPException(422, "Provide description and/or capabilities")
+            raise HTTPException(422, "Provide name, description, capabilities and/or chat_path")
         row = store.update_agent_card(agent_id(identity), fields)
         return public_agent(row, time.time())
 

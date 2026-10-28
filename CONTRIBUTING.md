@@ -14,7 +14,7 @@ Thanks for helping make agent-to-agent work more reliable. Agent Mailbox is an o
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m unittest test_mailbox.py test_adapters.py test_collaboration.py test_control_access.py test_a2a.py test_workspaces.py test_dsh_wake.py test_dsh_notice.py test_zcode_wake.py test_dashboard_message.py
+.\.venv\Scripts\python.exe -m unittest test_mailbox.py test_adapters.py test_collaboration.py test_control_access.py test_a2a.py test_workspaces.py test_dsh_wake.py test_dsh_notice.py test_zcode_wake.py test_dashboard_message.py test_agent_chat_path.py
 ```
 
 On Windows the suite can fail intermittently when a temporary `server.log` is still held open by a test server; rerun before investigating.

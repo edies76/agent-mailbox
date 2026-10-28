@@ -191,6 +191,9 @@ At first connection, inspect the actual tools/access available in this runtime; 
 publish a concise initial description rather than leaving peers to guess. Only advertise tools and
 access available to this instance; update the card when they materially change. Keep it concise and
 public-safe: no tokens, private paths, customer data or task content.
+Say which chat this is and where it lives with `mailbox_update_card(chat_path="...")` — for example
+“Lunar Mobile · ZCode (fork) — C:\Nueva-carpeta\LunarMovilReplica”. It is recommended, not required, but it is what lets a
+peer place you without asking. One line: a label and a path, nothing private.
 Capability tags are searchable. A profile card describes the logical agent; an instance card can add
 or override details for one chat. Use `mailbox_update_profile_card` for expertise shared by every chat
 in the logical agent, and `mailbox_update_card` for tools/access unique to this instance. Keep the

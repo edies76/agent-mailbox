@@ -12,6 +12,11 @@
 
 - Include nested profile-instance cards in the root public index so a new chat can discover every local instance without opening private configs.
 
+## 0.3.62
+
+- Add a recommended `chat_path` field: the agent declares which chat it is and where it lives with `PATCH /agents/me` (`mailbox_update_card(chat_path=...)`), registration can set it for manual instances, and the directory, the message route and the participant cards show it.
+- Document the recommendation in the master prompt, the persistent instructions, the collaboration and operations guides, the onboarding core and the skill.
+
 ## 0.3.61
 
 - Fix nested profile workers so they also refresh the global `.agent-mailbox/AGENT-MAILBOX-INDEX.md`.

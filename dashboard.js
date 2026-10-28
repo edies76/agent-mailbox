@@ -88,11 +88,12 @@
   function renderAgents(agents,permissions) {
     const list=byId('agent-list');list.replaceChildren();
     const q=byId('agent-filter').value.trim().toLocaleLowerCase();const presence=byId('agent-state').value;
-    const rows=agents.filter(agent=>(presence==='all'||(presence==='online')===agent.online)&&`${agent.name} ${agent.kind} ${agent.project} ${agent.description} ${(agent.capabilities||[]).join(' ')}`.toLocaleLowerCase().includes(q));
+    const rows=agents.filter(agent=>(presence==='all'||(presence==='online')===agent.online)&&`${agent.name} ${agent.kind} ${agent.project} ${agent.chat_path||''} ${agent.description} ${(agent.capabilities||[]).join(' ')}`.toLocaleLowerCase().includes(q));
     if(!rows.length){list.append(el('div','empty',agents.length?'No hay instancias con esos filtros.':'Todavía no se ha registrado ningún agente.'));return;}
     for(const agent of rows){
       const row=el('article','agent');const info=el('div','agent-info');
       info.append(el('div','agent-name',agent.instance_name||agent.name),el('div','agent-kind',`${agent.kind}${agent.project?' · '+agent.project:''}`));
+      if(agent.chat_path)info.append(el('div','agent-chat-path',agent.chat_path));
       const card=[agent.description,(agent.capabilities||[]).join(' · ')].filter(Boolean).join(' — ')||'Ficha sin completar';info.append(el('div','agent-card-copy',card));
       const provenance=agent.added_by||{};info.append(el('div','agent-provenance',`Añadido por ${provenance.username||'sistema'} · ${provenance.method||'registro directo'}`));
       if(agent.profile_id){const profileLink=el('a','agent-profile-link','Abrir perfil y sus instancias ↗');profileLink.href=`/dashboard/profile/${encodeURIComponent(agent.profile_id)}`;info.append(profileLink);}
@@ -186,7 +187,7 @@
     const proofHeaders=savedToken?{'X-Mailbox-Instance-Token':savedToken}:{'X-Mailbox-Recovery-Secret':recoverySecret};
     try{
       const capabilities=await api('/capabilities');if(capabilities.secure_registration?.version!==1)throw new Error('Actualiza el servidor antes de registrar esta instancia de forma segura.');
-      const result=await api('/agents/secure','POST',{name:byId('new-agent-name').value,kind:byId('new-agent-kind').value,project:byId('new-agent-project').value,description:byId('new-agent-description').value,capabilities:byId('new-agent-caps').value.split(',').map(v=>v.trim()).filter(Boolean),session_key:sessionId},proofHeaders);
+      const result=await api('/agents/secure','POST',{name:byId('new-agent-name').value,kind:byId('new-agent-kind').value,project:byId('new-agent-project').value,chat_path:byId('new-agent-chat-path').value,description:byId('new-agent-description').value,capabilities:byId('new-agent-caps').value.split(',').map(v=>v.trim()).filter(Boolean),session_key:sessionId},proofHeaders);
       const expected=savedToken||await expectedRecoveryToken(recoverySecret,result.agent.id);if(result.token!==expected)throw new Error('El servidor no confirmó la credencial privada.');
       newAgentAccess={url:location.origin,mcp_url:`${location.origin}/mcp`,transport:'streamable-http',agent_id:result.agent.id,session_id:result.session_id,token:result.token,onboarding_url:'/agent-mailbox.md',onboarding_manifest_url:'/onboarding'};
       if(recoverySecret)newAgentAccess.recovery_secret=recoverySecret;

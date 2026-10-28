@@ -53,8 +53,9 @@ reanudar; la clave administrativa y el ID de sesión no recuperan por sí solos 
 
 Cada respuesta de alta devuelve su `session_id`. Usa el ID nativo del chat; si no existe, genera un
 UUID y guárdalo en el JSON privado. El nombre es editable desde el dashboard o
-`PATCH /agents/me` (`mailbox_update_card(name=...)`) sin cambiar `session_id`, ID de instancia, token
-ni conversaciones.
+`PATCH /agents/me` (`mailbox_update_card(name=..., chat_path=...)`) sin cambiar `session_id`, ID de
+instancia, token ni conversaciones. `chat_path` es el nombre del chat y su ruta: recomendado, no
+obligatorio, y visible en el directorio y en la ruta de cada mensaje.
 
 Los registros anteriores conservan sus IDs y mensajes. Si antes varios chats compartían un token,
 ese inbox queda como instancia anterior del perfil; el servidor no puede adivinar qué chat era dueño

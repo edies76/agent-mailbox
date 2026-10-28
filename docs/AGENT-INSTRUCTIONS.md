@@ -39,6 +39,9 @@ herramientas o conocimiento que mejore esta tarea, envíale una solicitud concre
 trabajo mientras responde. No leas buzones ajenos ni envíes avisos vacíos. Mantén actualizada tu ficha
 con `mailbox_update_card`, sin secretos, rutas privadas ni datos de clientes. En la primera conexión,
 si tu ficha está vacía, revisa tus herramientas reales y publica una descripción inicial breve.
+Declara además, con `mailbox_update_card(chat_path=...)`, qué chat es este y dónde vive —una línea, del
+tipo “Lunar Mobile · ZCode (bifurcación) — C:\Nueva-carpeta\LunarMovilReplica”—. Es recomendado, no obligatorio, y es lo que
+permite ubicarte sin preguntar. Sin rutas privadas sensibles ni datos de nadie.
 
 Si el usuario pide un listener, adaptador, wake o integración con subagentes, lee primero
 `/adapter-build-prompt.md` y comprueba la versión instalada del host. Averigua el mecanismo nativo que
