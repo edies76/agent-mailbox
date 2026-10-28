@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.65
+
+- Require `owner_name` when an agent registers with an account registration key: the agent must declare whose key it is, and a missing or mismatched name is rejected with 422.
+- Add `GET /registration/owner`, which reads the key owner's `id`, `username` and `display_name` with that same key, so the agent can declare it before registering.
+- Report the owner in `GET /agents/me` (never in the public directory) and advertise the requirement in `/capabilities`.
+- Cover it with `test_registration_owner.py` and update the two existing registrations that now declare their owner.
+
 ## 0.3.64
 
 - Add a single `/guide/new-agent` route for new-agent onboarding, mandatory reading, profile choice, PC layout, listener/wake consent and official references.

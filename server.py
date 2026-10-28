@@ -100,6 +100,9 @@ class AgentRegistration(BaseModel):
     kind: str = Field(default="other", min_length=1, max_length=60)
     project: str = Field(default="", max_length=300)
     chat_path: str = Field(default="", max_length=300)
+    # Obligatorio cuando el agente se registra con la clave de registro de una cuenta: debe
+    # decir de quién es el token que le dieron. Con sesión del panel se deduce del dueño.
+    owner_name: str = Field(default="", max_length=120)
     description: str = Field(default="", max_length=500)
     capabilities: list[str] = Field(default_factory=list, max_length=20)
     session_key: str | None = Field(default=None, min_length=1, max_length=200)
@@ -1153,6 +1156,23 @@ def create_app():
         result["online"] = row["last_seen"] >= now - online_seconds
         return result
 
+    def account_owner_view(user_id, username=""):
+        """Datos del humano dueño de un token: id y nombre, para que el agente sepa con quién habla."""
+        account = store.account_by_id(user_id) or {}
+        return {"id": account.get("id") or user_id or "",
+                "username": account.get("username") or username or "",
+                "display_name": account.get("display_name") or ""}
+
+    def require_owner_declaration(declared, owner):
+        """El agente debe declarar el nombre del dueño del token con el que se registra."""
+        accepted = {value.strip().casefold() for value in (owner.get("username"), owner.get("display_name")) if value}
+        if not declared.strip():
+            raise HTTPException(422, "Falta owner_name: escribe el nombre del dueño del token que te dieron; "
+                                     "puedes leerlo con GET /registration/owner usando esa misma clave")
+        if declared.strip().casefold() not in accepted:
+            raise HTTPException(422, "owner_name no coincide con el dueño de esa clave de registro; "
+                                     "comprueba id y nombre con GET /registration/owner")
+
     def directory_agents(now=None, workspace_ids=None, rows=None):
         now = now or time.time()
         profiles = {row["id"]: row for row in store.profiles_all()}
@@ -1824,6 +1844,7 @@ def create_app():
         local_open = local_keyless_registration_request(request)
         registration = store.account_by_registration_key_hash(hashlib.sha256(credentials.credentials.encode()).hexdigest()) if credentials else None
         registrar = None
+        owner = None
         if credentials is not None:
             if registration is not None:
                 if registration.get("role") not in ("owner", "workspace_owner", "operator", "workspace_member"):
@@ -1831,6 +1852,8 @@ def create_app():
                 registration_seed = workspace_registration_seed(registration["workspace_id"])
                 workspace_id = registration["workspace_id"]
                 registrar = {"account_id": registration["user_id"], "username": registration["username"], "method": "account_registration_key"}
+                owner = account_owner_view(registration["user_id"], registration["username"])
+                require_owner_declaration(body.owner_name, owner)
             elif not join_key or not secrets.compare_digest(credentials.credentials.encode(), join_key.encode()):
                 raise HTTPException(401, "Clave de acceso incorrecta o ausente", headers={"WWW-Authenticate": "Bearer"})
             else:
@@ -1853,8 +1876,25 @@ def create_app():
                                      registrar=registrar)
         # A shared join key authorizes registration only; each chat gets its own bearer token.
         from fastapi.responses import JSONResponse
-        return JSONResponse({**result, "instructions_url": "/connect.md"}, status_code=201,
-                            headers={"Cache-Control": "no-store"})
+        payload = {**result, "instructions_url": "/connect.md"}
+        if owner:
+            payload["owner"] = owner
+        return JSONResponse(payload, status_code=201, headers={"Cache-Control": "no-store"})
+
+    @app.get("/registration/owner")
+    def registration_owner(credentials: Credential):
+        """Con la clave de registro se leen los datos del dueño: el agente debe declararlos al registrarse."""
+        if credentials is None:
+            raise HTTPException(401, "Se requiere la clave de registro del dueño")
+        registration = store.account_by_registration_key_hash(hashlib.sha256(credentials.credentials.encode()).hexdigest())
+        if registration is None:
+            raise HTTPException(403, "Esta credencial no es una clave de registro de cuenta; "
+                                     "pide al dueño la clave de registro de su cuenta")
+        return {"owner": account_owner_view(registration["user_id"], registration["username"]),
+                "workspace_id": registration["workspace_id"],
+                "requirement": "Envía owner_name con el username o el display_name del dueño; si no coincide, "
+                               "el registro responde 422",
+                "endpoint": "/join/secure"}
 
     @app.get("/health")
     def health():
@@ -1868,7 +1908,12 @@ def create_app():
                                         "secure_paths": ["/join/secure", "/agents/secure", "/profiles/{id}/instances/secure"]},
                 "account_registration_keys": {"enabled": True, "endpoint": "/account/registration-key",
                                                "scope": "per-account workspace", "shown_once": True,
-                                               "rotation_revokes_previous": True},
+                                               "rotation_revokes_previous": True,
+                                               "owner_endpoint": "/registration/owner",
+                                               "registration_requires_owner_name": True,
+                                               "note": "An agent registering with this key must declare owner_name "
+                                                       "(username or display name of the key's owner); read it first with "
+                                                       "GET /registration/owner"},
                 "account_signup": {"enabled": True, "endpoint": "/auth/signup",
                                     "requires_owner_setup": True, "creates_private_workspace": True},
                 "workspaces": {"enabled": True, "one_time_invites": True,
@@ -2042,7 +2087,10 @@ def create_app():
 
     @app.get("/agents/me")
     def me(identity: Identity):
-        return public_agent(store.get_agent(agent_id(identity)), time.time())
+        row = store.get_agent(agent_id(identity))
+        result = public_agent(row, time.time())
+        result["owner"] = account_owner_view(row.get("created_by_account_id"), row.get("created_by_username", ""))
+        return result
 
     @app.get("/agents/me/api-keys")
     def list_agent_api_keys(identity: Identity):

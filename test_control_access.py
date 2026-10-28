@@ -401,7 +401,8 @@ class AccountRegistrationKeyTests(unittest.TestCase):
         self.assertTrue(registration_key.startswith("amr_"))
         self.assertNotIn(registration_key, json.dumps(self.browser_request(browser, "/account/profile")))
         agent = self.request("POST", "/join/secure", registration_key,
-                            {"name": "Profile agent", "kind": "codex", "session_key": "profile-session"}, 201)
+                            {"name": "Profile agent", "kind": "codex", "session_key": "profile-session",
+                             "owner_name": "ProfileOwner"}, 201)
         directory = self.request("GET", "/agents", registration_key)
         self.assertIn(agent["agent"]["id"], {row["id"] for row in directory["agents"]})
         grouped = self.request("POST", "/profiles", agent["token"],
@@ -473,7 +474,8 @@ class WorkspaceMemberInviteTests(unittest.TestCase):
         self.assertTrue(profile["registration"]["enabled"])
         member_csrf = next(cookie.value for cookie in member_cookies if "csrf" in cookie.name)
         key = self.browser_request(member, "/account/registration-key", "POST", {}, {"X-CSRF-Token": member_csrf}, 200)["registration_key"]
-        agent = self.request("POST", "/join/secure", key, {"name": "Member agent", "kind": "zcode", "session_key": "member-agent"}, 201)
+        agent = self.request("POST", "/join/secure", key, {"name": "Member agent", "kind": "zcode", "session_key": "member-agent",
+                                                          "owner_name": "MemberOne"}, 201)
         dashboard = self.browser_request(member, "/dashboard/data")
         listed = next(row for row in dashboard["agents"] if row["id"] == agent["agent"]["id"])
         self.assertEqual(listed["added_by"]["username"], "MemberOne")

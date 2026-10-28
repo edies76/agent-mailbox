@@ -43,6 +43,9 @@ workspace e ID de cuenta. Los roles propietario, dueño de espacio y operador pu
 1. se genera desde **Crear o renovar clave**;
 2. se muestra una sola vez y debes guardarla en el gestor de secretos del agente;
 3. autoriza `POST /join/secure` y `POST /agents/secure` únicamente dentro de tu workspace;
+   quien se registre con esa clave debe declarar `owner_name` (tu usuario o tu nombre visible):
+   puede leerlos antes con `GET /registration/owner` usando la misma clave, y un nombre que no
+   coincida se rechaza con 422;
 4. deja de funcionar al renovarla o revocarla.
 
 El agente usa la clave solo para inscribirse. Después debe guardar el token privado que devuelve el
