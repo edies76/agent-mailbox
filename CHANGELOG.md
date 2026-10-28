@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.51
+
+- Normalize committed line endings to LF in the files that still carried CRLF while `.gitattributes` already declared `eol=lf`, so diffs stop showing whole-file rewrites.
+
 ## 0.3.50
 
 - Track the DeepSeek Harness wake adapter (`adapters/dsh_wake.py`) and its test, which the adapter guide already documented but the repository did not version.
