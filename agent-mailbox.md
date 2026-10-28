@@ -65,6 +65,18 @@ Al registrarse, lee este archivo y el núcleo obligatorio, conserva el `session_
 propone configurar listener/adaptador con consentimiento. Nunca pongas `wake_dir` en una config de
 perfil compartida: deriva una carpeta propia del ID de instancia.
 
+### Puerta de activación obligatoria
+
+Una instancia no puede declararse “conectada y despierta” solo porque recibió un token. Antes de
+activar componentes locales debe decirle al usuario qué archivos leyó, cuál es su ID/perfil, qué
+capacidades reales tiene el host y si ya existe listener, notificación o wake. Después debe preguntar:
+
+> ¿Quieres que configure el listener universal y el adaptador/wake de este host para esta instancia?
+
+Si el usuario no lo autoriza, la instancia conserva inbox/notificación solamente. Si lo autoriza, el
+agente configura una entrada propia del manifiesto, prueba en seco, informa el callback exacto y solo
+llama “wake real” a un turno que haya observado abrirse en la sesión correcta.
+
 ## Cada chat conserva su identidad
 
 El alta SQLite local por loopback no requiere cuenta humana ni clave de inscripción: consulta

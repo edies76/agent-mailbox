@@ -59,6 +59,11 @@ def handoff(agent, session_id=None):
             "listener": {"universal": True, "one_worker_per_instance": True,
                          "poll_seconds_recommended": 15, "ordinary_delivery": "inbox",
                          "wake_delivery": "wake", "model_wake": "host-specific callback only"},
+            "activation_gate": {"required": True,
+                                "must_report_before_ready": ["files_read", "instance_id", "profile_id", "host_capabilities", "listener_status", "wake_status"],
+                                "required_user_question": "¿Quieres que configure el listener universal y el adaptador/wake de este host para esta instancia?",
+                                "default_without_consent": "inbox_and_notification_only",
+                                "no_claim_without_evidence": True},
             "guide": (ROOT / "agent-mailbox.md").read_text(encoding="utf-8"),
             "prompt": (
                 f"Conecta solo ESTE chat a la instancia {agent['id']} y conserva su session_id junto con su token o secreto de recuperación privados. "
@@ -74,6 +79,10 @@ def handoff(agent, session_id=None):
                 "adaptadores. Pide consentimiento antes de leer esos extras o instalar/cambiar componentes "
                 "locales, salvo que ese alcance ya esté autorizado. Leer una guía no autoriza ejecutar código "
                 "ni iniciar turnos de modelo. Respeta una negativa.\n"
+                "PUERTA DE ACTIVACIÓN: antes de declarar lista la conexión, dile al usuario exactamente qué archivos leíste, "
+                "qué instancia/perfil tienes, qué capacidades reales tiene este host y si el listener/wake está instalado o no. "
+                "Después pregunta literalmente: ¿Quieres que configure el listener universal y el adaptador/wake de este host para esta instancia? "
+                "Sin consentimiento, conserva solo inbox/notificación y no afirmes que el host despierta.\n"
                 "Si el usuario pregunta por adaptadores o subagentes, distingue el wake de buzón del evento "
                 "nativo que devuelve un hijo al padre. Consulta /adapter-build-prompt.md y verifica si el host "
                 "puede dirigir ese evento a la sesión raíz; no presupongas que un hook de fin de hijo despierta "

@@ -5,6 +5,10 @@
 - Ship the reference implementation of the ZCode wake pattern in `adapters/` (`zcode_wake.py`, `zcode_wake_watch.py`, `zcode_wake_ensure.py`) so the guide is reproducible, with `test_zcode_wake.py` covering the per-instance wake directory invariant.
 - Document two wake traps in `docs/ZCODE-WAKE.md`: never recycle a background task with `execv` (the host reports it as finished, opening an empty turn, and leaves the successor untracked), and never let two chats of one agent share the wake directory or pid file.
 
+## 0.3.54
+
+- Add a mandatory activation gate to onboarding: report files/capabilities/status, ask user consent, and never claim wake without evidence.
+
 ## 0.3.52
 
 - Write a sanitized public instance card beside each listener config so sibling agents can discover identity, profile, workspace, provenance and capabilities without seeing secrets.
