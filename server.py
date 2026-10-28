@@ -1401,6 +1401,11 @@ def create_app():
         return FileResponse(FilePath(__file__).parent / "profile.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
+    @app.get("/profile-edit.js", include_in_schema=False)
+    def dashboard_profile_edit_script():
+        return FileResponse(FilePath(__file__).parent / "profile-edit.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
     @app.get("/dashboard/data")
     def dashboard_data(identity: Identity):
         if not identity["admin"] and not identity.get("control_user"):
