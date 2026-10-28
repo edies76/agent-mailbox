@@ -45,6 +45,31 @@ def request_json(url, token, method="GET", payload=None, timeout=12):
         return json.loads(response.read().decode("utf-8"))
 
 
+def write_public_instance_card(config_path, config, agent=None):
+    """Write non-secret instance metadata beside the private config for sibling chats."""
+    card_path = config_path.with_name(config_path.stem + ".agent-mailbox.md")
+    agent = agent or {}
+    added = agent.get("added_by") or {}
+    capabilities = agent.get("capabilities") or []
+    lines = ["# Agent Mailbox instance", "", "> Public metadata only. This file never contains a token, recovery secret or cursor.", "",
+             f"- Instance ID: `{agent.get('id') or config.get('agent_id', 'unknown')}`",
+             f"- Display name: {agent.get('instance_name') or agent.get('name') or 'Unnamed instance'}",
+             f"- Kind: {agent.get('kind') or config.get('kind', 'unknown')}",
+             f"- Project: {agent.get('project') or config.get('project') or '—'}",
+             f"- Profile ID: `{agent.get('profile_id') or config.get('profile_id') or 'none'}`",
+             f"- Workspace ID: `{agent.get('workspace_id') or 'unknown'}`",
+             f"- Added by: {added.get('username') or 'Sistema / registro directo'} ({added.get('method') or 'unknown'})",
+             f"- Capabilities: {', '.join(capabilities) if capabilities else 'not specified'}",
+             f"- Server: `{config.get('url', '').rstrip('/')}`",
+             f"- Listener: one worker for this config; poll interval is controlled by the manifest",
+             f"- Wake: {'configured for this host' if config.get('on_wake_command') else 'not configured'}", "",
+             "Read `/agent-mailbox.md` and the server `/onboarding` catalog before using this identity.", ""]
+    temporary = card_path.with_suffix(card_path.suffix + ".tmp")
+    temporary.write_text("\n".join(lines), encoding="utf-8")
+    os.replace(temporary, card_path)
+    return card_path
+
+
 def save_cursor(path, cursor):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps({"after_id": cursor}), encoding="utf-8")
@@ -123,6 +148,12 @@ def main():
     if transport not in ("poll", "wait"):
         parser.error("transport debe ser poll o wait")
     base_url = config["url"].rstrip("/")
+    try:
+        agent_card = request_json(f"{base_url}/agents/me", token)
+        write_public_instance_card(config_path, config, agent_card)
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+        # The listener can still poll; a missing public card must not block mail delivery.
+        pass
     print(json.dumps({"type": "mailbox_listener_started", "agent_id": config["agent_id"],
                       "interval_seconds": args.interval, "transport": transport}), flush=True)
 

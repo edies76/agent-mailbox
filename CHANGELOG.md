@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.52
+
+- Write a sanitized public instance card beside each listener config so sibling agents can discover identity, profile, workspace, provenance and capabilities without seeing secrets.
+
 ## 0.3.51
 
 - Normalize committed line endings to LF in the files that still carried CRLF while `.gitattributes` already declared `eol=lf`, so diffs stop showing whole-file rewrites.
