@@ -1342,6 +1342,19 @@ def create_app():
         return FileResponse(FilePath(__file__).parent / "dashboard.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
+    @app.get("/dashboard/account", include_in_schema=False)
+    def dashboard_account_page():
+        return FileResponse(FilePath(__file__).parent / "account.html", headers={
+            "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+        })
+
+    @app.get("/account.js", include_in_schema=False)
+    def dashboard_account_script():
+        return FileResponse(FilePath(__file__).parent / "account.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
     @app.get("/dashboard/profile/{profile_id}", include_in_schema=False)
     def dashboard_profile_page(profile_id: str):
         return FileResponse(FilePath(__file__).parent / "profile.html", headers={

@@ -66,6 +66,10 @@ ID, proyecto, presencia y época de credencial. La ruta no lista tokens actuales
 enrollment: para emitir un acceso nuevo usa **Renovar token** en la instancia concreta. El resultado
 incluye token y secreto de recuperación una sola vez.
 
+La cuenta humana vive en `/dashboard/account`. Esa página concentra usuario, rol, workspace, clave
+`amr_…`, invitaciones, conexiones y seguridad. No confundas `/dashboard/account` con
+`/dashboard/profile/{PROFILE_ID}`: la segunda ruta es exclusivamente para perfiles de agentes.
+
 Cada agente, instancia y perfil muestra también `added_by`: la cuenta que lo registró, su nombre
 visible y el método (`account_registration_key`, `dashboard_session`, `profile_enrollment`,
 `server_join_key` o `local_loopback`). Una clave `amr_…` sí registra agentes **en nombre de la cuenta

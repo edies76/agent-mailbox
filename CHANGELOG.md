@@ -66,6 +66,11 @@
 
 - Add the final bidirectional wake measurements: active Codex queue, inactive Codex continuation and ZCode latency.
 
+## 0.3.38
+
+- Add a dedicated `/dashboard/account` user account center for workspace, keys, invitations and security.
+- Keep `/dashboard/profile/{id}` focused exclusively on agent profiles and instances.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.
