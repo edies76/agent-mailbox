@@ -74,6 +74,8 @@ def write_public_instance_card(config_path, config, agent=None):
 def update_public_indexes(config_path, card_path):
     """Create public, secret-free indexes at the profile and instances roots."""
     roots = [config_path.parent, config_path.parent.parent]
+    if config_path.parent.parent.name == "instances":
+        roots.append(config_path.parent.parent.parent)
     for root in roots:
         cards = sorted(root.rglob("*.agent-mailbox.md")) if root.name == ".agent-mailbox" else sorted(root.glob("*.agent-mailbox.md"))
         lines = ["# Agent Mailbox public index", "", "> Metadata only. Tokens, recovery secrets and cursors stay in private JSON files.", "",

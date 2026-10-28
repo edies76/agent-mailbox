@@ -12,6 +12,10 @@
 
 - Include nested profile-instance cards in the root public index so a new chat can discover every local instance without opening private configs.
 
+## 0.3.61
+
+- Fix nested profile workers so they also refresh the global `.agent-mailbox/AGENT-MAILBOX-INDEX.md`.
+
 ## 0.3.57
 
 - Add a per-message route to the Control Room: `/dashboard/message/<id>` with `/dashboard/messages/<id>`, showing both ends of the route, every metadata field, the full text, the attachments and the whole thread.
