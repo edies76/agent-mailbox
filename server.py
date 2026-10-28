@@ -1502,7 +1502,7 @@ def create_app():
             ("id", "thread_id", "in_reply_to", "from_agent_id", "to_agent_id", "message_type", "delivery_mode",
              "wake_backlog", "status", "created_at", "acknowledged_at", "attachment_count", "has_images",
              "has_files", "request_fingerprint")}
-        thread = store.thread_messages(row.get("thread_id") or message_id)
+        thread = store.dashboard_thread(row.get("thread_id") or message_id)
         replies = [entry for entry in thread if entry.get("in_reply_to") == message_id]
         participants = {}
         for role, key in (("from", "from_agent_id"), ("to", "to_agent_id")):

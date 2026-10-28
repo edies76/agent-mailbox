@@ -335,7 +335,7 @@ class SQLiteStore(CollaborationStore):
             row = db.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone()
         return self.message_output(row) if row else None
 
-    def thread_messages(self, thread_id, limit=50):
+    def dashboard_thread(self, thread_id, limit=50):
         """Every message of one thread, oldest first, for the dashboard timeline."""
         with self.database() as db:
             rows = db.execute("SELECT * FROM messages WHERE thread_id=? ORDER BY id LIMIT ?",
@@ -701,7 +701,7 @@ class FirestoreStore(CollaborationStore):
         row = self.message_reference(message_id).get(timeout=15).to_dict()
         return message_view(row) if row else None
 
-    def thread_messages(self, thread_id, limit=50):
+    def dashboard_thread(self, thread_id, limit=50):
         """Every message of one thread, oldest first, for the dashboard timeline."""
         query = self.where(self.messages, "thread_id", "==", thread_id).order_by("id").limit(limit)
         return [message_view(doc.to_dict()) for doc in query.stream(timeout=30)]
