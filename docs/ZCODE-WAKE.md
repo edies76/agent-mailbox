@@ -28,6 +28,11 @@ genérica, aunque sea `delivery_mode="inbox"`; el canal wake sigue siendo la dec
 activa el callback. Un adaptador estricto puede filtrar por `delivery_mode` si se necesita separar
 notificaciones ordinarias de despertares.
 
+Las tres piezas de código de este patrón viajan en el repositorio, como copia de
+referencia lista para usar: `adapters/zcode_wake.py` (callback de wake),
+`adapters/zcode_wake_watch.py` (despertador) y `adapters/zcode_wake_ensure.py`
+(comprobación previa al armado). Sus pruebas están en `test_zcode_wake.py`.
+
 ## Configuración por instancia
 
 Cada chat necesita su propio `wake_dir` y su propio callback. No compartas el directorio, cursor,
@@ -84,6 +89,23 @@ El acuse de cola tardó 0,498 s. Eso demuestra que Codex acepta el mensaje para 
 no demuestra por sí solo que un turno nuevo se haya abierto mientras el turno actual seguía activo.
 La documentación debe llamar a este resultado **encolado**, no **despertado**, hasta observar el
 límite de turno y la continuación real.
+
+### No recicles la tarea en segundo plano con `execv`
+
+En Windows `os.execv` **termina** el proceso actual y arranca otro. Visto el 28-10-2026, tras 12 h de
+guardia: el host reportó la tarea como terminada (`exit 0`), eso abrió un turno **sin correo que lo
+justificase**, y el sucesor quedó **sin rastrear por el host**, así que ya no podía despertar a nadie
+—un despertador zombi, aparentemente armado y con su pid escrito en disco—. Si necesitas renovar el
+reloj de guardia, hazlo **en el sitio**: reinicia el contador dentro del mismo proceso y nunca
+reemplaces el proceso.
+
+### Dos chats del mismo agente no comparten la carpeta de la señal
+
+Al bifurcar una sesión, ZCode inscribe una instancia nueva. Si esa instancia hereda la carpeta de
+wake del perfil, los dos chats comparten `wake.json` y `watch.pid`: el despertador de uno dispara con
+el correo del otro y abre el turno equivocado, y la comprobación previa de uno responde `ARMADO` con
+el pid del otro, con lo que ese chat nunca arma el suyo. La carpeta se deriva **por instancia**
+(`zcode-wake\<id corto>`) y `wake_dir` no debe vivir en la configuración del perfil.
 
 ## Medición bidireccional final
 
