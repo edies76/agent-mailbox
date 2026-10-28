@@ -1370,6 +1370,11 @@ def create_app():
         return FileResponse(FilePath(__file__).parent / "account.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
+    @app.get("/account-members.js", include_in_schema=False)
+    def dashboard_account_members_script():
+        return FileResponse(FilePath(__file__).parent / "account-members.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
     @app.get("/dashboard/profiles", include_in_schema=False)
     def dashboard_profiles_page():
         return FileResponse(FilePath(__file__).parent / "profiles.html", headers={
@@ -1480,6 +1485,12 @@ def create_app():
                 "security": {"raw_tokens": False, "enrollment_token": False,
                               "instance_tokens": "Only returned at registration or explicit rotation",
                               "route": f"/dashboard/profile/{profile_id}"}}
+
+    @app.patch("/dashboard/profiles/{profile_id}")
+    def rename_dashboard_profile(profile_id: str, body: AgentRename, identity: Identity):
+        profile, _ = dashboard_profile_access(profile_id, identity)
+        updated = store.update_profile_card(profile_id, {"name": body.name})
+        return public_profile(updated)
 
     @app.get("/dashboard/users")
     def dashboard_users(identity: Identity):
