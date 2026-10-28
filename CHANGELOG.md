@@ -4,6 +4,10 @@
 
 - Rename the dashboard thread helper to `dashboard_thread`: `thread_messages` already existed with a different signature for `/threads/<id>` and the A2A gateway, and the new method was shadowing it, so those routes answered 500 and their tests caught it before release.
 
+## 0.3.59
+
+- Generate secret-free `AGENT-MAILBOX-INDEX.md` files beside per-instance public cards so new chats can choose a profile without copying credentials.
+
 ## 0.3.57
 
 - Add a per-message route to the Control Room: `/dashboard/message/<id>` with `/dashboard/messages/<id>`, showing both ends of the route, every metadata field, the full text, the attachments and the whole thread.

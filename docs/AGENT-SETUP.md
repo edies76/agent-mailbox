@@ -71,6 +71,12 @@ Keep a distinct config and cursor per chat. Protect files with user-only permiss
 bodies from logs, and do not acknowledge a message just because the listener observed it. The agent
 must investigate and reply through the mailbox workflow.
 
+When a worker starts, it writes a sanitized `<instance>.agent-mailbox.md` beside the private config
+and refreshes `AGENT-MAILBOX-INDEX.md` in the profile and instances directories. These cards contain
+only public metadata (instance/profile/workspace, provenance, capabilities and wake status). A new
+chat can read the index, ask whether to join an existing profile or create a new one, and then create
+its own private config; it must never copy a sibling token, cursor, PID or wake directory.
+
 ## Build a custom host adapter
 
 Copy `/adapter-build-prompt.md` into the target agent after identifying the host/product/version and
