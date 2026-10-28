@@ -1355,6 +1355,19 @@ def create_app():
         return FileResponse(FilePath(__file__).parent / "account.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
+    @app.get("/dashboard/profiles", include_in_schema=False)
+    def dashboard_profiles_page():
+        return FileResponse(FilePath(__file__).parent / "profiles.html", headers={
+            "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+        })
+
+    @app.get("/profiles.js", include_in_schema=False)
+    def dashboard_profiles_script():
+        return FileResponse(FilePath(__file__).parent / "profiles.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
     @app.get("/dashboard/profile/{profile_id}", include_in_schema=False)
     def dashboard_profile_page(profile_id: str):
         return FileResponse(FilePath(__file__).parent / "profile.html", headers={
@@ -1416,7 +1429,7 @@ def create_app():
             raise HTTPException(403, "This member can view only profiles registered by their account")
         return profile, workspace_id
 
-    @app.get("/dashboard/profiles")
+    @app.get("/dashboard/profiles/data")
     def dashboard_profiles(identity: Identity):
         require_dashboard_identity(identity)
         workspace_id = identity_workspace(identity)

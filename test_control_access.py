@@ -406,7 +406,7 @@ class AccountRegistrationKeyTests(unittest.TestCase):
         self.assertIn(agent["agent"]["id"], {row["id"] for row in directory["agents"]})
         grouped = self.request("POST", "/profiles", agent["token"],
                                {"name": "ZCode", "kind": "zcode", "project": "lunar"}, 201)
-        profiles = self.browser_request(browser, "/dashboard/profiles")
+        profiles = self.browser_request(browser, "/dashboard/profiles/data")
         self.assertEqual(profiles["profiles"][0]["name"], "ZCode")
         detail = self.browser_request(browser, f"/dashboard/profiles/{grouped['profile']['id']}")
         self.assertNotIn(agent["token"], json.dumps(detail))

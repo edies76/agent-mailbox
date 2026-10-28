@@ -83,6 +83,10 @@
 - Fix route-launcher hover contrast and remove the jump animation that hid the card copy.
 - Make “Instancias y comunicación” navigate to the profile index instead of a dead anchor.
 
+## 0.3.41
+
+- Separate the profile index HTML route from its authenticated JSON data endpoint at `/dashboard/profiles/data`.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.
