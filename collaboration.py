@@ -109,7 +109,9 @@ class CollaborationStore:
                     id TEXT PRIMARY KEY, username TEXT NOT NULL, username_norm TEXT UNIQUE NOT NULL,
                     password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'owner',
                     created_at REAL NOT NULL, last_login_at REAL, disabled_at REAL,
-                    workspace_id TEXT NOT NULL DEFAULT 'workspace-default'
+                    workspace_id TEXT NOT NULL DEFAULT 'workspace-default',
+                    display_name TEXT NOT NULL DEFAULT '', organization TEXT NOT NULL DEFAULT '',
+                    project TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS account_registration_keys (
                     user_id TEXT PRIMARY KEY REFERENCES account_users(id) ON DELETE CASCADE,
@@ -150,6 +152,9 @@ class CollaborationStore:
             account_columns = {row[1] for row in db.execute("PRAGMA table_info(account_users)")}
             if "workspace_id" not in account_columns:
                 db.execute("ALTER TABLE account_users ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'workspace-default'")
+            for column, declaration in {"display_name": "TEXT NOT NULL DEFAULT ''", "organization": "TEXT NOT NULL DEFAULT ''", "project": "TEXT NOT NULL DEFAULT ''", "description": "TEXT NOT NULL DEFAULT ''"}.items():
+                if column not in account_columns:
+                    db.execute(f"ALTER TABLE account_users ADD COLUMN {column} {declaration}")
             invite_columns = {row[1] for row in db.execute("PRAGMA table_info(workspace_invites)")}
             if "mode" not in invite_columns:
                 db.execute("ALTER TABLE workspace_invites ADD COLUMN mode TEXT NOT NULL DEFAULT 'workspace'")
@@ -485,7 +490,7 @@ class CollaborationStore:
     def account_by_id(self, user_id):
         if hasattr(self, "database"):
             with self.database() as db:
-                row = db.execute("SELECT id,username,role,created_at,last_login_at,workspace_id FROM account_users WHERE id = ? AND disabled_at IS NULL",
+                row = db.execute("SELECT id,username,role,created_at,last_login_at,workspace_id,display_name,organization,project,description FROM account_users WHERE id = ? AND disabled_at IS NULL",
                                  (user_id,)).fetchone()
                 return dict(row) if row else None
         row = self.client.collection("account_users").document(user_id).get(timeout=15)
@@ -501,6 +506,24 @@ class CollaborationStore:
                 db.execute("UPDATE account_users SET last_login_at = ? WHERE id = ?", (seen, user_id))
         else:
             self.client.collection("account_users").document(user_id).update({"last_login_at": seen}, timeout=15)
+
+    def update_account_profile(self, user_id, fields):
+        allowed = {key: value for key, value in fields.items() if key in ("display_name", "organization", "project", "description")}
+        if not allowed:
+            raise HTTPException(422, "Provide profile fields")
+        if hasattr(self, "database"):
+            with self.database() as db:
+                cursor = db.execute("UPDATE account_users SET " + ",".join(f"{key}=?" for key in allowed) + " WHERE id=? AND disabled_at IS NULL",
+                                    tuple(allowed.values()) + (user_id,))
+                if not cursor.rowcount:
+                    raise HTTPException(404, "Account not found")
+            return self.account_by_id(user_id)
+        ref = self.client.collection("account_users").document(user_id)
+        snapshot = ref.get(timeout=15)
+        if not snapshot.exists or snapshot.to_dict().get("disabled_at") is not None:
+            raise HTTPException(404, "Account not found")
+        ref.update(allowed, timeout=15)
+        return self.account_by_id(user_id)
 
     def update_account_password(self, user_id, encoded_password, now):
         if hasattr(self, "database"):
@@ -654,8 +677,8 @@ class CollaborationStore:
                     raise HTTPException(409, "Username is already taken")
                 db.execute("INSERT INTO workspaces (id,name,created_at) VALUES (?,?,?)",
                            (workspace["id"], workspace["name"], workspace["created_at"]))
-                db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at,workspace_id) VALUES (?,?,?,?,?,?,?,?,?)",
-                           (row["id"], row["username"], row["username_norm"], row["password_hash"], row["role"], row["created_at"], row.get("last_login_at"), None, workspace["id"]))
+                db.execute("INSERT INTO account_users (id,username,username_norm,password_hash,role,created_at,last_login_at,disabled_at,workspace_id,display_name,organization,project,description) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (row["id"], row["username"], row["username_norm"], row["password_hash"], row["role"], row["created_at"], row.get("last_login_at"), None, workspace["id"], row.get("display_name", ""), row.get("organization", ""), row.get("project", ""), row.get("description", "")))
             return row | {"workspace_id": workspace["id"]}
         workspace_ref = self.client.collection("workspaces").document(workspace["id"])
         user_ref = self.client.collection("account_users").document(row["id"])

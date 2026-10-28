@@ -156,6 +156,10 @@ class OwnerSetup(BaseModel):
     setup_key: str = Field(default="", max_length=256)
     username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
     password: str = Field(min_length=12, max_length=256)
+    display_name: str = Field(default="", max_length=120)
+    organization: str = Field(default="", max_length=120)
+    project: str = Field(default="", max_length=160)
+    description: str = Field(default="", max_length=500)
 
 
 class AccountLogin(BaseModel):
@@ -175,6 +179,10 @@ class WorkspaceSignup(BaseModel):
     username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
     password: str = Field(min_length=12, max_length=256)
     workspace_name: str = Field(min_length=2, max_length=80)
+    display_name: str = Field(default="", max_length=120)
+    organization: str = Field(default="", max_length=120)
+    project: str = Field(default="", max_length=160)
+    description: str = Field(default="", max_length=500)
 
 
 class MemberSignup(BaseModel):
@@ -182,6 +190,10 @@ class MemberSignup(BaseModel):
     invite_code: str = Field(min_length=20, max_length=128)
     username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
     password: str = Field(min_length=12, max_length=256)
+    display_name: str = Field(default="", max_length=120)
+    organization: str = Field(default="", max_length=120)
+    project: str = Field(default="", max_length=160)
+    description: str = Field(default="", max_length=500)
 
 
 class AccountSignup(BaseModel):
@@ -189,6 +201,18 @@ class AccountSignup(BaseModel):
     username: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
     password: str = Field(min_length=12, max_length=256)
     workspace_name: str = Field(min_length=2, max_length=80)
+    display_name: str = Field(default="", max_length=120)
+    organization: str = Field(default="", max_length=120)
+    project: str = Field(default="", max_length=160)
+    description: str = Field(default="", max_length=500)
+
+
+class AccountProfilePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    display_name: str | None = Field(default=None, max_length=120)
+    organization: str | None = Field(default=None, max_length=120)
+    project: str | None = Field(default=None, max_length=160)
+    description: str | None = Field(default=None, max_length=500)
 
 
 class WorkspaceInviteCreate(BaseModel):
@@ -832,7 +856,9 @@ def create_app():
         username = body.username.strip()
         user = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
                 "password_hash": request_password_hash(body.password), "role": "owner", "created_at": now,
-                "last_login_at": now, "disabled_at": None, "workspace_id": DEFAULT_WORKSPACE_ID}
+                "last_login_at": now, "disabled_at": None, "workspace_id": DEFAULT_WORKSPACE_ID,
+                "display_name": body.display_name, "organization": body.organization,
+                "project": body.project, "description": body.description}
         try:
             store.create_owner_account(user)
         except HTTPException:
@@ -867,7 +893,9 @@ def create_app():
         now = time.time()
         user = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
                 "password_hash": request_password_hash(body.password), "role": "workspace_owner",
-                "created_at": now, "last_login_at": now, "disabled_at": None}
+                "created_at": now, "last_login_at": now, "disabled_at": None,
+                "display_name": body.display_name, "organization": body.organization,
+                "project": body.project, "description": body.description}
         workspace = {"id": str(uuid4()), "name": body.workspace_name.strip(), "created_at": now}
         try:
             account = store.accept_workspace_invite(
@@ -888,7 +916,9 @@ def create_app():
         now = time.time()
         user = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
                 "password_hash": request_password_hash(body.password), "role": "workspace_member",
-                "created_at": now, "last_login_at": now, "disabled_at": None}
+                "created_at": now, "last_login_at": now, "disabled_at": None,
+                "display_name": body.display_name, "organization": body.organization,
+                "project": body.project, "description": body.description}
         workspace = {"id": str(uuid4()), "name": "", "created_at": now}
         try:
             account = store.accept_workspace_invite(hashlib.sha256(body.invite_code.strip().encode()).hexdigest(), user, workspace)
@@ -913,7 +943,9 @@ def create_app():
         user = {"id": str(uuid4()), "username": username, "username_norm": username.casefold(),
                 "password_hash": request_password_hash(body.password), "role": "workspace_owner",
                 "created_at": now, "last_login_at": now, "disabled_at": None,
-                "workspace_id": workspace["id"]}
+                "workspace_id": workspace["id"], "display_name": body.display_name,
+                "organization": body.organization, "project": body.project,
+                "description": body.description}
         try:
             account = store.create_workspace_account(user, workspace)
         except HTTPException:
@@ -990,13 +1022,24 @@ def create_app():
             raise HTTPException(404, "Account not found")
         workspace_id = account.get("workspace_id") or DEFAULT_WORKSPACE_ID
         registration = store.account_registration_key(account["id"])
-        return JSONResponse({"account": {key: account.get(key) for key in ("id", "username", "role", "created_at", "last_login_at", "workspace_id")},
+        return JSONResponse({"account": {key: account.get(key) for key in ("id", "username", "role", "created_at", "last_login_at", "workspace_id", "display_name", "organization", "project", "description")},
                              "workspace": store.workspace_info(workspace_id),
                              "registration_key": public_registration_key(registration) if registration else None,
                              "registration": {"enabled": account.get("role") in ("owner", "workspace_owner", "operator", "workspace_member"),
                                                "endpoint": "/join/secure", "header": "Authorization: Bearer <registration_key>",
                                                "scope": "Only agents registered with this key enter this account's workspace."}},
                             headers={"Cache-Control": "no-store"})
+
+    @app.patch("/account/profile")
+    def update_account_profile(body: AccountProfilePatch, request: Request):
+        session = current_account_session(request)
+        account = store.account_by_id(session["user_id"])
+        if not account:
+            raise HTTPException(404, "Account not found")
+        fields = {key: value or "" for key, value in body.model_dump(exclude_unset=True).items()}
+        updated = store.update_account_profile(account["id"], fields)
+        store.record_control_event(account["id"], "account_profile_updated", account["id"])
+        return {"account": {key: updated.get(key) for key in ("id", "username", "role", "created_at", "last_login_at", "workspace_id", "display_name", "organization", "project", "description")}}
 
     @app.get("/account/members")
     def account_members(request: Request):
@@ -1373,6 +1416,11 @@ def create_app():
     @app.get("/account-members.js", include_in_schema=False)
     def dashboard_account_members_script():
         return FileResponse(FilePath(__file__).parent / "account-members.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/account-edit.js", include_in_schema=False)
+    def dashboard_account_edit_script():
+        return FileResponse(FilePath(__file__).parent / "account-edit.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
     @app.get("/dashboard/profiles", include_in_schema=False)
