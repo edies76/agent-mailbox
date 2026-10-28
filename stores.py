@@ -327,6 +327,21 @@ class SQLiteStore(CollaborationStore):
                     return True
         return False
 
+    def message_for_workspace(self, message_id, workspace_id):
+        """One full message when it belongs to this workspace, otherwise None."""
+        if not self.message_in_workspace(message_id, workspace_id):
+            return None
+        with self.database() as db:
+            row = db.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone()
+        return self.message_output(row) if row else None
+
+    def thread_messages(self, thread_id, limit=50):
+        """Every message of one thread, oldest first, for the dashboard timeline."""
+        with self.database() as db:
+            rows = db.execute("SELECT * FROM messages WHERE thread_id=? ORDER BY id LIMIT ?",
+                              (thread_id, limit)).fetchall()
+        return [self.message_output(row) for row in rows]
+
     def delete_inbox(self, identifier, after_id, before_id, limit):
         clauses, params = ["to_agent_id = ?", "id > ?"], [identifier, after_id]
         if before_id is not None:
@@ -678,6 +693,18 @@ class FirestoreStore(CollaborationStore):
             return False
         return any(self.workspace_for_agent(identifier) == workspace_id
                    for identifier in (row["from_agent_id"], row["to_agent_id"]))
+
+    def message_for_workspace(self, message_id, workspace_id):
+        """One full message when it belongs to this workspace, otherwise None."""
+        if not self.message_in_workspace(message_id, workspace_id):
+            return None
+        row = self.message_reference(message_id).get(timeout=15).to_dict()
+        return message_view(row) if row else None
+
+    def thread_messages(self, thread_id, limit=50):
+        """Every message of one thread, oldest first, for the dashboard timeline."""
+        query = self.where(self.messages, "thread_id", "==", thread_id).order_by("id").limit(limit)
+        return [message_view(doc.to_dict()) for doc in query.stream(timeout=30)]
 
     def delete_inbox(self, identifier, after_id, before_id, limit):
         query = self.where(self.messages, "to_agent_id", "==", identifier)

@@ -130,9 +130,17 @@
     }
     if(!rows.length){feed.append(el('div','empty',messages.length?'Ningún evento coincide con el filtro.':'Los mensajes nuevos aparecerán aquí.'));return;}
     for(const message of rows){const event=el('article','event');event.append(el('time','event-time',fmtTime(message.created_at)));const main=el('div','event-main');const route=el('div','route');route.append(el('span','',names.get(message.from_agent_id)||message.from_agent_id),el('span','arrow','→'),el('span','',names.get(message.to_agent_id)||message.to_agent_id));
-      main.append(route);if(permissions.can_read_message_content)main.append(el('div','event-subject',message.subject||'Sin asunto'),el('div','event-text',message.text||''));else main.append(el('div','event-text muted','Contenido oculto para este rol.'));
-      const attachmentCount=message.attachment_count||(message.attachments||[]).length; if(attachmentCount&&permissions.can_read_message_content)main.append(el('div','event-state',`📎 ${attachmentCount} adjunto${attachmentCount===1?'':'s'}`));
-      const state=message.acknowledged_at?'cerrado':'pendiente';main.append(el('div','event-state',`${message.status||'actividad'} · ${state} · hilo ${message.thread_id} · mensaje ${message.id}`));event.append(main);
+      const wake=message.delivery_mode==='wake';const reminder=wake&&message.acknowledged_at?null:wake?'solicitado':null;
+      const badges=el('div','event-badges');
+      badges.append(el('span',`tag ${wake?'tag-wake':'tag-inbox'}`,wake?'Despertar':'Normal'));
+      if(wake)badges.append(el('span',`tag ${message.acknowledged_at?'tag-ok':'tag-warn'}`,message.acknowledged_at?'Despertar atendido':'Despertar solicitado'));
+      if(message.wake_backlog)badges.append(el('span','tag','Lee pendientes anteriores'));
+      if(message.acknowledged_at)badges.append(el('span','tag tag-ok','Cerrado'));else badges.append(el('span','tag tag-warn','Pendiente'));
+      const open=el('a','event-open');open.href=`/dashboard/message/${message.id}`;open.setAttribute('aria-label',`Ver la ruta completa del mensaje ${message.id}`);
+      open.append(route);main.append(open,badges);
+      if(permissions.can_read_message_content)main.append(el('div','event-subject',message.subject||'Sin asunto'),el('div','event-text',message.text||''));else main.append(el('div','event-text muted','Contenido oculto para este rol.'));
+      const attachmentCount=message.attachment_count||(message.attachments||[]).length; if(attachmentCount&&permissions.can_read_message_content)main.append(el('div','event-state',`${attachmentCount} adjunto${attachmentCount===1?'':'s'}`));
+      main.append(el('div','event-state',`${message.status||'actividad'} · hilo ${message.thread_id} · mensaje ${message.id} · ver ruta completa`));event.append(main);
       if(permissions.can_delete_messages){const remove=el('button','remove-message','Eliminar');remove.type='button';remove.onclick=()=>deleteMessage(message);event.append(remove);}feed.append(event);
     }
   }

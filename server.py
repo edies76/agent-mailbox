@@ -1454,6 +1454,65 @@ def create_app():
         return FileResponse(FilePath(__file__).parent / "profile-edit.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
+    @app.get("/dashboard/message/{message_id}", include_in_schema=False)
+    def dashboard_message_page(message_id: int):
+        return FileResponse(FilePath(__file__).parent / "message.html", headers={
+            "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+        })
+
+    @app.get("/message.js", include_in_schema=False)
+    def dashboard_message_script():
+        return FileResponse(FilePath(__file__).parent / "message.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+    def message_wake_state(row, replies):
+        """What was asked and what the server can actually prove. Never inflate it."""
+        if row.get("delivery_mode") != "wake":
+            return {"mode": "inbox", "state": "sin_despertar", "evidence": None, "at": None,
+                    "label": "Mensaje normal: no pedía despertar a nadie"}
+        if replies:
+            return {"mode": "wake", "state": "atendido", "evidence": "respondido",
+                    "at": replies[-1].get("created_at"),
+                    "label": "Wake atendido: el destinatario respondió"}
+        if row.get("acknowledged_at"):
+            return {"mode": "wake", "state": "atendido", "evidence": "acuse", "at": row["acknowledged_at"],
+                    "label": "Wake atendido: el destinatario confirmó el mensaje"}
+        return {"mode": "wake", "state": "solicitado", "evidence": None, "at": None,
+                "label": "Wake solicitado: todavía sin evidencia de que el turno se abriera"}
+
+    def message_thread_entry(row):
+        return {key: row.get(key) for key in
+                ("id", "thread_id", "in_reply_to", "from_agent_id", "to_agent_id", "message_type",
+                 "delivery_mode", "wake_backlog", "status", "subject", "created_at", "acknowledged_at",
+                 "attachment_count")}
+
+    @app.get("/dashboard/messages/{message_id}")
+    def dashboard_message(message_id: int, identity: Identity):
+        require_dashboard_identity(identity)
+        workspace_id = identity_workspace(identity)
+        row = store.message_for_workspace(message_id, workspace_id)
+        if not row:
+            raise HTTPException(404, "Message not found in your workspace")
+        now = time.time()
+        can_read_content = bool(identity["admin"] or identity.get("role") in ("operator", "workspace_owner"))
+        visible = row if can_read_content else {
+            key: row.get(key) for key in
+            ("id", "thread_id", "in_reply_to", "from_agent_id", "to_agent_id", "message_type", "delivery_mode",
+             "wake_backlog", "status", "created_at", "acknowledged_at", "attachment_count", "has_images",
+             "has_files", "request_fingerprint")}
+        thread = store.thread_messages(row.get("thread_id") or message_id)
+        replies = [entry for entry in thread if entry.get("in_reply_to") == message_id]
+        participants = {}
+        for role, key in (("from", "from_agent_id"), ("to", "to_agent_id")):
+            agent = store.get_agent(row.get(key))
+            participants[role] = public_agent(agent, now) if agent else None
+        return {"message": visible, "wake": message_wake_state(row, replies), "participants": participants,
+                "thread": [message_thread_entry(entry) for entry in thread], "thread_count": len(thread),
+                "replies": [message_thread_entry(entry) for entry in replies],
+                "content_visible": can_read_content, "checked_at": now}
+
     @app.get("/dashboard/data")
     def dashboard_data(identity: Identity):
         if not identity["admin"] and not identity.get("control_user"):

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.57
+
+- Add a per-message route to the Control Room: `/dashboard/message/<id>` with `/dashboard/messages/<id>`, showing both ends of the route, every metadata field, the full text, the attachments and the whole thread.
+- Label every interaction as normal or wake, and — for wakes — say only what the server can prove: requested, attended by acknowledgement, or attended by a reply.
+- List `test_dashboard_message.py` in CI and CONTRIBUTING so the new route stays covered.
+
 ## 0.3.56
 
 - Note in CONTRIBUTING that the Windows test run can fail while a temporary `server.log` is still held open by a test server, and point out that the repository ships the ZCode wake scripts as reference.
