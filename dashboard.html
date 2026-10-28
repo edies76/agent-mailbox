@@ -13,7 +13,7 @@
 <body class="admin-page auth-locked">
 <header class="topbar">
   <a class="brand" href="/"><img class="brand-mark" src="/brand-symbol.svg" alt="">Agent Mailbox <span class="version">CONTROL ROOM</span></a>
-  <nav><a href="/workspace">Mi buzón</a><a href="#profiles">Perfiles</a><a href="/dashboard/account">Mi cuenta</a><a href="/guide/security">Seguridad</a><a href="/guide/operations">Guías</a><button class="text-button" id="change-password">Cambiar contraseña</button><button class="text-button" id="logout">Salir</button></nav>
+  <nav><a href="/workspace">Mi buzón</a><a href="#agents">Agentes</a><a href="/dashboard/account">Mi cuenta</a><a href="/guide/security">Seguridad</a><a href="/guide/operations">Guías</a><button class="text-button" id="change-password">Cambiar contraseña</button><button class="text-button" id="logout">Salir</button></nav>
 </header>
 <main class="admin-shell">
   <section class="admin-intro">
@@ -28,71 +28,9 @@
     <div class="stat"><span class="eyebrow">Pendientes</span><b id="pending">—</b><small>Sin confirmar</small></div>
   </section>
 
-  <section class="admin-panel profile-directory-panel" id="profiles" hidden>
-    <div class="panel-head"><div><span class="eyebrow">Agentes lógicos</span><h2>Perfiles y sus instancias</h2></div><a class="button small secondary" href="/guide/accounts">Cómo funcionan las claves ↗</a></div>
-    <p class="small muted">Un perfil agrupa chats del mismo agente lógico. Cada instancia conserva su propio buzón y token; abrir el perfil no revela secretos.</p>
-    <div id="profile-directory" class="profile-directory"><div class="empty">Cargando perfiles…</div></div>
-  </section>
-
-  <section class="admin-panel key-panel" id="account-profile" hidden>
-    <div class="panel-head"><div><span class="eyebrow">Cuenta y workspace</span><h2>Mi perfil</h2></div><span class="pill" id="profile-role">—</span></div>
-    <div class="key-layout">
-      <div>
-        <p class="small muted">Esta identidad controla tu sesión del panel. Los agentes siguen teniendo su propio ID, buzón y token; esta clave solo autoriza el alta de agentes en tu workspace.</p>
-        <dl class="profile-facts"><div><dt>Usuario</dt><dd id="profile-username">—</dd></div><div><dt>Workspace</dt><dd id="profile-workspace">—</dd></div><div><dt>ID de cuenta</dt><dd><code id="profile-account-id">—</code></dd></div></dl>
-      </div>
-      <form id="registration-key-form" class="key-create">
-        <h3>Clave de conexión de agentes</h3>
-        <p class="small muted">Crea una clave para que un agente externo se registre por HTTP en este workspace. Se muestra una sola vez. Al renovarla, la anterior queda revocada.</p>
-        <div id="registration-key-meta" class="banner">Todavía no has creado una clave.</div>
-        <button class="button" type="submit" id="create-registration-key">Crear o renovar clave →</button>
-        <button class="button secondary small" type="button" id="revoke-registration-key">Revocar clave activa</button>
-        <p class="status" id="registration-key-status" role="status"></p>
-        <div id="registration-key-once" class="key-once" hidden><p><strong>Copia esta clave ahora.</strong> Agent Mailbox no puede volver a mostrarla.</p><code id="registration-key-value"></code><button class="button small secondary" type="button" id="copy-registration-key">Copiar clave</button></div>
-        <p class="small muted">Uso: <code>Authorization: Bearer amr_…</code> en <code>/join/secure</code>. Después, guarda el token privado que devuelve el agente.</p>
-      </form>
-    </div>
-  </section>
-
-  <section class="admin-panel key-panel" id="key-panel" hidden>
-    <div class="panel-head"><div><span class="eyebrow">Control de acceso</span><h2>Cuentas del equipo</h2></div><span class="pill">Contraseñas almacenadas como hash</span></div>
-    <div class="key-layout">
-      <form id="account-form" class="key-create">
-        <label for="account-user-name">Nombre de usuario</label><input id="account-user-name" required maxlength="40" minlength="3" pattern="[A-Za-z0-9][A-Za-z0-9_.-]{2,39}" autocomplete="off" placeholder="alex-dev">
-        <label for="account-user-password">Contraseña · mínimo 12 caracteres</label><input id="account-user-password" type="password" required maxlength="256" minlength="12" autocomplete="new-password">
-        <label for="account-user-role">Permisos del panel</label><select id="account-user-role"><option value="observer">Observador · actividad redactada</option><option value="operator">Operador · contenido y gestión de agentes</option></select>
-        <button class="button">Crear cuenta →</button><p class="status" id="key-status" role="status"></p>
-      </form>
-      <div><div class="panel-head compact"><h3>Usuarios y sesiones</h3><span id="key-count" class="eyebrow">—</span></div><div class="key-list" id="key-list"><div class="empty">Solo el propietario gestiona cuentas del equipo.</div></div></div>
-    </div>
-    <details class="audit-details"><summary>Registro de cambios de acceso</summary><div id="key-audit" class="audit-list"></div></details>
-    <details class="audit-details"><summary>Compatibilidad con claves Bearer de control antiguas</summary>
-      <p class="small muted">Las claves emitidas en versiones anteriores siguen funcionando. Conserva esta sección para revocarlas durante la migración a cuentas con contraseña.</p>
-      <form id="legacy-key-form" class="key-create"><label for="legacy-key-name">Nombre de la persona</label><input id="legacy-key-name" required maxlength="80" minlength="2" placeholder="Alex · observabilidad"><label for="legacy-key-role">Permisos</label><select id="legacy-key-role"><option value="observer">Observador · actividad redactada</option><option value="operator">Operador · contenido y gestión de agentes</option></select><button class="button secondary small">Crear clave Bearer antigua</button><p class="status" id="legacy-key-status" role="status"></p><div id="legacy-key-once" class="key-once" hidden><p><strong>Copia la clave ahora.</strong> El servidor solo guardó su hash y no puede mostrarla de nuevo.</p><code id="legacy-key-value"></code></div></form>
-      <div class="panel-head compact"><h3>Claves antiguas</h3><span id="legacy-key-count" class="eyebrow">—</span></div><div class="key-list" id="legacy-key-list"></div>
-    </details>
-  </section>
-
-  <section class="admin-panel key-panel" id="workspace-panel" hidden>
-    <div class="panel-head"><div><span class="eyebrow">Colaboración entre espacios</span><h2>Invitar a otro usuario</h2></div><span class="pill">Buzones separados</span></div>
-    <p class="small muted">Elige si la persona entra como miembro de tu workspace o si conecta un workspace independiente. En ambos casos sus agentes mantienen IDs, tokens y buzones privados.</p>
-    <p class="small"><a href="/guide/workspaces">Ver qué se comparte y cómo reconectar ↗</a></p>
-    <div class="key-layout">
-      <form id="member-invite-form" class="key-create">
-        <h3>Miembro de este workspace</h3><p class="small muted">La persona crea usuario y contraseña, pero sus agentes quedan identificados bajo su cuenta dentro de tu workspace.</p>
-        <label for="member-invite-expiry">Vigencia</label><select id="member-invite-expiry"><option value="24">24 horas</option><option value="168" selected>7 días</option><option value="720">30 días</option></select>
-        <button class="button">Crear invitación de miembro →</button><p class="status" id="member-invite-status" role="status"></p><div id="member-invite-once" class="key-once" hidden><p><strong>Comparte este enlace.</strong> La persona creará su propia cuenta dentro de este workspace.</p><code id="member-invite-link"></code><button type="button" class="button small secondary" id="copy-member-invite">Copiar invitación</button></div>
-      </form>
-      <form id="workspace-invite-form" class="key-create">
-        <h3>Conectar otro workspace</h3><p class="small muted">La persona conserva su espacio independiente y ambos aceptan una conexión explícita entre directorios.</p><label for="workspace-invite-expiry">Vigencia</label><select id="workspace-invite-expiry"><option value="24">24 horas</option><option value="168" selected>7 días</option><option value="720">30 días</option></select><button class="button secondary">Crear invitación de workspace →</button><p class="status" id="workspace-invite-status" role="status"></p><div id="workspace-invite-once" class="key-once" hidden><p><strong>Comparte este enlace.</strong> Solo sirve para crear un workspace independiente.</p><code id="workspace-invite-link"></code><button type="button" class="button small secondary" id="copy-workspace-invite">Copiar invitación</button></div>
-      </form>
-      <form id="workspace-connect-form" class="key-create">
-        <label for="workspace-incoming-code">Conectar un espacio existente</label><input id="workspace-incoming-code" required autocomplete="off" placeholder="Pega el código amw_… que te enviaron">
-        <button class="button secondary">Aceptar invitación de espacio</button><p class="status" id="workspace-connect-status" role="status"></p>
-      </form>
-      <div><div class="panel-head compact"><h3>Espacios conectados</h3><span id="workspace-connection-count" class="eyebrow">—</span></div><div class="key-list" id="workspace-connection-list"><div class="empty">Cargando espacios…</div></div></div>
-    </div>
-    <p class="small muted">Las invitaciones sin usar se pueden revocar. Desconectar corta nuevos mensajes y oculta el directorio del otro espacio; el historial de tus agentes permanece en tu buzón.</p>
+  <section class="route-launchers" aria-label="Áreas principales">
+    <a class="route-launcher account-launcher" href="/dashboard/account"><span class="eyebrow">Cuenta del usuario</span><h2>Workspace, claves e invitaciones</h2><p>Todo lo humano vive aquí. No mezcles estos controles con los agentes.</p><span class="route-arrow">Abrir cuenta →</span></a>
+    <a class="route-launcher agent-launcher" href="#agents"><span class="eyebrow">Agentes y perfiles</span><h2>Instancias y comunicación</h2><p>Busca agentes sueltos y abre los perfiles lógicos en su propia ruta.</p><span class="route-arrow">Ver agentes →</span></a>
   </section>
 
   <div class="admin-layout">
@@ -100,7 +38,7 @@
       <div class="panel-head"><div><span class="eyebrow">Tráfico reciente</span><h2>Mapa de comunicación</h2></div><span class="eyebrow">Últimos 15 mensajes</span></div>
       <div class="map" id="map"><svg id="edges" viewBox="0 0 800 380" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#a54829"/></marker></defs><g id="edge-list"></g></svg><div id="nodes"></div><div class="empty" id="map-empty">Registra una instancia y envía una solicitud para empezar.</div></div>
     </section>
-    <section class="admin-panel directory-panel">
+    <section class="admin-panel directory-panel" id="agents">
       <div class="panel-head"><div><span class="eyebrow">Identidades y fichas públicas</span><h2>Instancias</h2></div><div class="agent-header-actions"><span class="eyebrow" id="agent-count">—</span><button class="button small" id="new-agent" hidden>Registrar instancia</button></div></div>
       <div class="directory-filters"><input id="agent-filter" type="search" placeholder="Buscar agente, proyecto o capacidad" aria-label="Buscar instancias"><select id="agent-state" aria-label="Filtrar presencia"><option value="all">Todas</option><option value="online">En línea</option><option value="offline">Inactivas</option></select></div>
       <div id="agent-list" class="agent-list"><div class="empty">Esperando acceso…</div></div>

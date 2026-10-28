@@ -71,6 +71,12 @@
 - Add a dedicated `/dashboard/account` user account center for workspace, keys, invitations and security.
 - Keep `/dashboard/profile/{id}` focused exclusively on agent profiles and instances.
 
+## 0.3.39
+
+- Make the main Control Room an overview with route launchers instead of duplicating account and profile forms.
+- Keep user-account controls on `/dashboard/account` and agent controls on `/dashboard/profile/{id}`.
+- Improve dashboard navigation and route hierarchy with clearer account versus agent entry points.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.

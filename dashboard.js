@@ -1,5 +1,6 @@
 (() => {
-  const byId = id => document.getElementById(id);
+  const missingNode = {hidden:true,addEventListener(){},querySelector(){return null;},className:'',textContent:'',value:'',disabled:true,focus(){},select(){}};
+  const byId = id => document.getElementById(id) || missingNode;
   let currentUser = null;
   let setupRequired = false;
   let timer;
@@ -52,10 +53,6 @@
     try {
       const session=await api('/auth/session');currentUser={...session.user,auth_method:session.auth_method};
       const data=await api('/dashboard/data'); view=data; render(data); byId('login').hidden=true;document.body.classList.remove('auth-locked');byId('connection').textContent=`Conectado · ${currentUser.username}`;byId('change-password').hidden=currentUser.auth_method!=='password';
-      loadAccountProfile();
-      loadProfileDirectory();
-      if(data.permissions.can_manage_users){loadAccounts();loadLegacyControlUsers();} else byId('key-panel').hidden=true;
-      if(data.permissions.can_manage_workspace)loadWorkspace();else byId('workspace-panel').hidden=true;
     } catch(error) {
       if(error.status===401){await showLogin();}
       else {byId('connection').textContent='Sin conexión';byId('admin-error').textContent=error.message;}
@@ -68,7 +65,7 @@
     byId('updated').textContent=`actualizado ${fmtTime(data.updated_at)}`;
     byId('role-name').textContent={owner:'Propietario',workspace_owner:'Dueño de espacio',workspace_member:'Miembro de espacio',operator:'Operador',observer:'Observador'}[permissions.role]||permissions.role;
     byId('content-scope').textContent=permissions.role==='workspace_member'?'Miembro: ves y administras solo los agentes que registró tu cuenta; los buzones de otros miembros siguen privados.':permissions.can_read_message_content?(permissions.can_delete_messages?'Puedes ver contenido reciente y eliminar mensajes.':'Puedes ver contenido reciente y gestionar instancias; la limpieza de mensajes corresponde al propietario.'):'Vista de observador: conteos, rutas y estados; los asuntos, cuerpos y adjuntos permanecen ocultos.';
-    byId('key-panel').hidden=!permissions.can_manage_users;byId('new-agent').hidden=!permissions.can_manage_agents;byId('workspace-panel').hidden=!permissions.can_manage_workspace;
+    byId('new-agent').hidden=!permissions.can_manage_agents;
     renderAgents(agents,permissions);renderMessages(messages,agents,permissions);
   }
   async function loadAccountProfile(){
