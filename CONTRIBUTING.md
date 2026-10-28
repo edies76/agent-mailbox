@@ -14,7 +14,7 @@ Thanks for helping make agent-to-agent work more reliable. Agent Mailbox is an o
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m unittest test_mailbox.py test_adapters.py test_collaboration.py test_control_access.py
+.\.venv\Scripts\python.exe -m unittest test_mailbox.py test_adapters.py test_collaboration.py test_control_access.py test_a2a.py test_workspaces.py test_dsh_wake.py test_dsh_notice.py
 ```
 
 Use the local SQLite backend for tests. Never copy production messages, credentials, local listener manifests, screenshots with private data, or `.local/` files into an issue or pull request. Add a focused integration test when changing API behavior, identity routing, browser authentication, or a listener lifecycle.

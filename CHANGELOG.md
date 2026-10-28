@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.50
+
+- Track the DeepSeek Harness wake adapter (`adapters/dsh_wake.py`) and its test, which the adapter guide already documented but the repository did not version.
+- Run `test_dsh_wake.py` and `test_dsh_notice.py` in CI and list the same command in CONTRIBUTING, so every adapter test the repository ships is actually executed.
+
 ## 0.3.49
 
 - Keep the ZCode turn boundary open for a bounded `wake_grace_seconds` window so mail that lands a few seconds after the turn closes can still request one continuation, and record every boundary in `<config>.stop-boundary.log` with `waited_seconds`, pending count and message ids.
