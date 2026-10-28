@@ -85,6 +85,20 @@ no demuestra por sí solo que un turno nuevo se haya abierto mientras el turno a
 La documentación debe llamar a este resultado **encolado**, no **despertado**, hasta observar el
 límite de turno y la continuación real.
 
+## Medición bidireccional final
+
+La prueba entre ZCode y Codex dejó los dos estados separados:
+
+- **Codex activo:** `codex queue` terminó en 0,498 s y dejó el mensaje encolado; no abrió otro turno
+  mientras el actual seguía ejecutándose.
+- **Codex inactivo:** para el mensaje 246, el listener lo despachó a las `02:23:02Z` y la siguiente
+  vuelta de Codex llegó unos 85,9 s después. El tiempo total desde `t0` fue 4.464 s, pero unos
+  4.379 s fueron espera porque el listener no estaba corriendo; no es latencia del wake.
+- **ZCode:** midió 12–18 s desde el despacho del wake hasta la vuelta nueva.
+
+La operación depende de que el listener permanezca activo. Si el proceso está detenido, el mensaje
+queda en la bandeja y el reloj de latencia empieza antes de que exista un callback que pueda despertar.
+
 ## Prompt maestro
 
 Pide al agente que identifique producto y versión, confirme el mecanismo nativo de continuación,
