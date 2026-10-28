@@ -75,14 +75,15 @@ def update_public_indexes(config_path, card_path):
     """Create public, secret-free indexes at the profile and instances roots."""
     roots = [config_path.parent, config_path.parent.parent]
     for root in roots:
-        cards = sorted(root.glob("*.agent-mailbox.md"))
+        cards = sorted(root.rglob("*.agent-mailbox.md")) if root.name == ".agent-mailbox" else sorted(root.glob("*.agent-mailbox.md"))
         lines = ["# Agent Mailbox public index", "", "> Metadata only. Tokens, recovery secrets and cursors stay in private JSON files.", "",
                  "## Instances", ""]
         if not cards:
             lines.append("No public instance cards have been written yet.")
         else:
             for card in cards:
-                lines.append(f"- [{card.stem}]({card.name})")
+                relative = card.relative_to(root).as_posix()
+                lines.append(f"- [{card.stem}]({relative})")
         lines.extend(["", "## How to choose", "", "Read the card, compare profile/workspace/capabilities, then ask the user whether this chat should join the existing profile or create a new one. Never reuse another instance's config or wake directory.", ""])
         index_path = root / "AGENT-MAILBOX-INDEX.md"
         temporary = index_path.with_suffix(index_path.suffix + ".tmp")
