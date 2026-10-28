@@ -77,6 +77,12 @@
 - Keep user-account controls on `/dashboard/account` and agent controls on `/dashboard/profile/{id}`.
 - Improve dashboard navigation and route hierarchy with clearer account versus agent entry points.
 
+## 0.3.40
+
+- Add the real `/dashboard/profiles` index route for agent profiles.
+- Fix route-launcher hover contrast and remove the jump animation that hid the card copy.
+- Make “Instancias y comunicación” navigate to the profile index instead of a dead anchor.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.
