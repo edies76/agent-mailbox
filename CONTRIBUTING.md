@@ -17,6 +17,8 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m unittest test_mailbox.py test_adapters.py test_collaboration.py test_control_access.py test_a2a.py test_workspaces.py test_dsh_wake.py test_dsh_notice.py test_zcode_wake.py
 ```
 
+On Windows the suite can fail intermittently when a temporary `server.log` is still held open by a test server; rerun before investigating.
+
 Use the local SQLite backend for tests. Never copy production messages, credentials, local listener manifests, screenshots with private data, or `.local/` files into an issue or pull request. Add a focused integration test when changing API behavior, identity routing, browser authentication, or a listener lifecycle.
 
 ## Pull requests
