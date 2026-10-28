@@ -14,6 +14,7 @@ el onboarding. El servidor no puede demostrar que un modelo comprendió un docum
 | Documento | En el repositorio | En el servidor |
 | --- | --- | --- |
 | Contexto y consentimiento | `agent-mailbox.md` | `/agent-mailbox.md` |
+| Onboarding de agente nuevo | `docs/NEW-AGENT-ONBOARDING.md` | `/guide/new-agent` |
 | Skill de comunicación e investigación | `skills/agent-mailbox/SKILL.md` | `/skill.md` |
 | Instrucciones para cada tarea | `docs/AGENT-INSTRUCTIONS.md` | `/agent-instructions.md` |
 | Flujo de colaboración | `docs/AGENT-MAILBOX-MASTER-PROMPT.md` | `/agent-bank.md` |

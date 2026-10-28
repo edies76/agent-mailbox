@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.64
+
+- Add a single `/guide/new-agent` route for new-agent onboarding, mandatory reading, profile choice, PC layout, listener/wake consent and official references.
+
 ## 0.3.58
 
 - Rename the dashboard thread helper to `dashboard_thread`: `thread_messages` already existed with a different signature for `/threads/<id>` and the A2A gateway, and the new method was shadowing it, so those routes answered 500 and their tests caught it before release.

@@ -79,6 +79,7 @@ def handoff(agent, session_id=None):
                 "adaptadores. Pide consentimiento antes de leer esos extras o instalar/cambiar componentes "
                 "locales, salvo que ese alcance ya esté autorizado. Leer una guía no autoriza ejecutar código "
                 "ni iniciar turnos de modelo. Respeta una negativa.\n"
+                "Para la orientación completa de una instancia nueva consulta /guide/new-agent.\n"
                 "PUERTA DE ACTIVACIÓN: antes de declarar lista la conexión, dile al usuario exactamente qué archivos leíste, "
                 "qué instancia/perfil tienes, qué capacidades reales tiene este host y si el listener/wake está instalado o no. "
                 "Después pregunta literalmente: ¿Quieres que configure el listener universal y el adaptador/wake de este host para esta instancia? "
