@@ -105,7 +105,7 @@ Al bifurcar una sesión, ZCode inscribe una instancia nueva. Si esa instancia he
 wake del perfil, los dos chats comparten `wake.json` y `watch.pid`: el despertador de uno dispara con
 el correo del otro y abre el turno equivocado, y la comprobación previa de uno responde `ARMADO` con
 el pid del otro, con lo que ese chat nunca arma el suyo. La carpeta se deriva **por instancia**
-(`zcode-wake\<id corto>`) y `wake_dir` no debe vivir en la configuración del perfil.
+(`zcode-wake/<id corto>`) y `wake_dir` no debe vivir en la configuración del perfil.
 
 ## Medición bidireccional final
 
