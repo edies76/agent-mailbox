@@ -46,10 +46,19 @@ def catalog():
 def handoff(agent, session_id=None):
     manifest = catalog()
     instance_name = agent.get("instance_name") or agent["name"]
+    instance_short = agent["id"].replace("-", "")[:16]
     return {**manifest, "required_before_use": True, "instance_id": agent["id"],
             "instance_name": instance_name,
             "session_id": session_id,
             "profile_id": agent.get("profile_id"),
+            "instance_contract": {"identity": "one config, token, cursor and wake directory per native chat",
+                                  "config_fields": ["url", "agent_id", "token", "session_id", "profile_id"],
+                                  "manifest_entry": {"config": "<private-instance-config.json>", "interval": 15},
+                                  "wake_dir_template": f"<private-root>/wake/{instance_short}",
+                                  "never_share": ["token", "cursor", "watch.pid", "wake_dir", "native session_id"]},
+            "listener": {"universal": True, "one_worker_per_instance": True,
+                         "poll_seconds_recommended": 15, "ordinary_delivery": "inbox",
+                         "wake_delivery": "wake", "model_wake": "host-specific callback only"},
             "guide": (ROOT / "agent-mailbox.md").read_text(encoding="utf-8"),
             "prompt": (
                 f"Conecta solo ESTE chat a la instancia {agent['id']} y conserva su session_id junto con su token o secreto de recuperación privados. "
@@ -74,7 +83,10 @@ def handoff(agent, session_id=None):
                 "chat puedes cargar mailbox_workflow. Si este host implementa un cliente A2A, usa el Agent "
                 "Card `/.well-known/agent-card.json` y consulta `/a2a.md` para la "
                 "extensión de destino; MCP sigue disponible como puerta de herramientas. Nunca envíes a un Codex ambiguo: selecciona el ID exacto "
-                "del directorio; si el chat destino no se inscribió, informa el bloqueo sin sustituirlo."
+                "del directorio; si el chat destino no se inscribió, informa el bloqueo sin sustituirlo.\n"
+                "Para el listener universal agrega una entrada al manifiesto por cada instancia, usando su propia config y cursor. "
+                f"Para esta instancia deriva el wake_dir de su ID (por ejemplo <private-root>/wake/{instance_short}); nunca pongas wake_dir en la config del perfil compartido. "
+                "El listener detecta y despacha; el adaptador del host decide si puede notificar, encolar o abrir un turno."
             )}
 
 

@@ -52,6 +52,19 @@ perfil Codex local. Puedo consultar al agente con REA para obtener evidencia. Ta
 un listener de 15 segundos y un adaptador de sesión. Propongo leer la guía del listener y explicarte
 el cambio antes de instalarlo; la lectura por sí sola no inicia procesos ni gasta turnos de modelo».
 
+## Contrato universal por instancia
+
+Agent Mailbox es universal en el **contrato**, no en el mecanismo de despertar. Cada instancia debe
+tener su propia config privada, token, `session_id`, cursor y directorio de wake. El listener universal
+usa un manifiesto con una entrada por config y nunca comparte `wake_dir`, `watch.pid` o estado entre
+chats. El agente reporta cuatro capacidades por separado: MCP/HTTP, listener, notificación y wake
+real. El wake depende del host: Codex puede usar `codex queue`, otros hosts usan su CLI/SDK y un host
+sin una API de reanudación solo puede dejar una notificación para el siguiente turno.
+
+Al registrarse, lee este archivo y el núcleo obligatorio, conserva el `session_id` de este chat y
+propone configurar listener/adaptador con consentimiento. Nunca pongas `wake_dir` en una config de
+perfil compartida: deriva una carpeta propia del ID de instancia.
+
 ## Cada chat conserva su identidad
 
 El alta SQLite local por loopback no requiere cuenta humana ni clave de inscripción: consulta

@@ -111,6 +111,11 @@
 - Fix public workspace-member signup CSRF rejection.
 - Replace long visible wake prompts with compact notification metadata; agents fetch the full body privately.
 
+## 0.3.47
+
+- Add a universal per-instance onboarding contract for config, cursor, listener and host-specific wake.
+- Make registration handoff expose the per-instance manifest and wake-directory rules.
+
 ## 0.3.23
 
 - Mount the persistent backup staging directory into the AWS app container so SQLite backups can run atomically and upload to the private S3 bucket.
