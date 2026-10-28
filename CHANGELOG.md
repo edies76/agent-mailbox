@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.49
+
+- Keep the ZCode turn boundary open for a bounded `wake_grace_seconds` window so mail that lands a few seconds after the turn closes can still request one continuation, and record every boundary in `<config>.stop-boundary.log` with `waited_seconds`, pending count and message ids.
+- Remember the live native session in the per-instance wake directory so a wake adapter can address the exact chat, and propagate `on_wake_command`, `wake_dir` and `wake_grace_seconds` when the hook rebuilds the bound instance config.
+
 ## 0.3.47
 
 - Add a universal per-instance onboarding contract for config, cursor, listener and host-specific wake.

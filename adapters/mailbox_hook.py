@@ -13,8 +13,10 @@ import os
 import secrets
 import sys
 import tempfile
+import time
 import hashlib
 import hmac
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -308,6 +310,40 @@ def hook_response(host, event, payload, messages, config):
     return None
 
 
+def pending_at_boundary(config, window_seconds):
+    """Pending mail, polled for up to ``window_seconds`` at the Stop boundary.
+
+    The Stop hook runs once, while the host turn is still finishing; mail that
+    lands a few seconds later would otherwise never open a turn. Keeping that
+    single boundary open for a bounded window is the most a hook-only host can
+    offer -- it still cannot wake an already idle process.
+    """
+    deadline = time.monotonic() + max(0.0, float(window_seconds or 0))
+    while True:
+        messages = [message for message in get_pending(config) if message.get("status") != "cancelled"]
+        if messages:
+            return messages, max(0.0, float(window_seconds or 0)) - max(0.0, deadline - time.monotonic())
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return messages, max(0.0, float(window_seconds or 0))
+        time.sleep(min(4.0, remaining))
+
+
+def log_boundary(config_path, event, payload, pending, waited):
+    """Append one line of evidence per Stop boundary; never fails the hook."""
+    try:
+        path = Path(config_path).expanduser().with_suffix(".stop-boundary.log")
+        record = {"time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                  "event": event, "session_id": payload.get("session_id") or payload.get("sessionId"),
+                  "stop_hook_active": bool(payload.get("stop_hook_active")),
+                  "waited_seconds": round(waited, 1), "pending": len(pending),
+                  "message_ids": [message.get("id") for message in pending]}
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except (OSError, ValueError, TypeError):
+        pass
+
+
 def handle_hook_event(host, payload, config_path):
     event = payload.get("hook_event_name") or payload.get("hookEventName")
     if event not in ("SessionStart", "UserPromptSubmit", "Stop"):
@@ -321,8 +357,9 @@ def handle_hook_event(host, payload, config_path):
     config = bind_session(config, config_path, host, session_id, workspace)
     if event == "Stop" and (not config.get("auto_continue_on_stop", False) or payload.get("stop_hook_active")):
         return None
+    window = float(config.get("wake_grace_seconds") or 0) if event == "Stop" else 0.0
     try:
-        messages = [message for message in get_pending(config) if message.get("status") != "cancelled"]
+        messages, waited = pending_at_boundary(config, window)
     except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
         if config.get("bound_config_path") and event in ("SessionStart", "UserPromptSubmit"):
             output = hook_response(host, event, payload, [], config)
@@ -336,7 +373,10 @@ def handle_hook_event(host, payload, config_path):
     if not config.get("bound_config_path"):
         messages = filter_new_messages(config, config_path, session_id, messages,
                                        reset=event in ("SessionStart", "UserPromptSubmit", "Stop"))
-    return hook_response(host, event, payload, messages, config)
+    output = hook_response(host, event, payload, messages, config)
+    if event == "Stop":
+        log_boundary(config_path, event, payload, messages if output else [], waited)
+    return output
 
 
 def main():
