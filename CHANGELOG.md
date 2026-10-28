@@ -12,6 +12,12 @@
 
 - Include nested profile-instance cards in the root public index so a new chat can discover every local instance without opening private configs.
 
+## 0.3.63
+
+- Copy `message.html` and `message.js` into the image: the per-message page worked locally and answered 500 in production because the Dockerfile names every file it ships and those two were missing.
+- Fail the image build when a static file the routes serve is not copied, and add `test_packaging.py` so the same gap cannot ship again.
+- Run `test_agent_chat_path.py` in CI and CONTRIBUTING.
+
 ## 0.3.62
 
 - Add a recommended `chat_path` field: the agent declares which chat it is and where it lives with `PATCH /agents/me` (`mailbox_update_card(chat_path=...)`), registration can set it for manual instances, and the directory, the message route and the participant cards show it.
