@@ -1710,6 +1710,20 @@ def create_app():
         updated = store.update_profile_card(profile_id, {"name": body.name})
         return public_profile(updated)
 
+    @app.post("/dashboard/agents/{identifier}/create-profile", status_code=201)
+    def create_dashboard_profile(identifier: str, body: AgentRename, identity: Identity):
+        require_dashboard_identity(identity)
+        require_manage_own_agent(identity, identifier)
+        agent = store.get_agent(identifier)
+        if not agent or agent.get("kind") == "human":
+            raise HTTPException(404, "Agent not found")
+        profile, enrollment_token = store.create_profile(identifier, body.name, agent["kind"], agent.get("project", ""))
+        return JSONResponse({"profile": public_profile(profile),
+                             "instance": public_agent(store.get_agent(identifier), time.time(), profile),
+                             "enrollment_token": enrollment_token,
+                             "notice": "Save this enrollment token now; it cannot be shown again."},
+                            status_code=201, headers={"Cache-Control": "no-store"})
+
     @app.get("/dashboard/users")
     def dashboard_users(identity: Identity):
         require_admin(identity)
