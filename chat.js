@@ -1,6 +1,6 @@
 (() => {
   const byId = id => document.getElementById(id);
-  const state = {agents: [], messages: [], cursor: 0, humanId: null, busy: false, sending: false, blobs: [], directoryKey: '', draft: null};
+  const state = {agents: [], messages: [], cursor: 0, humanId: null, busy: false, sending: false, blobs: [], directoryKey: '', draft: null, release: null, restore: null};
   const csrf = () => { const value = document.cookie.split('; ').find(x => x.startsWith('__Host-agent-mailbox-csrf=') || x.startsWith('agent-mailbox-csrf=')); return value ? decodeURIComponent(value.split('=').slice(1).join('=')) : ''; };
   async function api(path, method='GET', body) {
     const headers = {};
@@ -21,7 +21,26 @@
       if(state.agents.some(a=>a.id===selected)) select.value=selected;
       state.directoryKey=key;
     }
+    if(state.restore?.agent && state.agents.some(a=>a.id===state.restore.agent)){select.value=state.restore.agent;state.restore.agent=null;document.querySelector('.sidebar').classList.add('has-selection');byId('change-agent').setAttribute('aria-expanded','false');render(true);}
+    renderAgentList();
     renderState();
+  }
+  function renderAgentList() {
+    const list=byId('agent-list'), selected=byId('agent').value, query=byId('agent-search').value.trim().toLocaleLowerCase();
+    const rows=state.agents.filter(a=>`${a.instance_name||a.name} ${a.kind} ${a.project||''}`.toLocaleLowerCase().includes(query));
+    const key=JSON.stringify([selected,query,rows.map(a=>[a.id,a.instance_name||a.name,a.kind,a.project,!!a.listener?.active,a.wake?.configured])]);
+    if(list.dataset.renderKey===key)return;
+    list.dataset.renderKey=key;list.replaceChildren();
+    if(!rows.length){const empty=document.createElement('p');empty.className='agent-empty';empty.textContent=state.agents.length?'No hay agentes con ese nombre.':'Aún no hay agentes registrados.';list.append(empty);return;}
+    for(const agent of rows){
+      const name=agent.instance_name||agent.name;const ready=!!agent.listener?.active&&!!agent.wake?.configured;
+      const button=document.createElement('button');button.type='button';button.className='agent-item';button.setAttribute('aria-pressed',String(agent.id===selected));
+      const icon=document.createElement('span');icon.className='agent-initial';icon.setAttribute('aria-hidden','true');icon.textContent=(name.trim()[0]||'A').toUpperCase();
+      const copy=document.createElement('span');copy.className='agent-copy';const title=document.createElement('span');title.className='agent-name';title.textContent=name;
+      const detail=document.createElement('span');detail.className='agent-detail';detail.textContent=ready?'Despertador configurado':agent.listener?.active?'Listener activo · sin wake':'Sin señal del listener';
+      copy.append(title,detail);const dot=document.createElement('span');dot.className='agent-indicator'+(ready?' ready':'');dot.setAttribute('aria-hidden','true');
+      button.append(icon,copy,dot);button.onclick=()=>{byId('agent').value=agent.id;document.querySelector('.sidebar').classList.add('has-selection');document.querySelector('.sidebar').classList.remove('show-chooser');byId('change-agent').setAttribute('aria-expanded','false');renderAgentList();renderState();render(true);};list.append(button);
+    }
   }
   function renderState() {
     const agent=state.agents.find(a=>a.id===byId('agent').value), label=byId('agent-state');
@@ -61,6 +80,8 @@
   }
   const readFile=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve({filename:file.name,media_type:file.type||'application/octet-stream',data_base64:String(reader.result).split(',')[1]});reader.onerror=()=>reject(new Error('No se pudo leer el archivo'));reader.readAsDataURL(file);});
   byId('agent').onchange=()=>{renderState();render(true);};
+  byId('agent-search').addEventListener('input',renderAgentList);
+  byId('change-agent').onclick=()=>{const sidebar=document.querySelector('.sidebar');const expanded=sidebar.classList.toggle('show-chooser');byId('change-agent').setAttribute('aria-expanded',String(expanded));if(expanded)byId('agent-search').focus();};
   byId('mode').onchange=()=>{const waking=byId('mode').value==='wake';byId('backlog-label').hidden=!waking;byId('delivery-help').textContent=waking?'Se pedirá al adaptador que abra el chat. Depende del host y puede consumir un turno.':'El mensaje quedará guardado hasta que el agente revise su buzón.';};
   byId('composer').onsubmit=async event=>{
     event.preventDefault();const agent=byId('agent').value, text=byId('text').value, files=[...byId('files').files];
@@ -73,5 +94,8 @@
     try {const attachments=await Promise.all(files.map(readFile));await api('/dashboard/chat/messages','POST',{to_agent_id:agent,text,delivery_mode:byId('mode').value,wake_backlog:byId('mode').value==='wake'&&byId('backlog').checked,attachments,idempotency_key:state.draft.key});state.draft=null;byId('text').value='';byId('files').value='';byId('status').textContent='';await refresh();}
     catch(error){byId('status').textContent=`No se pudo enviar: ${error.message}`;}finally{state.sending=false;renderState();}
   };
-  refresh();setInterval(refresh,5000);
+  async function checkRelease(){try{const result=await api('/health');if(state.release&&state.release!==result.version)byId('update-banner').hidden=false;else if(!state.release)state.release=result.version;}catch{}}
+  byId('update-chat').onclick=()=>{if(state.sending){byId('status').textContent='Espera a que termine el envío antes de actualizar.';return;}try{sessionStorage.setItem('mailbox-chat-update-draft',JSON.stringify({text:byId('text').value,agent:byId('agent').value,mode:byId('mode').value,backlog:byId('backlog').checked,files:byId('files').files.length>0}));location.reload();}catch{byId('status').textContent='No se pudo guardar el borrador; copia el texto antes de actualizar.';}};
+  try{const saved=sessionStorage.getItem('mailbox-chat-update-draft');if(saved){state.restore=JSON.parse(saved);sessionStorage.removeItem('mailbox-chat-update-draft');byId('text').value=state.restore.text||'';byId('mode').value=state.restore.mode||'inbox';byId('backlog').checked=!!state.restore.backlog;byId('mode').onchange();if(state.restore.files)byId('status').textContent='El texto se conservó. Vuelve a adjuntar los archivos.';}}catch{}
+  refresh();checkRelease();setInterval(refresh,5000);setInterval(checkRelease,60000);
 })();

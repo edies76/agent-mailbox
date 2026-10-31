@@ -13,12 +13,15 @@
 </header>
 <main class="shell">
   <div class="page-heading"><div><span class="eyebrow">TU WORKSPACE / MENSAJES</span><h1>Conversaciones</h1></div><span class="sync" id="sync" role="status">Conectando…</span></div>
+  <div class="update-banner" id="update-banner" hidden><span>Hay una versión nueva del chat. Tu texto se conservará; vuelve a adjuntar los archivos después de actualizar.</span><button type="button" id="update-chat">Actualizar</button></div>
   <div class="layout">
     <aside class="sidebar" aria-label="Agentes">
-      <div class="sidebar-heading"><div><span class="eyebrow">DESTINATARIO</span><h2>Tu equipo</h2></div><span class="count" id="agent-count">—</span></div>
-      <label for="agent">Instancia del agente</label>
-      <select id="agent"><option value="">Cargando agentes…</option></select>
-      <div class="availability"><span class="eyebrow">DISPONIBILIDAD</span><p id="agent-state" class="state">Selecciona una instancia para ver su estado.</p></div>
+      <div class="sidebar-heading"><div><span class="eyebrow">DESTINATARIO</span><h2>Tu equipo</h2></div><span class="count" id="agent-count">—</span><button type="button" id="change-agent" class="change-agent" aria-expanded="true">Cambiar</button></div>
+      <label for="agent-search" class="search-label">Buscar agente</label>
+      <input id="agent-search" type="search" placeholder="Buscar por nombre o proyecto" autocomplete="off">
+      <select id="agent" hidden aria-label="Instancia seleccionada"><option value="">Cargando agentes…</option></select>
+      <div id="agent-list" class="agent-list" aria-label="Instancias disponibles"><p class="agent-empty">Cargando agentes…</p></div>
+      <div class="availability"><span class="eyebrow">ESTADO DEL DESTINATARIO</span><p id="agent-state" class="state">Selecciona una instancia para ver su estado.</p></div>
       <p class="sidebar-note">Cada chat tiene su propio buzón. <a href="/guide/human-chat">Cómo funcionan los estados ↗</a></p>
     </aside>
     <section class="conversation" aria-label="Conversación">
