@@ -66,6 +66,11 @@ class SQLiteStore(CollaborationStore):
             columns = {row[1] for row in db.execute("PRAGMA table_info(messages)")}
             if "attachments_json" not in columns:
                 db.execute("ALTER TABLE messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'")
+            agent_columns = {row[1] for row in db.execute("PRAGMA table_info(agents)")}
+            for column, definition in (("listener_seen_at", "REAL"), ("listener_ttl", "INTEGER"),
+                                       ("wake_configured", "INTEGER")):
+                if column not in agent_columns:
+                    db.execute(f"ALTER TABLE agents ADD COLUMN {column} {definition}")
             db.execute("""CREATE TABLE IF NOT EXISTS attachments (
                 message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
                 attachment_index INTEGER NOT NULL, filename TEXT NOT NULL, media_type TEXT NOT NULL,
@@ -196,6 +201,11 @@ class SQLiteStore(CollaborationStore):
         if not row:
             raise HTTPException(404, "Agent not found")
         return self.agent_output(row)
+
+    def report_listener(self, identifier, seen_at, ttl, wake_configured):
+        with self.database() as db:
+            db.execute("UPDATE agents SET listener_seen_at=?, listener_ttl=?, wake_configured=? WHERE id=?",
+                       (seen_at, ttl, int(wake_configured), identifier))
 
     def unregister(self, identifier):
         """Revoke an agent and permanently erase its messages and attachments."""
@@ -520,6 +530,10 @@ class FirestoreStore(CollaborationStore):
             fields = {**fields, "instance_name": fields["name"]}
         ref.update(fields, timeout=15)
         return {**snapshot.to_dict(), **fields}
+
+    def report_listener(self, identifier, seen_at, ttl, wake_configured):
+        self.agents.document(identifier).update({"listener_seen_at": seen_at, "listener_ttl": ttl,
+                                                 "wake_configured": wake_configured}, timeout=15)
 
     def all_agents(self):
         rows = [doc.to_dict() | {"workspace_id": doc.to_dict().get("workspace_id") or DEFAULT_WORKSPACE_ID}

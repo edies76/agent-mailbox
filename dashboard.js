@@ -98,6 +98,9 @@
       const provenance=agent.added_by||{};info.append(el('div','agent-provenance',`Añadido por ${provenance.username||'sistema'} · ${provenance.method||'registro directo'}`));
       if(agent.profile_id){const profileLink=el('a','agent-profile-link','Abrir perfil y sus instancias ↗');profileLink.href=`/dashboard/profile/${encodeURIComponent(agent.profile_id)}`;info.append(profileLink);}
       const badge=el('span',`badge${agent.online?' on':''}`,agent.online?'EN LÍNEA':'INACTIVA');const actions=el('div','agent-actions');actions.append(badge);
+      const listener=agent.listener?.active;const wake=agent.wake?.configured;
+      actions.append(el('span',`badge${listener?' on':''}`,listener?'LISTENER ACTIVO':'LISTENER SIN SEÑAL'));
+      const wakeBadge=el('span',`badge${wake?' on':''}`,listener?(wake?'WAKE CONFIGURADO':'SIN WAKE'):'WAKE DESCONOCIDO');wakeBadge.title='Declarado por el listener; no garantiza que el host inicie un turno.';actions.append(wakeBadge);
       if(permissions.can_manage_agents&&agent.can_manage!==false){const rename=el('button','button small secondary','Renombrar');rename.type='button';rename.onclick=()=>openRenameAgent(agent);actions.append(rename);if(permissions.can_manage_workspace){const rotate=el('button','button small secondary','Renovar token');rotate.type='button';rotate.onclick=()=>rotateAgentToken(agent);actions.append(rotate);}const remove=el('button','remove-agent','Dar de baja');remove.type='button';remove.setAttribute('aria-label',`Dar de baja a ${agent.name}`);remove.onclick=()=>unregisterAgent(agent);actions.append(remove);}
       row.append(info,actions);list.append(row);
     }

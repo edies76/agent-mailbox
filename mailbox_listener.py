@@ -197,6 +197,9 @@ def drain_output(process, spec):
             elif event.get("type") == "mailbox_wake_unconfigured":
                 emit("mailbox_wake_unconfigured", instance=spec["name"], agent_id=spec["agent_id"],
                      message_id=event.get("message_id"))
+            elif event.get("type") == "mailbox_wake_uncertain":
+                emit("mailbox_wake_uncertain", instance=spec["name"], agent_id=spec["agent_id"],
+                     message_id=event.get("message_id"))
             elif event.get("type") in {"mailbox_listener_started", "mailbox_listener_stopped", "mailbox_bank_saved"}:
                 safe = {key: event[key] for key in ("agent_id", "message_id", "interval_seconds", "transport") if key in event}
                 emit(event["type"], instance=spec["name"], **safe)

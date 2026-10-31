@@ -112,13 +112,16 @@ def process_message(message, token, config):
         wake_command = wake_command or notify_command
         notify_command = None
 
-    def invoke(command, option_name):
+    def invoke(command, option_name, uncertain_ok=False):
         if not isinstance(command, list) or not command or not all(isinstance(part, str) for part in command):
             raise ValueError(f"{option_name} debe ser una lista de argumentos de texto.")
         environment = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
         result = subprocess.run(command, input=encoded, text=True, encoding="utf-8", check=False, env=environment)
         if result.returncode != 0:
+            if uncertain_ok and result.returncode == 3:
+                return False
             raise RuntimeError(f"{option_name} terminó con código {result.returncode}.")
+        return True
 
     if notify_command:
         invoke(notify_command, "on_message_command")
@@ -126,8 +129,8 @@ def process_message(message, token, config):
             request_json(f"{config['url'].rstrip('/')}/inbox/{message['id']}/ack", token,
                          method="POST", payload={})
     if is_wake and wake_command:
-        invoke(wake_command, "on_wake_command")
-        print(json.dumps({"type": "mailbox_wake_queued", "message_id": message["id"],
+        accepted = invoke(wake_command, "on_wake_command", uncertain_ok=True)
+        print(json.dumps({"type": "mailbox_wake_queued" if accepted else "mailbox_wake_uncertain", "message_id": message["id"],
                           "wake_backlog": bool(message.get("wake_backlog", False))}), flush=True)
     elif is_wake:
         print(json.dumps({"type": "mailbox_wake_unconfigured", "message_id": message["id"]}), flush=True)
@@ -186,6 +189,20 @@ def main():
             after_id = cursor
             failed = False
             try:
+                # A short-lived report distinguishes a polling worker from an ordinary API client.
+                # Older servers need not implement this optional endpoint.
+                wake_command = config.get("on_wake_command")
+                wake_section = config.get("wake") or {}
+                configured = bool(isinstance(wake_command, list) and wake_command and
+                                  wake_section.get("enabled", True))
+                try:
+                    request_json(f"{base_url}/agents/me/listener", token, method="POST",
+                                 payload={"interval_seconds": max(args.interval, 25) if transport == "wait" else args.interval,
+                                          "wake_configured": configured})
+                except HTTPError as error:
+                    if error.code not in (404, 405):
+                        raise
+                    error.close()
                 while True:
                     query = urlencode({"unread_only": "true", "after_id": after_id, "limit": 200})
                     page = request_json(f"{base_url}/inbox?{query}", token)

@@ -114,11 +114,12 @@ def main():
         except subprocess.TimeoutExpired:
             print(f"Host wake timed out for mailbox message {message.get('id')}; left unacknowledged.",
                   file=sys.stderr)
-            return 0
+            return 3
         if result.returncode != 0:
             # Do not retry a possibly accepted model turn every polling interval.
             print(f"Host wake exited {result.returncode} for mailbox message {message.get('id')}; "
                   "left unacknowledged for manual recovery.", file=sys.stderr)
+            return 3
         return 0
     except Exception as error:
         print(f"Mailbox wake was not started ({type(error).__name__}): {error}", file=sys.stderr)

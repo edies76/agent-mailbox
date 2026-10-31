@@ -309,6 +309,12 @@ class RequestStatus(BaseModel):
     note: str = Field(default="", max_length=2000)
 
 
+class ListenerReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    interval_seconds: int = Field(ge=5, le=300)
+    wake_configured: bool = False
+
+
 class Reply(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(default="", max_length=32768)
@@ -532,6 +538,7 @@ def create_app():
         ("/app.css", "app.css", "text/css"), ("/version.js", "version.js", "application/javascript"),
         ("/workspace.js", "workspace.js", "application/javascript"),
         ("/workspace", "workspace.html", "text/html"), ("/guide.js", "guide.js", "application/javascript"),
+        ("/dashboard/chat", "chat.html", "text/html"), ("/chat.js", "chat.js", "application/javascript"),
         ("/join-workspace.js", "join-workspace.js", "application/javascript"),
         ("/join-workspace", "join-workspace.html", "text/html"),
         ("/join-member.js", "join-member.js", "application/javascript"),
@@ -1154,6 +1161,12 @@ def create_app():
                                "username": row.get("created_by_username") or profile.get("created_by_username") or "Sistema / registro directo",
                                "method": row.get("registration_method") or profile.get("registration_method") or "unknown"}
         result["online"] = row["last_seen"] >= now - online_seconds
+        listener_seen = row.get("listener_seen_at")
+        listener_active = bool(listener_seen and now - listener_seen <= (row.get("listener_ttl") or 0))
+        result["listener"] = {"active": listener_active, "last_report_at": listener_seen}
+        result["wake"] = {"configured": bool(row.get("wake_configured")) if listener_active else None,
+                          "verified": False,
+                          "meaning": "Self-reported adapter configuration; does not prove an idle session can wake."}
         return result
 
     def account_owner_view(user_id, username=""):
@@ -1574,6 +1587,75 @@ def create_app():
             raise HTTPException(403, "Registration keys are for agent enrollment only")
         if not identity["admin"] and not identity.get("control_user"):
             raise HTTPException(403, "The dashboard requires an account session")
+
+    def human_chat_identity(identity, create=False):
+        # A separate, server-owned mailbox for each account, never an agent's token.
+        if not identity.get("workspace_scoped") or not identity.get("account_session_id"):
+            raise HTTPException(403, "Sign in with your own account to use chat")
+        account = store.account_by_id(identity["id"])
+        if not account or account.get("disabled_at"):
+            raise HTTPException(403, "Account unavailable")
+        if account.get("role") not in ("owner", "workspace_owner", "workspace_member", "operator"):
+            raise HTTPException(403, "This account cannot use chat")
+        workspace_id = identity_workspace(identity)
+        identifier = str(uuid5(NAMESPACE_URL, f"agent-mailbox:human:{workspace_id}:{account['id']}"))
+        if create and not store.get_agent(identifier):
+            now = time.time()
+            store.register(dict(id=identifier, name=account.get("display_name") or account["username"],
+                                kind="human", project="Dashboard chat", token_hash=hashlib.sha256(secrets.token_bytes(32)).hexdigest(),
+                                created_at=now, last_seen=0, workspace_id=workspace_id,
+                                description="Usuario humano del workspace", capabilities=[],
+                                created_by_account_id=account["id"], created_by_username=account["username"],
+                                registration_method="account_chat"))
+        return identifier, account
+
+    @app.get("/dashboard/chat/data")
+    def dashboard_chat_data(identity: Identity, after_id: int = Query(0, ge=0, le=MAX_MESSAGE_ID)):
+        identifier, account = human_chat_identity(identity)
+        directory = [row for row in directory_agents(workspace_ids=visible_workspace_ids(identity))
+                     if row["kind"] != "human"]
+        if not store.get_agent(identifier):
+            return {"agents": directory, "messages": [], "next_after_id": after_id, "has_more": False}
+        inbox = store.mail_page(identifier, "inbox", after_id=after_id, limit=100)
+        outbox = store.mail_page(identifier, "outbox", after_id=after_id, limit=100)
+        rows = sorted(inbox["messages"] + outbox["messages"], key=lambda row: row["id"])
+        page = rows[:100]
+        return {"agents": directory, "messages": page, "next_after_id": page[-1]["id"] if page else after_id,
+                "has_more": len(rows) > 100 or inbox["has_more"] or outbox["has_more"],
+                "human_instance_id": identifier}
+
+    @app.post("/dashboard/chat/messages", status_code=201)
+    def dashboard_chat_send(body: Message, identity: Identity):
+        if body.in_reply_to is not None or body.message_type != "request":
+            raise HTTPException(422, "Send a new request to the selected instance")
+        if body.wake_backlog and body.delivery_mode != "wake":
+            raise HTTPException(422, "wake_backlog requires delivery_mode='wake'")
+        identifier, account = human_chat_identity(identity, create=True)
+        recipient = store.get_agent(body.to_agent_id)
+        if not recipient or recipient.get("kind") == "human" or (recipient.get("workspace_id") or DEFAULT_WORKSPACE_ID) not in visible_workspace_ids(identity):
+            raise HTTPException(404, "Agent instance not found")
+        workspace_id = identity_workspace(identity)
+        workspace = store.workspace_info(workspace_id) or {}
+        sender = {"username": account["username"], "name": account.get("display_name") or account["username"],
+                  "account_id": account["id"], "role": account.get("role", "member"),
+                  "workspace_id": workspace_id, "workspace_name": workspace.get("name") or workspace_id}
+        attachments = prepare_attachments(body.attachments, attachment_limit)
+        if not body.text.strip() and not attachments:
+            raise HTTPException(422, "Message text cannot be blank")
+        # This header is produced by the server, not accepted as a client claim.
+        prefix = "Mensaje del usuario autenticado: " + json.dumps(sender, ensure_ascii=False) + "\n\n"
+        if len(prefix) + len(body.text) > 32768:
+            raise HTTPException(422, "Message is too long")
+        message = body.model_copy(update={"text": prefix + body.text})
+        return store.send(identifier, message, attachments)
+
+    @app.get("/dashboard/chat/attachments/{message_id}/{attachment_index}")
+    def dashboard_chat_attachment(message_id: int, attachment_index: int, identity: Identity):
+        identifier, _ = human_chat_identity(identity)
+        attachment = store.get_attachment(identifier, message_id, attachment_index)
+        return JSONResponse({"filename": attachment["filename"], "media_type": attachment["media_type"],
+                             "data_base64": base64.b64encode(attachment["data"]).decode("ascii")},
+                            headers={"Cache-Control": "no-store"})
 
     def dashboard_profile_access(profile_id, identity):
         require_dashboard_identity(identity)
@@ -2193,6 +2275,13 @@ def create_app():
     @app.post("/heartbeat")
     def heartbeat(identity: Identity):
         return {"agent_id": agent_id(identity), "online": True, "online_window_seconds": online_seconds}
+
+    @app.post("/agents/me/listener")
+    def report_my_listener(body: ListenerReport, identity: Identity):
+        identifier = agent_id(identity)
+        now = time.time()
+        store.report_listener(identifier, now, 2 * body.interval_seconds + 30, body.wake_configured)
+        return public_agent(store.get_agent(identifier), now)
 
     @app.post("/messages", status_code=201)
     def send_message(body: Message, identity: Identity):

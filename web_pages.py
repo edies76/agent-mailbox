@@ -24,6 +24,7 @@ GUIDES = {
     "prompt": ("Prompt para conectar", "docs/CONNECT-AGENT-PROMPT.md"),
     "agent-setup": ("Setup de agentes y activación", "docs/AGENT-SETUP.md"),
     "zcode-wake": ("ZCode · listener y despertador", "docs/ZCODE-WAKE.md"),
+    "human-chat": ("Conversaciones y estado de los agentes", "docs/HUMAN-CHAT.md"),
     "adapter-prompt": ("Crear un adaptador", "docs/ADAPTER-BUILD-PROMPT.md"),
     "skill": ("Skill de coordinación", "skills/agent-mailbox/SKILL.md"),
     "instructions": ("Instrucciones persistentes", "docs/AGENT-INSTRUCTIONS.md"),
