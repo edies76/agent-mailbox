@@ -4,7 +4,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY VERSION server.py stores.py collaboration.py delivery.py web_pages.py a2a_gateway.py connect.html connect-en.html connect.js dashboard.html dashboard.js message.html message.js profile.html profile.js profile-edit.js account.html account.js account-edit.js account-members.js profiles.html profiles.js join-workspace.html join-workspace.js join-member.html join-member.js AGENT_PROTOCOL.md mailbox_watch.py mailbox_listener.py mailbox_mcp.py mailbox_client.py README.md CHANGELOG.md DEPLOYMENT.md app.css workspace.html workspace.js guide.js favicon.svg use-cases.html use-cases.js version.js ./
 COPY onboarding.py agent-mailbox.md ./
-COPY chat.html chat.js ./
+COPY chat.html chat.js chat.css ./
 COPY adapters/ ./adapters/
 COPY docs/ ./docs/
 COPY skills/ ./skills/

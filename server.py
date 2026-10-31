@@ -539,6 +539,7 @@ def create_app():
         ("/workspace.js", "workspace.js", "application/javascript"),
         ("/workspace", "workspace.html", "text/html"), ("/guide.js", "guide.js", "application/javascript"),
         ("/dashboard/chat", "chat.html", "text/html"), ("/chat.js", "chat.js", "application/javascript"),
+        ("/chat.css", "chat.css", "text/css"),
         ("/join-workspace.js", "join-workspace.js", "application/javascript"),
         ("/join-workspace", "join-workspace.html", "text/html"),
         ("/join-member.js", "join-member.js", "application/javascript"),

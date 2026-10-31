@@ -34,6 +34,9 @@ def copied_names():
 
 
 class PackagingTests(unittest.TestCase):
+    def test_chat_assets_are_copied(self):
+        self.assertTrue({'chat.html', 'chat.js', 'chat.css'} <= copied_names())
+
     def test_every_served_static_file_is_copied_into_the_image(self):
         copied = copied_names()
         missing = []
