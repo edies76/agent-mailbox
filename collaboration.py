@@ -798,8 +798,27 @@ class CollaborationStore:
             with self.database() as db:
                 db.execute("BEGIN IMMEDIATE")
                 agent = db.execute("SELECT * FROM agents WHERE id = ?", (identifier,)).fetchone()
-                if not agent or agent["profile_id"]:
-                    raise HTTPException(409, "Instance is already grouped or no longer exists")
+                if not agent:
+                    raise HTTPException(404, "Instance no longer exists")
+                if agent["profile_id"]:
+                    existing = db.execute("SELECT data_json FROM profiles WHERE id = ?", (agent["profile_id"],)).fetchone()
+                    if not existing:
+                        raise HTTPException(409, "Instance points to a missing profile")
+                    profile = json.loads(existing["data_json"])
+                    if name.strip():
+                        profile["name"] = name.strip()
+                    if kind.strip():
+                        profile["kind"] = kind.strip()
+                    if project.strip():
+                        profile["project"] = project.strip()
+                    if description.strip():
+                        profile["description"] = description.strip()
+                    if capabilities:
+                        profile["capabilities"] = capabilities
+                    profile["enrollment_hash"] = hashlib.sha256(token.encode()).hexdigest()
+                    db.execute("UPDATE profiles SET data_json = ? WHERE id = ?",
+                               (json.dumps(profile, ensure_ascii=False), profile["id"]))
+                    return profile, token
                 description = description or agent["description"]
                 capabilities = capabilities or json.loads(agent["capabilities_json"] or "[]")
                 profile.update(description=description, capabilities=capabilities,
@@ -815,8 +834,28 @@ class CollaborationStore:
             def create(transaction):
                 ref = self.agents.document(identifier)
                 agent = ref.get(transaction=transaction).to_dict()
-                if not agent or agent.get("profile_id"):
-                    raise HTTPException(409, "Instance is already grouped or no longer exists")
+                if not agent:
+                    raise HTTPException(404, "Instance no longer exists")
+                if agent.get("profile_id"):
+                    existing_ref = self.client.collection("profiles").document(agent["profile_id"])
+                    existing = existing_ref.get(transaction=transaction).to_dict()
+                    if not existing:
+                        raise HTTPException(409, "Instance points to a missing profile")
+                    profile = {**existing, "enrollment_hash": hashlib.sha256(token.encode()).hexdigest()}
+                    if name.strip():
+                        profile["name"] = name.strip()
+                    if kind.strip():
+                        profile["kind"] = kind.strip()
+                    if project.strip():
+                        profile["project"] = project.strip()
+                    if description.strip():
+                        profile["description"] = description.strip()
+                    if capabilities:
+                        profile["capabilities"] = capabilities
+                    profile["enrollment_hash"] = hashlib.sha256(token.encode()).hexdigest()
+                    transaction.update(existing_ref, {key: value for key, value in profile.items()
+                                                     if key != "id"})
+                    return profile
                 profile.update(description=description or agent.get("description", ""),
                                capabilities=capabilities or agent.get("capabilities", []),
                                workspace_id=agent.get("workspace_id") or DEFAULT_WORKSPACE_ID,
@@ -825,7 +864,9 @@ class CollaborationStore:
                                registration_method="profile_created_from_instance")
                 transaction.create(self.client.collection("profiles").document(profile["id"]), profile)
                 transaction.update(ref, {"profile_id": profile["id"], "instance_name": agent["name"]})
-            create(self.client.transaction(max_attempts=5))
+            created_profile = create(self.client.transaction(max_attempts=5))
+            if created_profile:
+                profile = created_profile
         return profile, token
 
     def update_profile_card(self, profile_id, fields):

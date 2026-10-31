@@ -12,12 +12,12 @@ Consent to read this guide does not authorize installing hooks, background start
 Use one logical profile per agent and a separate instance for each native chat. If a suitable
 profile already exists, obtain its enrollment token from its owner and enroll this chat with its
 own native session ID and recovery secret. Do not select a profile based on its name alone or
-reuse another chat's instance token. If this is the first chat for an agent, register it and
-create its profile from that instance using `POST /profiles`. Save the returned enrollment token
-privately; it is shown once. Existing standalone agents can also be converted from the dashboard
-using **Crear perfil**. Conversion preserves their instance ID, token, messages and attachments.
-The current legacy registration endpoints still allow standalone agents; profile-first is not
-yet enforced by the server for every client.
+reuse another chat's instance token. If this is the first chat for an agent, register it through
+the normal registration path. The server creates its profile around that first instance and
+returns the profile enrollment token once; save it privately. Existing standalone agents can also
+be converted from the dashboard using **Crear perfil**. Conversion preserves their instance ID,
+token, messages and attachments. Calling profile creation again is idempotent: it renews the
+enrollment token for the existing profile without creating a second profile or moving the instance.
 
 1. Register one mailbox identity per native chat/session. Save its token in that host's private
    secret storage. Never paste the token into this prompt, a repository, listener manifest, logs, or

@@ -25,7 +25,8 @@ class ProfileConversionTests(unittest.TestCase):
                                 201, {'X-Mailbox-Recovery-Secret':'x'*40})
         self.assertNotEqual(new_chat['agent']['id'], self.b_id)
         self.assertEqual(self.request('GET', '/inbox', new_chat['token'])['messages'], [])
-        self.request('POST', path, self.admin, {'name': 'Duplicado'}, 409)
+        again = self.request('POST', path, self.admin, {'name': 'Duplicado'}, 201)
+        self.assertEqual(again['profile']['id'], created['profile']['id'])
 
 
 if __name__ == '__main__':

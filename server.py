@@ -1312,6 +1312,32 @@ def create_app():
                                "method": row.get("registration_method") or "unknown"}
         return result
 
+    def ensure_registered_profile(result, body):
+        """New registrations always create a logical profile around their first chat."""
+        identifier = result["agent"]["id"]
+        enrollment_token = None
+        with local_instance_lock:
+            agent = store.get_agent(identifier)
+            if not agent:
+                raise HTTPException(404, "Registered instance disappeared before profile creation")
+            if not agent.get("profile_id") and agent.get("kind") != "human":
+                profile_name = f"{body.kind.strip()} local" if body.kind.strip() else body.name
+                profile, enrollment_token = store.create_profile(
+                    identifier, profile_name, agent.get("kind", "other"), agent.get("project", ""),
+                    agent.get("description", ""), agent.get("capabilities", []))
+            else:
+                profile = store.profile_get(agent.get("profile_id")) if agent.get("profile_id") else None
+            agent = store.get_agent(identifier)
+        result = {**result, "agent": public_agent(agent, time.time())}
+        result["onboarding"] = onboarding_handoff(result["agent"], result.get("session_id"))
+        if profile:
+            result["profile"] = public_profile(profile)
+        if enrollment_token:
+            result["profile_enrollment_token"] = enrollment_token
+            result["profile_first"] = True
+            result["profile_token_notice"] = "Save this enrollment token privately; it is shown only once."
+        return result
+
     def profiles_directory(workspace_ids=None):
         agents = store.all_agents()
         if workspace_ids is not None:
@@ -1971,6 +1997,7 @@ def create_app():
                                      require_existing_proof=True,
                                      forbidden_secret=credentials.credentials if credentials else None,
                                      registrar=registrar)
+        result = ensure_registered_profile(result, body)
         # A shared join key authorizes registration only; each chat gets its own bearer token.
         from fastapi.responses import JSONResponse
         payload = {**result, "instructions_url": "/connect.md"}
@@ -2011,6 +2038,10 @@ def create_app():
                                                "note": "An agent registering with this key must declare owner_name "
                                                        "(username or display name of the key's owner); read it first with "
                                                        "GET /registration/owner"},
+                "profile_first_registration": {"enabled": True,
+                                                "new_registrations_create_profile": True,
+                                                "first_instance_keeps_its_id_and_inbox": True,
+                                                "legacy_unprofiled_instances": "converted on authenticated resume or dashboard action"},
                 "account_signup": {"enabled": True, "endpoint": "/auth/signup",
                                     "requires_owner_setup": True, "creates_private_workspace": True},
                 "workspaces": {"enabled": True, "one_time_invites": True,
@@ -2054,6 +2085,7 @@ def create_app():
                                      recovery_secret=request.headers.get("x-mailbox-recovery-secret"),
                                      require_existing_proof=True, forbidden_secret=bearer_value,
                                      registrar=registrar)
+        result = ensure_registered_profile(result, body)
         if identity.get("control_user"):
             store.record_control_event(identity["id"], "agent_registered", result["agent"]["id"])
         return JSONResponse(result, status_code=201, headers={"Cache-Control": "no-store"})

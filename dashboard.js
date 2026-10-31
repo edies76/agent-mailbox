@@ -199,8 +199,9 @@
       const capabilities=await api('/capabilities');if(capabilities.secure_registration?.version!==1)throw new Error('Actualiza el servidor antes de registrar esta instancia de forma segura.');
       const result=await api('/agents/secure','POST',{name:byId('new-agent-name').value,kind:byId('new-agent-kind').value,project:byId('new-agent-project').value,chat_path:byId('new-agent-chat-path').value,description:byId('new-agent-description').value,capabilities:byId('new-agent-caps').value.split(',').map(v=>v.trim()).filter(Boolean),session_key:sessionId},proofHeaders);
       const expected=savedToken||await expectedRecoveryToken(recoverySecret,result.agent.id);if(result.token!==expected)throw new Error('El servidor no confirmó la credencial privada.');
-      newAgentAccess={url:location.origin,mcp_url:`${location.origin}/mcp`,transport:'streamable-http',agent_id:result.agent.id,session_id:result.session_id,token:result.token,onboarding_url:'/agent-mailbox.md',onboarding_manifest_url:'/onboarding'};
+      newAgentAccess={url:location.origin,mcp_url:`${location.origin}/mcp`,transport:'streamable-http',agent_id:result.agent.id,session_id:result.session_id,profile_id:result.profile?.id||result.agent.profile_id||null,token:result.token,onboarding_url:'/agent-mailbox.md',onboarding_manifest_url:'/onboarding'};
       if(recoverySecret)newAgentAccess.recovery_secret=recoverySecret;
+      if(result.profile_enrollment_token)newAgentAccess.profile_enrollment_token=result.profile_enrollment_token;
       byId('new-agent-access').value=JSON.stringify(newAgentAccess,null,2);byId('new-agent-onboarding').value=`Servidor: ${location.origin}\nID de sesión: ${result.session_id}\nMCP (si permite credenciales por chat): ${location.origin}/mcp\n\n${result.onboarding.prompt}`;byId('new-agent-result').hidden=false;byId('new-agent-status').textContent=result.resumed?'Instancia recuperada con su acceso privado.':'Instancia creada con un ID de sesión privado.';await load();
     }catch(error){byId('new-agent-status').textContent=error.message;button.disabled=false;}
   });

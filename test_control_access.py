@@ -408,7 +408,8 @@ class AccountRegistrationKeyTests(unittest.TestCase):
         grouped = self.request("POST", "/profiles", agent["token"],
                                {"name": "ZCode", "kind": "zcode", "project": "lunar"}, 201)
         profiles = self.browser_request(browser, "/dashboard/profiles/data")
-        self.assertEqual(profiles["profiles"][0]["name"], "ZCode")
+        grouped_profile = next(item for item in profiles["profiles"] if item["id"] == grouped["profile"]["id"])
+        self.assertEqual(grouped_profile["name"], "ZCode")
         detail = self.browser_request(browser, f"/dashboard/profiles/{grouped['profile']['id']}")
         self.assertNotIn(agent["token"], json.dumps(detail))
         self.assertEqual(detail["instances"][0]["token_visibility"], "never-readable; rotate to issue a new one")
