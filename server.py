@@ -1698,19 +1698,36 @@ def create_app():
     def dashboard_profiles(identity: Identity):
         require_dashboard_identity(identity)
         workspace_id = identity_workspace(identity)
-        agents = [row for row in store.all_agents() if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id]
+        agents = [row for row in store.all_agents()
+                  if (row.get("workspace_id") or workspace_id) == workspace_id or not row.get("workspace_id")]
         if identity.get("role") == "workspace_member":
             agents = [row for row in agents if row.get("created_by_account_id") == identity.get("id")]
         profile_ids = {row.get("profile_id") for row in agents if row.get("profile_id")}
         now = time.time()
         result = []
         for profile in store.profiles_all():
-            if profile["id"] not in profile_ids or (profile.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id:
+            if profile["id"] not in profile_ids:
                 continue
             members = [row for row in agents if row.get("profile_id") == profile["id"]]
+            if not members:
+                continue
+            profile_workspace = profile.get("workspace_id")
+            if profile_workspace and profile_workspace != workspace_id and any(row.get("workspace_id") for row in members):
+                continue
             result.append({**public_profile(profile), "instances_count": len(members),
                            "online_count": sum(row.get("last_seen", 0) >= now - online_seconds for row in members),
                            "route": f"/dashboard/profile/{profile['id']}"})
+        unprofiled = [row for row in agents if not row.get("profile_id")]
+        if unprofiled:
+            result.append({"id": "__unprofiled__", "name": "Sin perfil", "kind": "unassigned",
+                           "project": "", "created_at": min(row.get("created_at", now) for row in unprofiled),
+                           "description": "Instancias antiguas o registradas sin perfil lógico. Puedes convertirlas desde el Control Room.",
+                           "capabilities": [], "workspace_id": workspace_id,
+                           "added_by": {"account_id": None, "username": "Legado / sin asignar", "method": "unprofiled"},
+                           "instances_count": len(unprofiled),
+                           "online_count": sum(row.get("last_seen", 0) >= now - online_seconds for row in unprofiled),
+                           "unprofiled": True, "instances": [public_agent(row, now) for row in unprofiled],
+                           "route": "/dashboard/profiles?group=unprofiled"})
         return {"profiles": sorted(result, key=lambda row: row.get("name", "").casefold())}
 
     @app.get("/dashboard/profiles/{profile_id}")
