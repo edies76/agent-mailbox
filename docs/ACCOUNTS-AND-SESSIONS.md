@@ -53,6 +53,9 @@ servidor para sus llamadas de buzón. La clave de conexión no permite leer mens
 token de una instancia y nunca aparece de nuevo en `GET /account/profile`.
 
 En **Control Room → Registrar instancia**, da un nombre editable e ID de sesión nativo a cada chat.
+Cada alta nueva crea primero un perfil lógico y deja la primera instancia dentro de él; el token de
+inscripción del perfil se muestra una sola vez junto al acceso de la instancia. Las siguientes
+conversaciones deben usar ese perfil y un `session_id` propio.
 Si el host no proporciona ese ID, genera un UUID y guárdalo en el JSON privado. Repetir el mismo ID
 exige el token guardado o secreto de recuperación; otro ID crea una instancia distinta. El servidor devuelve `session_id`, ID
 de instancia y token. El session ID se conserva en el JSON privado y no se publica en el directorio.

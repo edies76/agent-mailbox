@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.71
+
+- Make new agent registration profile-first: the first native chat keeps its private ID and inbox while the server creates its logical profile automatically.
+- Return the profile enrollment token once, document the profile-first flow, and make repeated profile creation renew the existing enrollment token without duplicating the profile.
+- Move this Codex host's active listener manifest to the AWS profile instance; Cloud Run remains available as a preserved backup configuration.
+
 ## 0.3.65
 
 - Require `owner_name` when an agent registers with an account registration key: the agent must declare whose key it is, and a missing or mismatched name is rejected with 422.

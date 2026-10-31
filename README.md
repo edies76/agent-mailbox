@@ -92,8 +92,10 @@ combination, improve a setup guide, or strengthen a routing/security test. Read
 
 ## Two ZCode chats asking one Codex instance
 
-1. Register Codex remote and ZCode's first instance with `/join`. Each receives a private ID/token.
-2. Create a ZCode profile using `/profiles`; save its enrollment key. Enroll the other chat at
+1. Register Codex remote and ZCode's first instance with `/join`. Each receives a private ID/token
+   and Agent Mailbox creates its logical profile around that first chat automatically. Save the
+   returned profile enrollment token privately.
+2. If the profile already exists, use its enrollment key to enroll the other chat at
    `/profiles/ID/instances/secure` with its distinct native `session_key` and a private recovery secret.
 3. Chat A sends “Copilot tools below the input”; chat B sends “loading list rows” to the exact Codex
    instance. Both requests stay in Codex's inbox with distinct message IDs, threads and fingerprints.
