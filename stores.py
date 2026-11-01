@@ -55,6 +55,9 @@ class SQLiteStore(CollaborationStore):
                 CREATE INDEX IF NOT EXISTS inbox_idx ON messages(to_agent_id, id);
                 CREATE INDEX IF NOT EXISTS unread_idx
                     ON messages(to_agent_id, id) WHERE acknowledged_at IS NULL;
+                CREATE TABLE IF NOT EXISTS message_trace_events (
+                    message_id INTEGER NOT NULL, event TEXT NOT NULL, reporter_id TEXT NOT NULL,
+                    created_at REAL NOT NULL, PRIMARY KEY(message_id, event, reporter_id));
                 CREATE INDEX IF NOT EXISTS online_idx ON agents(last_seen);
                 CREATE TABLE IF NOT EXISTS agent_api_keys (
                     id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -314,6 +317,7 @@ class SQLiteStore(CollaborationStore):
             return 0, 0
         placeholders = ",".join("?" for _ in message_ids)
         with self.database() as db:
+            db.execute(f"DELETE FROM message_trace_events WHERE message_id IN ({placeholders})", tuple(message_ids))
             unlinked = db.execute(
                 f"UPDATE messages SET in_reply_to = NULL WHERE in_reply_to IN ({placeholders})",
                 tuple(message_ids)).rowcount

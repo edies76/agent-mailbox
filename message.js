@@ -173,6 +173,9 @@
   async function load() {
     const data = await api(`/dashboard/messages/${messageId}`);
     const message = data.message;
+    const trace=byId('delivery-trace');trace.replaceChildren();
+    const traceLabels={stored:'Guardado en el servidor',listener_detected:'Listener informó que lo detectó',wake_queued:'Adaptador informó que lo encoló',wake_uncertain:'Resultado del adaptador incierto',wake_unconfigured:'No hay despertador configurado',wake_failed:'El adaptador informó un error',acknowledged:'Mensaje confirmado',replied:'Respuesta recibida'};
+    for(const event of (data.trace||[])){const item=el('li');item.append(el('time','',fmtTime(event.at)),el('strong','',` · ${traceLabels[event.event]||event.event}`));trace.append(item);}
     const names = new Map();
     if (data.participants.from) names.set(data.participants.from.id, data.participants.from.instance_name || data.participants.from.name);
     if (data.participants.to) names.set(data.participants.to.id, data.participants.to.instance_name || data.participants.to.name);

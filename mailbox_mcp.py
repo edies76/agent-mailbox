@@ -303,6 +303,54 @@ def mailbox_context_items() -> dict:
 
 
 @mailbox_tool()
+def mailbox_context_search(q: str) -> dict:
+    """Search titles, paths and the first 64 KiB of text resources in this workspace."""
+    return api("/context/search", query={"q": q})
+
+
+@mailbox_tool()
+def mailbox_tasks() -> dict:
+    """List workspace tasks and their dependencies; each chat retains a private inbox."""
+    return api("/context/tasks")
+
+
+@mailbox_tool()
+def mailbox_task_get(task_id: str) -> dict:
+    """Read a task and its evidence-bearing event history."""
+    return api(f"/context/tasks/{context_item_id(task_id)}")
+
+
+@mailbox_tool()
+def mailbox_task_create(title: str, description: str = "", acceptance: str = "",
+                        assignee_id: str = "", dependencies: list[str] | None = None) -> dict:
+    """Create a task for this workspace; assignee is an exact instance ID."""
+    return api("/context/tasks", "POST", {"title": title, "description": description,
+               "acceptance": acceptance, "assignee_id": assignee_id, "dependencies": dependencies or []})
+
+
+@mailbox_tool()
+def mailbox_task_update(task_id: str, expected_revision: int, status: str,
+                        evidence: str = "", note: str = "", artifacts: list[dict] | None = None,
+                        commit: str = "", checks: str = "") -> dict:
+    """Record a status and evidence. Refresh on conflict; completion requires evidence."""
+    return api(f"/context/tasks/{context_item_id(task_id)}/events", "POST",
+               {"expected_revision": expected_revision, "status": status, "evidence": evidence, "note": note,
+                "artifacts": artifacts or [], "commit": commit, "checks": checks})
+
+
+@mailbox_tool()
+def mailbox_context_sources(item_id: str) -> dict:
+    """Inspect linked workspace sources and whether their revisions have changed."""
+    return api(f"/context/items/{context_item_id(item_id)}/sources")
+
+
+@mailbox_tool()
+def mailbox_context_set_sources(item_id: str, source_item_ids: list[str]) -> dict:
+    """Record current source revisions for a workspace item, replacing its existing links."""
+    return api(f"/context/items/{context_item_id(item_id)}/sources", "PUT", {"source_item_ids": source_item_ids})
+
+
+@mailbox_tool()
 def mailbox_context_get(item_id: str, revision: int) -> dict:
     """Read one exact shared artifact revision; data is returned as base64."""
     if revision < 1:
@@ -348,9 +396,16 @@ def mailbox_context_claims() -> dict:
 
 
 @mailbox_tool()
-def mailbox_context_claim(path: str, ttl_seconds: int = 900) -> dict:
+def mailbox_context_claim(path: str, ttl_seconds: int = 900, intent: str = "", branch: str = "") -> dict:
     """Reserve a project-relative path temporarily to coordinate with other agents."""
-    return api("/context/claims", "POST", {"path": path, "ttl_seconds": ttl_seconds})
+    return api("/context/claims", "POST", {"path": path, "ttl_seconds": ttl_seconds,
+               "intent": intent, "branch": branch})
+
+
+@mailbox_tool()
+def mailbox_context_radar(path: str) -> dict:
+    """Check active overlapping path reservations before editing; warnings do not lock files."""
+    return api("/context/radar", query={"path": path})
 
 
 @mailbox_tool()

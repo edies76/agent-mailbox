@@ -43,6 +43,17 @@ class ListenerPresenceTests(unittest.TestCase):
 
 
 class WakeReportingTests(unittest.TestCase):
+    def test_trace_failure_does_not_stop_wake_callback(self):
+        message = {'id': 42, 'from_agent_id': 'sender', 'delivery_mode': 'wake'}
+        output = StringIO()
+        with patch('mailbox_watch.request_json', side_effect=TimeoutError('trace unavailable')) as trace, \
+             patch('mailbox_watch.subprocess.run', return_value=SimpleNamespace(returncode=0)) as callback, \
+             patch('sys.stdout', output):
+            mailbox_watch.process_message(message, 'token', {'url':'https://example.test', 'on_wake_command':['wake']})
+        self.assertEqual(trace.call_count, 2)
+        callback.assert_called_once()
+        self.assertIn('mailbox_wake_queued', output.getvalue())
+
     def test_uncertain_callback_never_claims_queued(self):
         message = {'id': 42, 'from_agent_id': 'sender', 'delivery_mode': 'wake'}
         output = StringIO()

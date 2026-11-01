@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.77
+
+- Add workspace tasks with dependencies, revision-checked status changes, evidence and links to exact artifact versions through HTTP, MCP and Context Hub.
+- Add workspace context search, source revision freshness indicators and advisory path-overlap radar with declared intent and branch.
+- Add best-effort, instance-bound listener trace reports to the message detail view; queue reports do not assert that the host opened a turn.
+
 ## 0.3.75
 
 - Add a guided JSONL handoff composer in Context Hub; server records actor and timestamp for each entry and protects appends with revision checks.

@@ -40,12 +40,45 @@ class ClaimCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     path: str = Field(min_length=1, max_length=400)
     ttl_seconds: int = Field(default=900, ge=60, le=3600)
+    intent: str = Field(default='', max_length=500)
+    branch: str = Field(default='', max_length=200)
 
 
 class JsonlAppend(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: int = Field(ge=1)
     record: dict = Field(min_length=1)
+
+
+class TaskCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(default='', max_length=8000)
+    assignee_id: str = Field(default='', max_length=100)
+    acceptance: str = Field(default='', max_length=8000)
+    dependencies: list[str] = Field(default_factory=list, max_length=50)
+
+
+class ArtifactReference(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    item_id: str = Field(min_length=1, max_length=100)
+    revision: int = Field(ge=1)
+
+
+class TaskUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    expected_revision: int = Field(ge=1)
+    status: str = Field(pattern='^(queued|in_progress|blocked|review|done)$')
+    note: str = Field(default='', max_length=8000)
+    evidence: str = Field(default='', max_length=16000)
+    artifacts: list[ArtifactReference] = Field(default_factory=list, max_length=30)
+    commit: str = Field(default='', max_length=200)
+    checks: str = Field(default='', max_length=8000)
+
+
+class ContextSources(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    source_item_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
 def clean_path(path):
@@ -91,6 +124,26 @@ def initialize_context(store):
             workspace_id TEXT NOT NULL, path TEXT NOT NULL, path_key TEXT NOT NULL,
             owner_id TEXT NOT NULL, expires_at REAL NOT NULL,
             PRIMARY KEY(workspace_id, path_key));
+        CREATE TABLE IF NOT EXISTS context_claim_details (
+            workspace_id TEXT NOT NULL, path_key TEXT NOT NULL, intent TEXT NOT NULL,
+            branch TEXT NOT NULL, PRIMARY KEY(workspace_id, path_key));
+        CREATE TABLE IF NOT EXISTS context_tasks (
+            id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, title TEXT NOT NULL,
+            description TEXT NOT NULL, acceptance TEXT NOT NULL, assignee_id TEXT NOT NULL,
+            status TEXT NOT NULL, dependencies_json TEXT NOT NULL, revision INTEGER NOT NULL,
+            created_by TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL);
+        CREATE INDEX IF NOT EXISTS context_tasks_workspace ON context_tasks(workspace_id, updated_at);
+        CREATE TABLE IF NOT EXISTS context_task_events (
+            id TEXT PRIMARY KEY, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+            actor_id TEXT NOT NULL, status TEXT NOT NULL, note TEXT NOT NULL,
+            evidence TEXT NOT NULL, created_at REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS context_task_deliveries (
+            event_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, artifacts_json TEXT NOT NULL,
+            git_commit TEXT NOT NULL, checks TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS context_sources (
+            item_id TEXT NOT NULL, source_item_id TEXT NOT NULL,
+            workspace_id TEXT NOT NULL, source_revision INTEGER NOT NULL,
+            PRIMARY KEY(item_id, source_item_id));
         ''')
 
 
@@ -130,12 +183,144 @@ def register_context_routes(app, store, authenticate, identity_workspace):
         current = version_row(db, item_id, row['revision'])
         return meta(row) | {'content_type': current['content_type'], 'size_bytes': current['size_bytes'], 'sha256': current['sha256']}
 
+    def task_row(db, workspace, task_id):
+        row = db.execute('SELECT * FROM context_tasks WHERE workspace_id=? AND id=?', (workspace, task_id)).fetchone()
+        if not row:
+            raise HTTPException(404, 'Task not found')
+        task = dict(row)
+        task['dependencies'] = json.loads(task.pop('dependencies_json'))
+        return task
+
+    @app.get('/context/tasks')
+    def list_tasks(identity=Depends(authenticate)):
+        workspace, _ = scope(identity)
+        with store.database() as db:
+            rows = db.execute('SELECT id FROM context_tasks WHERE workspace_id=? ORDER BY updated_at DESC LIMIT 500', (workspace,)).fetchall()
+            return {'tasks': [task_row(db, workspace, row['id']) for row in rows]}
+
+    @app.post('/context/tasks', status_code=201)
+    def create_task(body: TaskCreate, identity=Depends(authenticate)):
+        workspace, actor = scope(identity, True)
+        now, task_id = time.time(), str(uuid4())
+        dependencies = list(dict.fromkeys(body.dependencies))
+        with store.database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            for dependency in dependencies:
+                task_row(db, workspace, dependency)
+            if body.assignee_id:
+                assignee = store.get_agent(body.assignee_id)
+                if not assignee or (assignee.get('workspace_id') or 'workspace-default') != workspace:
+                    raise HTTPException(422, 'Assignee must be an instance in this workspace')
+            db.execute('INSERT INTO context_tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (task_id, workspace, body.title, body.description, body.acceptance, body.assignee_id,
+                        'queued', json.dumps(dependencies), 1, actor, now, now))
+            return {'task': task_row(db, workspace, task_id)}
+
+    @app.get('/context/tasks/{task_id}')
+    def get_task(task_id: str, identity=Depends(authenticate)):
+        workspace, _ = scope(identity)
+        with store.database() as db:
+            task = task_row(db, workspace, task_id)
+            rows = db.execute('''SELECT e.id,e.actor_id,e.status,e.note,e.evidence,e.created_at,
+                d.artifacts_json,d.git_commit,d.checks FROM context_task_events e
+                LEFT JOIN context_task_deliveries d ON e.id=d.event_id AND e.workspace_id=d.workspace_id
+                WHERE e.workspace_id=? AND e.task_id=? ORDER BY e.created_at,e.id''', (workspace, task_id)).fetchall()
+            events = []
+            for row in rows:
+                event = dict(row)
+                event['artifacts'] = json.loads(event.pop('artifacts_json') or '[]')
+                event['commit'] = event.pop('git_commit') or ''
+                event['checks'] = event.get('checks') or ''
+                events.append(event)
+            return {'task': task, 'events': events}
+
+    @app.post('/context/tasks/{task_id}/events', status_code=201)
+    def update_task(task_id: str, body: TaskUpdate, identity=Depends(authenticate)):
+        workspace, actor = scope(identity, True)
+        now = time.time()
+        with store.database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            task = task_row(db, workspace, task_id)
+            if task['revision'] != body.expected_revision:
+                raise HTTPException(409, 'Task changed; reload before updating')
+            if body.status in ('in_progress', 'review', 'done'):
+                if any(task_row(db, workspace, dep)['status'] != 'done' for dep in task['dependencies']):
+                    raise HTTPException(409, 'Complete dependencies before starting this task')
+            if body.status in ('review', 'done') and not body.evidence:
+                raise HTTPException(422, 'Evidence is required for review or completion')
+            artifacts = []
+            for reference in body.artifacts:
+                item = item_row(db, workspace, reference.item_id)
+                version = version_row(db, reference.item_id, reference.revision)
+                if not version:
+                    raise HTTPException(404, 'Artifact version not found')
+                artifacts.append({'item_id': item['id'], 'title': item['title'], 'path': item['path'],
+                                  'revision': reference.revision, 'sha256': version['sha256']})
+            event_id = str(uuid4())
+            db.execute('INSERT INTO context_task_events VALUES (?,?,?,?,?,?,?,?)',
+                       (event_id, task_id, workspace, actor, body.status, body.note, body.evidence, now))
+            db.execute('INSERT INTO context_task_deliveries VALUES (?,?,?,?,?)',
+                       (event_id, workspace, json.dumps(artifacts, ensure_ascii=False), body.commit, body.checks))
+            db.execute('UPDATE context_tasks SET status=?,revision=revision+1,updated_at=? WHERE workspace_id=? AND id=?',
+                       (body.status, now, workspace, task_id))
+            return {'task': task_row(db, workspace, task_id)}
+
     @app.get('/context/items')
     def list_items(identity=Depends(authenticate)):
         workspace, _ = scope(identity)
         with store.database() as db:
             ids = db.execute('SELECT id FROM context_items WHERE workspace_id=? ORDER BY updated_at DESC LIMIT ?', (workspace, MAX_ITEMS)).fetchall()
             return {'items': [item_row(db, workspace, row['id']) for row in ids]}
+
+    @app.get('/context/search')
+    def search_context(q: str = Query(min_length=2, max_length=120), identity=Depends(authenticate)):
+        workspace, _ = scope(identity)
+        needle = q.strip().casefold()
+        if len(needle) < 2:
+            raise HTTPException(422, 'Search requires at least two characters')
+        with store.database() as db:
+            rows = db.execute('''SELECT i.id,i.title,i.path,i.revision,v.content_type,v.size_bytes,
+                substr(v.data,1,65536) AS prefix FROM context_items i JOIN context_versions v
+                ON i.id=v.item_id AND i.revision=v.revision WHERE i.workspace_id=?
+                ORDER BY i.updated_at DESC LIMIT ?''', (workspace, MAX_ITEMS)).fetchall()
+            hits, partial = [], False
+            for row in rows:
+                content_type = row['content_type'].lower()
+                text_like = content_type.startswith('text/') or content_type in (
+                    'application/json', 'application/x-ndjson', 'application/xml')
+                content = bytes(row['prefix']).decode('utf-8', errors='replace') if text_like else ''
+                partial = partial or bool(text_like and row['size_bytes'] > 65536)
+                if needle in (row['title'] + ' ' + row['path']).casefold() or needle in content.casefold():
+                    hits.append({'id': row['id'], 'title': row['title'], 'path': row['path'], 'revision': row['revision']})
+            return {'items': hits[:100], 'truncated': len(hits) > 100, 'partial_text': partial,
+                    'text_bytes_per_item': 65536}
+
+    @app.get('/context/items/{item_id}/sources')
+    def get_sources(item_id: str, identity=Depends(authenticate)):
+        workspace, _ = scope(identity)
+        with store.database() as db:
+            item_row(db, workspace, item_id)
+            rows = db.execute('''SELECT s.source_item_id,s.source_revision,i.title,i.path,i.revision
+                FROM context_sources s JOIN context_items i ON i.id=s.source_item_id AND i.workspace_id=s.workspace_id
+                WHERE s.workspace_id=? AND s.item_id=? ORDER BY i.title''', (workspace, item_id)).fetchall()
+            sources = [dict(row) | {'stale': row['source_revision'] != row['revision']} for row in rows]
+            return {'sources': sources, 'stale': any(source['stale'] for source in sources)}
+
+    @app.put('/context/items/{item_id}/sources')
+    def set_sources(item_id: str, body: ContextSources, identity=Depends(authenticate)):
+        workspace, _ = scope(identity, True)
+        with store.database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            item_row(db, workspace, item_id)
+            sources = []
+            for source_id in dict.fromkeys(body.source_item_ids):
+                if source_id == item_id:
+                    raise HTTPException(422, 'An item cannot cite itself')
+                sources.append(item_row(db, workspace, source_id))
+            db.execute('DELETE FROM context_sources WHERE workspace_id=? AND item_id=?', (workspace, item_id))
+            db.executemany('INSERT INTO context_sources VALUES (?,?,?,?)',
+                           [(item_id, source['id'], workspace, source['revision']) for source in sources])
+        return get_sources(item_id, identity)
 
     @app.post('/context/items', status_code=201)
     def create_item(body: ItemCreate, identity=Depends(authenticate)):
@@ -244,8 +429,31 @@ def register_context_routes(app, store, authenticate, identity_workspace):
     def list_claims(identity=Depends(authenticate)):
         workspace, _ = scope(identity)
         with store.database() as db:
-            rows = db.execute('SELECT path,owner_id,expires_at FROM context_claims WHERE workspace_id=? AND expires_at>? ORDER BY path', (workspace, time.time())).fetchall()
+            rows = db.execute('''SELECT c.path,c.owner_id,c.expires_at,COALESCE(d.intent,'') AS intent,
+                COALESCE(d.branch,'') AS branch FROM context_claims c LEFT JOIN context_claim_details d
+                ON c.workspace_id=d.workspace_id AND c.path_key=d.path_key
+                WHERE c.workspace_id=? AND c.expires_at>? ORDER BY c.path''', (workspace, time.time())).fetchall()
             return {'claims': [meta(row) for row in rows]}
+
+    @app.get('/context/radar')
+    def check_radar(path: str = Query(min_length=1, max_length=400), identity=Depends(authenticate)):
+        workspace, actor = scope(identity)
+        key = clean_path(path).casefold()
+        with store.database() as db:
+            rows = db.execute('''SELECT c.path,c.path_key,c.owner_id,c.expires_at,
+                COALESCE(d.intent,'') AS intent,COALESCE(d.branch,'') AS branch
+                FROM context_claims c LEFT JOIN context_claim_details d
+                ON c.workspace_id=d.workspace_id AND c.path_key=d.path_key
+                WHERE c.workspace_id=? AND c.expires_at>?''', (workspace, time.time())).fetchall()
+            overlaps = []
+            for row in rows:
+                existing = row['path_key']
+                if key == existing or key.startswith(existing + '/') or existing.startswith(key + '/'):
+                    item = dict(row)
+                    del item['path_key']
+                    item['own'] = item['owner_id'] == actor
+                    overlaps.append(item)
+            return {'path': path, 'overlaps': overlaps, 'advisory': True}
 
     @app.post('/context/claims', status_code=201)
     def create_claim(body: ClaimCreate, identity=Depends(authenticate)):
@@ -260,7 +468,8 @@ def register_context_routes(app, store, authenticate, identity_workspace):
                 if (key == row['path_key'] or key.startswith(row['path_key'] + '/') or row['path_key'].startswith(key + '/')) and row['owner_id'] != actor:
                     raise HTTPException(409, 'Path is already claimed by another participant')
             db.execute('INSERT INTO context_claims VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,path_key) DO UPDATE SET path=excluded.path,owner_id=excluded.owner_id,expires_at=excluded.expires_at', (workspace, path, key, actor, now + body.ttl_seconds))
-            return {'claim': {'path': path, 'owner_id': actor, 'expires_at': now + body.ttl_seconds}}
+            db.execute('INSERT INTO context_claim_details VALUES (?,?,?,?) ON CONFLICT(workspace_id,path_key) DO UPDATE SET intent=excluded.intent,branch=excluded.branch', (workspace, key, body.intent, body.branch))
+            return {'claim': {'path': path, 'owner_id': actor, 'expires_at': now + body.ttl_seconds, 'intent': body.intent, 'branch': body.branch}}
 
     @app.delete('/context/claims')
     def delete_claim(path: str = Query(min_length=1, max_length=400), identity=Depends(authenticate)):
@@ -270,6 +479,7 @@ def register_context_routes(app, store, authenticate, identity_workspace):
             cursor = db.execute('DELETE FROM context_claims WHERE workspace_id=? AND path_key=? AND owner_id=?', (workspace, key, actor))
             if not cursor.rowcount:
                 raise HTTPException(404, 'Your claim was not found')
+            db.execute('DELETE FROM context_claim_details WHERE workspace_id=? AND path_key=?', (workspace, key))
         return {'released': True}
 
     def dispatch(path, method, payload, query, identifier):
@@ -280,14 +490,31 @@ def register_context_routes(app, store, authenticate, identity_workspace):
             return list_items(identity)
         if path == '/context/items' and method == 'POST':
             return create_item(ItemCreate(**payload), identity)
+        if path == '/context/tasks' and method == 'GET':
+            return list_tasks(identity)
+        if path == '/context/search' and method == 'GET':
+            return search_context(query.get('q', ''), identity)
+        if path == '/context/tasks' and method == 'POST':
+            return create_task(TaskCreate(**payload), identity)
+        if len(parts) == 3 and parts[:2] == ['context', 'tasks'] and method == 'GET':
+            return get_task(parts[2], identity)
+        if len(parts) == 4 and parts[:2] == ['context', 'tasks'] and parts[3] == 'events' and method == 'POST':
+            return update_task(parts[2], TaskUpdate(**payload), identity)
         if path == '/context/claims' and method == 'GET':
             return list_claims(identity)
+        if path == '/context/radar' and method == 'GET':
+            return check_radar(query.get('path', ''), identity)
         if path == '/context/claims' and method == 'POST':
             return create_claim(ClaimCreate(**payload), identity)
         if path == '/context/claims' and method == 'DELETE':
             return delete_claim(query.get('path', ''), identity)
         if len(parts) >= 3 and parts[:2] == ['context', 'items']:
             item_id = parts[2]
+            if len(parts) == 4 and parts[3] == 'sources':
+                if method == 'GET':
+                    return get_sources(item_id, identity)
+                if method == 'PUT':
+                    return set_sources(item_id, ContextSources(**payload), identity)
             if len(parts) == 3 and method == 'GET':
                 return get_item(item_id, identity)
             if len(parts) == 4 and parts[3] == 'versions':

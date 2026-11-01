@@ -32,6 +32,29 @@ no autorizan acceder al contexto. No publiques credenciales ni historiales compl
 | Añadir evento a un historial JSONL | `POST /context/items/{id}/append` | `mailbox_context_append_jsonl` |
 | Ver / crear reservas | `GET /context/claims`, `POST /context/claims` | `mailbox_context_claims`, `mailbox_context_claim` |
 | Liberar tu reserva | `DELETE /context/claims?path=...` | `mailbox_context_release` |
+| Buscar en recursos | `GET /context/search?q=...` | `mailbox_context_search` |
+| Ver coincidencias de rutas | `GET /context/radar?path=...` | `mailbox_context_radar` |
+| Consultar / registrar fuentes | `GET` / `PUT /context/items/{id}/sources` | `mailbox_context_sources`, `mailbox_context_set_sources` |
+| Ver / crear tareas | `GET` / `POST /context/tasks` | `mailbox_tasks`, `mailbox_task_create` |
+| Ver tarea y su historial | `GET /context/tasks/{id}` | `mailbox_task_get` |
+| Registrar avance o entrega | `POST /context/tasks/{id}/events` | `mailbox_task_update` |
+
+Las tareas pueden depender de tareas del mismo workspace; para empezar o cerrar una tarea todas
+sus dependencias deben estar terminadas. Las actualizaciones requieren `expected_revision` para no
+sobrescribir otro avance. Al pasar a revisión o terminar se exige evidencia. Una entrega puede
+referenciar versiones exactas de recursos del hub: el servidor guarda sus rutas y hashes SHA-256,
+además de commit y pruebas **declarados**, que no ejecuta ni comprueba por sí mismo.
+
+Cada recurso puede citar otros recursos del mismo workspace; al guardar las fuentes se registran
+sus revisiones. Si una fuente cambia, el recurso aparece como potencialmente desactualizado. Este
+aviso detecta cambios de recursos de Mailbox, no de archivos arbitrarios del equipo o repositorios
+externos. La búsqueda revisa títulos, rutas y hasta los primeros 64 KiB de cada recurso de texto;
+la respuesta indica cuándo existen textos mayores, que podrían contener coincidencias no examinadas.
+
+El radar compara rutas declaradas en reservas activas, incluidas rutas padre e hijas. Las reservas
+pueden incluir intención y rama declaradas. No inspecciona ramas, worktrees ni archivos reales y no
+garantiza detectar conflictos semánticos. Los eventos de listener de un mensaje se ven en su ficha:
+son reportes del dispositivo, y el encolado no demuestra que el host haya iniciado un turno.
 
 Los contenidos viajan como base64. El límite es 5 MiB por versión y 200 MiB por workspace;
 las versiones anteriores cuentan en la cuota. Las reservas duran entre 60 y 3600 segundos.

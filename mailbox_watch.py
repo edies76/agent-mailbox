@@ -112,6 +112,18 @@ def process_message(message, token, config):
         wake_command = wake_command or notify_command
         notify_command = None
 
+    def report_trace(event):
+        # Observability is best-effort and must never prevent actual message delivery.
+        if not config.get('url'):
+            return
+        try:
+            request_json(f"{config['url'].rstrip('/')}/messages/{message['id']}/listener-event", token,
+                         method="POST", payload={"event": event}, timeout=2)
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+            pass
+
+    report_trace("listener_detected")
+
     def invoke(command, option_name, uncertain_ok=False):
         if not isinstance(command, list) or not command or not all(isinstance(part, str) for part in command):
             raise ValueError(f"{option_name} debe ser una lista de argumentos de texto.")
@@ -129,10 +141,16 @@ def process_message(message, token, config):
             request_json(f"{config['url'].rstrip('/')}/inbox/{message['id']}/ack", token,
                          method="POST", payload={})
     if is_wake and wake_command:
-        accepted = invoke(wake_command, "on_wake_command", uncertain_ok=True)
+        try:
+            accepted = invoke(wake_command, "on_wake_command", uncertain_ok=True)
+        except (RuntimeError, OSError, ValueError):
+            report_trace("wake_failed")
+            raise
+        report_trace("wake_queued" if accepted else "wake_uncertain")
         print(json.dumps({"type": "mailbox_wake_queued" if accepted else "mailbox_wake_uncertain", "message_id": message["id"],
                           "wake_backlog": bool(message.get("wake_backlog", False))}), flush=True)
     elif is_wake:
+        report_trace("wake_unconfigured")
         print(json.dumps({"type": "mailbox_wake_unconfigured", "message_id": message["id"]}), flush=True)
     elif not notify_command:
         print(json.dumps({"type": "mailbox_message", "message": message}, ensure_ascii=False), flush=True)

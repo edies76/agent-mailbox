@@ -51,6 +51,11 @@ class PasswordKdfBusy(Exception):
     pass
 
 
+class ListenerTraceEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event: Literal["listener_detected", "wake_queued", "wake_uncertain", "wake_unconfigured", "wake_failed"]
+
+
 def password_hash(password):
     if not PASSWORD_KDF_SLOTS.acquire(timeout=2):
         raise PasswordKdfBusy
@@ -1567,6 +1572,21 @@ def create_app():
                  "delivery_mode", "wake_backlog", "status", "subject", "created_at", "acknowledged_at",
                  "attachment_count")}
 
+    @app.post('/messages/{message_id}/listener-event')
+    def record_listener_event(message_id: int, body: ListenerTraceEvent, identity: Identity):
+        identifier = agent_id(identity)
+        message = store.get_message(identifier, message_id)
+        if message['to_agent_id'] != identifier:
+            raise HTTPException(404, 'Message not found in your inbox')
+        if body.event.startswith('wake_') and message.get('delivery_mode') != 'wake':
+            raise HTTPException(422, 'Wake events require a wake message')
+        if not hasattr(store, 'database'):
+            raise HTTPException(501, 'Listener traces are available only on SQLite')
+        with store.database() as db:
+            db.execute('INSERT OR IGNORE INTO message_trace_events VALUES (?,?,?,?)',
+                       (message_id, body.event, identifier, time.time()))
+        return {'recorded': True, 'event': body.event, 'source': 'listener_report'}
+
     @app.get("/dashboard/messages/{message_id}")
     def dashboard_message(message_id: int, identity: Identity):
         require_dashboard_identity(identity)
@@ -1583,6 +1603,15 @@ def create_app():
              "has_files", "request_fingerprint")}
         thread = store.dashboard_thread(row.get("thread_id") or message_id)
         replies = [entry for entry in thread if entry.get("in_reply_to") == message_id]
+        trace = [{"event": "stored", "at": row.get("created_at"), "source": "server"}]
+        if hasattr(store, 'database'):
+            with store.database() as db:
+                trace.extend({"event": event['event'], "at": event['created_at'], "source": "listener_report"}
+                             for event in db.execute('SELECT event,created_at FROM message_trace_events WHERE message_id=? ORDER BY created_at', (message_id,)).fetchall())
+        if row.get('acknowledged_at'):
+            trace.append({"event": "acknowledged", "at": row['acknowledged_at'], "source": "server"})
+        trace.extend({"event": "replied", "at": reply.get('created_at'), "source": "server", "reply_id": reply['id']} for reply in replies)
+        trace.sort(key=lambda event: event['at'] or 0)
         participants = {}
         for role, key in (("from", "from_agent_id"), ("to", "to_agent_id")):
             agent = store.get_agent(row.get(key))
@@ -1590,7 +1619,7 @@ def create_app():
         return {"message": visible, "wake": message_wake_state(row, replies), "participants": participants,
                 "thread": [message_thread_entry(entry) for entry in thread], "thread_count": len(thread),
                 "replies": [message_thread_entry(entry) for entry in replies],
-                "content_visible": can_read_content, "checked_at": now}
+                "content_visible": can_read_content, "trace": trace, "checked_at": now}
 
     @app.get("/dashboard/data")
     def dashboard_data(identity: Identity):

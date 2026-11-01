@@ -24,6 +24,60 @@ class ContextHubTests(unittest.TestCase):
     invite = workspace_tests.WorkspaceTests.invite
     create_workspace = workspace_tests.WorkspaceTests.create_workspace
 
+    def test_tasks_dependencies_evidence_and_workspace_isolation(self):
+        first = self.request('POST', '/context/tasks', self.a_token,
+                             {'title': 'Investigate', 'assignee_id': self.a_id}, 201)['task']
+        second = self.request('POST', '/context/tasks', self.a_token,
+                              {'title': 'Implement', 'dependencies': [first['id']]}, 201)['task']
+        self.request('POST', f"/context/tasks/{second['id']}/events", self.b_token,
+                     {'expected_revision': 1, 'status': 'in_progress'}, 409)
+        self.request('POST', f"/context/tasks/{first['id']}/events", self.a_token,
+                     {'expected_revision': 1, 'status': 'done'}, 422)
+        artifact = self.request('POST', '/context/items', self.a_token,
+                                {'title':'Evidence', 'path':'work/evidence.txt', 'data_base64':content(b'evidence')}, 201)['item']
+        self.request('POST', f"/context/tasks/{first['id']}/events", self.a_token,
+                     {'expected_revision': 1, 'status': 'done', 'evidence': 'Inspected APK resources',
+                      'artifacts':[{'item_id':artifact['id'],'revision':1}], 'commit':'abc123', 'checks':'Tests passed'}, 201)
+        self.request('POST', f"/context/tasks/{second['id']}/events", self.b_token,
+                     {'expected_revision': 1, 'status': 'in_progress'}, 201)
+        self.request('POST', f"/context/tasks/{second['id']}/events", self.b_token,
+                     {'expected_revision': 1, 'status': 'blocked'}, 409)
+        detail = self.request('GET', f"/context/tasks/{first['id']}", self.b_token)
+        self.assertEqual(detail['events'][0]['evidence'], 'Inspected APK resources')
+        self.assertEqual(detail['events'][0]['artifacts'][0]['sha256'], artifact['sha256'])
+        self.assertEqual(detail['events'][0]['commit'], 'abc123')
+        friend = self.create_workspace(self.invite(), 'Task isolation')
+        friend_agent = friend['create_agent']('Task friend')
+        self.request('GET', f"/context/tasks/{first['id']}", friend_agent['token'], expected=404)
+        self.assertEqual(self.request('GET', '/context/tasks', friend_agent['token'])['tasks'], [])
+        self.request('POST', '/context/tasks', friend_agent['token'],
+                     {'title': 'Foreign dependency', 'dependencies': [first['id']]}, 404)
+
+    def test_context_sources_report_stale_after_source_changes(self):
+        source = self.request('POST', '/context/items', self.a_token,
+                              {'title':'Source', 'path':'source.md', 'data_base64':content(b'v1')}, 201)['item']
+        note = self.request('POST', '/context/items', self.a_token,
+                            {'title':'Note', 'path':'note.md', 'data_base64':content(b'derived')}, 201)['item']
+        url = f"/context/items/{note['id']}/sources"
+        result = self.request('PUT', url, self.a_token, {'source_item_ids':[source['id']]})
+        self.assertFalse(result['stale'])
+        self.request('POST', f"/context/items/{source['id']}/versions", self.b_token,
+                     {'expected_revision':1, 'data_base64':content(b'v2')}, 201)
+        self.assertTrue(self.request('GET', url, self.a_token)['sources'][0]['stale'])
+        self.request('PUT', url, self.a_token, {'source_item_ids':[note['id']]}, 422)
+
+    def test_search_uses_current_text_and_observes_workspace_scope(self):
+        item = self.request('POST', '/context/items', self.a_token,
+                            {'title':'Find me', 'path':'search.txt', 'data_base64':content(b'rare keyword')}, 201)['item']
+        hits = self.request('GET', '/context/search?q=keyword', self.b_token)['items']
+        self.assertEqual([entry['id'] for entry in hits], [item['id']])
+        self.request('POST', f"/context/items/{item['id']}/versions", self.a_token,
+                     {'expected_revision':1, 'data_base64':content(b'different')}, 201)
+        self.assertEqual(self.request('GET', '/context/search?q=keyword', self.a_token)['items'], [])
+        friend = self.create_workspace(self.invite(), 'Search isolation')
+        token = friend['create_agent']('Search friend')['token']
+        self.assertEqual(self.request('GET', '/context/search?q=different', token)['items'], [])
+
     def test_workspace_isolation_versions_and_stale_write(self):
         created = self.request('POST', '/context/items', self.a_token,
                                {'title':'Plan', 'path':'docs/plan.md', 'data_base64':content(b'first')}, 201)
@@ -43,7 +97,14 @@ class ContextHubTests(unittest.TestCase):
         self.assertEqual(friend['get']('/context/items')['items'], [])
 
     def test_claims_are_exclusive_including_parent_and_case(self):
-        self.request('POST','/context/claims',self.a_token,{'path':'src/Foo','ttl_seconds':60},201)
+        self.request('POST','/context/claims',self.a_token,{'path':'src/Foo','ttl_seconds':60,
+                     'intent':'Change input tools','branch':'feature/input'},201)
+        overlap = self.request('GET','/context/radar?path=src/foo/file.py',self.b_token)
+        self.assertTrue(overlap['advisory'])
+        self.assertEqual(overlap['overlaps'][0]['intent'],'Change input tools')
+        self.assertEqual(overlap['overlaps'][0]['branch'],'feature/input')
+        self.assertFalse(overlap['overlaps'][0]['own'])
+        self.assertEqual(self.request('GET','/context/radar?path=other',self.b_token)['overlaps'], [])
         self.request('POST','/context/claims',self.b_token,{'path':'src/foo/file.py','ttl_seconds':60},409)
         self.request('DELETE','/context/claims?path=src/Foo',self.b_token,expected=404)
         self.request('DELETE','/context/claims?path=src/Foo',self.a_token)
@@ -119,6 +180,15 @@ class ContextHubTests(unittest.TestCase):
         friend = self.create_workspace(self.invite(), 'MCP isolated')
         token = friend['create_agent']('MCP foreign')['token']
         denied = call(token, 'mailbox_context_get', {'item_id':item_id,'revision':1})
+        self.assertTrue(denied.get('isError'), denied)
+        task = call(self.a_token, 'mailbox_task_create', {'title':'MCP task'})
+        self.assertFalse(task.get('isError', False), task)
+        task_data = task.get('structuredContent') or json.loads(task['content'][0]['text'])
+        task_id = task_data['task']['id']
+        task = call(self.b_token, 'mailbox_task_update',
+                    {'task_id':task_id, 'expected_revision':1, 'status':'done', 'evidence':'Checked'})
+        self.assertFalse(task.get('isError', False), task)
+        denied = call(token, 'mailbox_task_get', {'task_id':task_id})
         self.assertTrue(denied.get('isError'), denied)
 
     def test_legacy_empty_workspace_not_visible_to_other_workspace(self):

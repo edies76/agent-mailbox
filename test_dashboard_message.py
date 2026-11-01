@@ -74,6 +74,19 @@ class DashboardMessageTests(unittest.TestCase):
         data = self.route(message["id"])
         self.assertTrue(data["message"]["wake_backlog"])
 
+    def test_listener_trace_is_recipient_bound_and_does_not_claim_turn_opened(self):
+        message = self.send('wake test', delivery_mode='wake')
+        path = f"/messages/{message['id']}/listener-event"
+        self.request('POST', path, self.a_token, {'event':'listener_detected'}, 404)
+        self.request('POST', path, self.b_token, {'event':'listener_detected'})
+        self.request('POST', path, self.b_token, {'event':'wake_queued'})
+        self.request('POST', path, self.b_token, {'event':'wake_queued'})
+        data = self.route(message['id'])
+        self.assertEqual([event['event'] for event in data['trace']],
+                         ['stored','listener_detected','wake_queued'])
+        self.assertEqual(data['trace'][2]['source'], 'listener_report')
+        self.assertEqual(data['wake']['state'], 'solicitado')
+
 
 if __name__ == "__main__":
     unittest.main()
