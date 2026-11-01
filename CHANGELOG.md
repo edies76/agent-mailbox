@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.75
+
+- Add a guided JSONL handoff composer in Context Hub; server records actor and timestamp for each entry and protects appends with revision checks.
+- Reject common secret/credential paths from shared Context Hub resources.
+
 ## 0.3.74
 
 - Add Context Hub: workspace-private artifact history, optimistic revision checks, temporary path claims, JSONL project-event append, HTTP/MCP access, and a dashboard at `/dashboard/context`.

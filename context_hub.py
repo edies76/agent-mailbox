@@ -16,6 +16,9 @@ from pydantic import BaseModel, ConfigDict, Field
 MAX_VERSION_BYTES = 5 * 1024 * 1024
 MAX_WORKSPACE_BYTES = 200 * 1024 * 1024
 MAX_ITEMS = 500
+BLOCKED_CONTEXT_NAMES = {'.env', '.env.local', '.env.production', 'credentials.json', 'secrets.json',
+                         'id_rsa', 'id_ed25519', 'authorized_keys'}
+BLOCKED_CONTEXT_SUFFIXES = {'.pem', '.key', '.p12', '.pfx', '.kdbx'}
 
 
 class ItemCreate(BaseModel):
@@ -49,6 +52,9 @@ def clean_path(path):
     path = path.replace('\\', '/')
     if path.startswith('/') or ':' in path or any(p in ('', '.', '..') for p in path.split('/')):
         raise HTTPException(422, 'Use a relative project path without dot segments')
+    if any(part.casefold() in BLOCKED_CONTEXT_NAMES for part in path.split('/')) or any(
+            part.casefold().endswith(tuple(BLOCKED_CONTEXT_SUFFIXES)) for part in path.split('/')):
+        raise HTTPException(415, 'Secret and credential file paths are not allowed in shared context')
     if any(ord(c) < 32 or ord(c) == 127 for c in path):
         raise HTTPException(422, 'Invalid project path')
     return path
@@ -204,7 +210,9 @@ def register_context_routes(app, store, authenticate, identity_workspace):
             if item['revision'] != body.expected_revision:
                 raise HTTPException(409, 'Version changed; reload before appending')
             try:
-                encoded = json.dumps(body.record, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+                record = {**body.record, '_context_hub': {'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                                                          'actor_id': actor}}
+                encoded = json.dumps(record, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
             except (TypeError, ValueError):
                 raise HTTPException(422, 'Record must be JSON serializable')
             if len(encoded) > 32 * 1024:

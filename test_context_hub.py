@@ -1,5 +1,6 @@
 """Integration tests for authorization, version conflicts and advisory reservations."""
 import base64
+import json
 import sqlite3
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -53,12 +54,16 @@ class ContextHubTests(unittest.TestCase):
             'path':'context/auton-decisions.jsonl','content_type':'application/x-ndjson',
             'data_base64':content(b'{"type":"decision","text":"use SQLite initially"}')},201)['item']
         appended=self.request('POST',f"/context/items/{item['id']}/append",self.b_token,
-            {'expected_revision':1,'record':{'type':'task','text':'Codex is checking profile isolation'}},201)
+            {'expected_revision':1,'record':{'type':'task','text':'Codex is checking profile isolation',
+             '_context_hub':{'actor_id':'forged'}}},201)
         self.assertEqual(appended['item']['revision'],2)
         current=self.request('GET',f"/context/items/{item['id']}/versions/2",self.a_token)
-        self.assertEqual(base64.b64decode(current['data_base64']).splitlines(),[
-            b'{"type":"decision","text":"use SQLite initially"}',
-            b'{"type":"task","text":"Codex is checking profile isolation"}'])
+        records=[json.loads(line) for line in base64.b64decode(current['data_base64']).splitlines()]
+        self.assertEqual([{key:value for key,value in record.items() if key!='_context_hub'} for record in records],[
+            {"type":"decision","text":"use SQLite initially"},
+            {"type":"task","text":"Codex is checking profile isolation"}])
+        self.assertEqual(records[1]['_context_hub']['actor_id'],'agent:'+self.b_id)
+        self.assertNotEqual(records[1]['_context_hub']['actor_id'],'forged')
         self.request('POST',f"/context/items/{item['id']}/append",self.a_token,
                      {'expected_revision':1,'record':{'type':'stale'}},409)
 
@@ -67,6 +72,10 @@ class ContextHubTests(unittest.TestCase):
         self.request('GET', '/context/items', self.join_key, expected=401)
         self.request('POST', '/context/items', self.a_token,
                      {'title':'Bad path','path':'../outside','data_base64':content(b'x')}, 422)
+        self.request('POST', '/context/items', self.a_token,
+                     {'title':'Secret','path':'config/.env.production','data_base64':content(b'never share')}, 415)
+        self.request('POST', '/context/items', self.a_token,
+                     {'title':'Private key','path':'certs/server.pem','data_base64':content(b'never share')}, 415)
 
     def test_simultaneous_writes_do_not_overwrite(self):
         item = self.request('POST','/context/items',self.a_token,
