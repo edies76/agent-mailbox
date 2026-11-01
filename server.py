@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, AliasChoices, ValidationError
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
 from stores import FirestoreStore, SQLiteStore
+from context_hub import initialize_context, register_context_routes
 from collaboration import DEFAULT_WORKSPACE_ID
 from onboarding import catalog as onboarding_catalog, core_archive, handoff as onboarding_handoff, resource_file, resource_content
 from a2a_gateway import (A2A_VERSION, ROUTING_EXTENSION, agent_card as a2a_agent_card,
@@ -100,6 +101,7 @@ class AgentRegistration(BaseModel):
     kind: str = Field(default="other", min_length=1, max_length=60)
     project: str = Field(default="", max_length=300)
     chat_path: str = Field(default="", max_length=300)
+    chat_name: str | None = Field(default=None, min_length=1, max_length=100)
     # Obligatorio cuando el agente se registra con la clave de registro de una cuenta: debe
     # decir de quién es el token que le dieron. Con sesión del panel se deduce del dueño.
     owner_name: str = Field(default="", max_length=120)
@@ -127,6 +129,7 @@ class AgentCardPatch(BaseModel):
     description: str | None = Field(default=None, max_length=500)
     capabilities: list[str] | None = Field(default=None, max_length=20)
     chat_path: str | None = Field(default=None, max_length=300)
+    chat_name: str | None = Field(default=None, min_length=1, max_length=100)
 
     @field_validator("capabilities")
     @classmethod
@@ -292,6 +295,7 @@ class Broadcast(BaseModel):
 class InstanceRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     instance_name: str = Field(min_length=1, max_length=100)
+    chat_name: str | None = Field(default=None, min_length=1, max_length=100)
     project: str = Field(default="", max_length=300)
     session_key: str | None = Field(default=None, min_length=1, max_length=200)
     description: str = Field(default="", max_length=500)
@@ -403,6 +407,7 @@ def create_app():
     @asynccontextmanager
     async def lifespan(app):
         store.initialize()
+        initialize_context(store)
         store.ensure_default_workspace()
         async with mailbox_mcp.session_manager.run():
             yield
@@ -493,7 +498,7 @@ def create_app():
     @app.middleware("http")
     async def private_response_headers(request, call_next):
         response = await call_next(request)
-        if request.headers.get("authorization") or request.url.path.startswith(("/dashboard", "/auth/")):
+        if request.headers.get("authorization") or request.url.path.startswith(("/dashboard", "/auth/", "/context/")):
             response.headers["Cache-Control"] = "no-store"
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -540,6 +545,8 @@ def create_app():
         ("/workspace", "workspace.html", "text/html"), ("/guide.js", "guide.js", "application/javascript"),
         ("/dashboard/chat", "chat.html", "text/html"), ("/chat.js", "chat.js", "application/javascript"),
         ("/chat.css", "chat.css", "text/css"),
+        ("/dashboard/context", "context.html", "text/html"), ("/context.js", "context.js", "application/javascript"),
+        ("/context.css", "context.css", "text/css"),
         ("/join-workspace.js", "join-workspace.js", "application/javascript"),
         ("/join-workspace", "join-workspace.html", "text/html"),
         ("/join-member.js", "join-member.js", "application/javascript"),
@@ -615,6 +622,8 @@ def create_app():
 
         def mcp_api(path, method, payload, query):
             query = query or {}
+            if path == '/context' or path.startswith('/context/'):
+                return context_dispatch(path, method, payload, query, identifier)
             if path == "/inbox/wait" and method == "GET":
                 return wait_mail(identifier, int(query.get("after_id", 0)), int(query.get("timeout", 25)))
             if path == "/workflow" and method == "GET":
@@ -677,6 +686,8 @@ def create_app():
             if path == "/agents/me" and method == "PATCH":
                 patch = AgentCardPatch(**payload)
                 fields = patch.model_dump(exclude_unset=True)
+                if "chat_name" in fields and fields["chat_name"] is None:
+                    raise HTTPException(422, "Chat name cannot be empty")
                 if not fields:
                     raise HTTPException(422, "Provide description and/or capabilities")
                 return public_agent(store.update_agent_card(identifier, fields), time.time())
@@ -1114,6 +1125,8 @@ def create_app():
             return store.workspace_for_agent(identity["id"])
         return DEFAULT_WORKSPACE_ID
 
+    context_dispatch = register_context_routes(app, store, authenticate, identity_workspace)
+
     def workspace_registration_seed(workspace_id):
         return hmac.new(hub_key.encode(), ("agent-mailbox-workspace:" + (workspace_id or DEFAULT_WORKSPACE_ID)).encode(), hashlib.sha256).hexdigest()
 
@@ -1154,6 +1167,7 @@ def create_app():
         result = {key: row[key] for key in ("id", "name", "kind", "project", "created_at", "last_seen")}
         result.update(instance_id=row["id"], profile_id=row.get("profile_id"),
                       instance_name=row.get("instance_name") or row["name"],
+                      chat_name=(row.get("chat_name") or row.get("instance_name") or row["name"]),
                       chat_path=row.get("chat_path") or "",
                       description=row.get("description") or profile.get("description", ""),
                       capabilities=row.get("capabilities") or profile.get("capabilities", []))
@@ -1281,6 +1295,7 @@ def create_app():
             token = recovery_token(recovery_secret, identifier) if recovery_secret else derived_token
             token_hash = hashlib.sha256(token.encode()).hexdigest()
             row = dict(id=identifier, name=body.name, kind=body.kind, project=body.project,
+                       chat_name=body.chat_name or body.name,
                        chat_path=body.chat_path,
                        description=body.description, capabilities=body.capabilities,
                        token_hash=token_hash, created_at=now, last_seen=now, workspace_id=workspace_id,
@@ -1699,7 +1714,7 @@ def create_app():
         require_dashboard_identity(identity)
         workspace_id = identity_workspace(identity)
         agents = [row for row in store.all_agents()
-                  if (row.get("workspace_id") or workspace_id) == workspace_id or not row.get("workspace_id")]
+                  if (row.get("workspace_id") or DEFAULT_WORKSPACE_ID) == workspace_id]
         if identity.get("role") == "workspace_member":
             agents = [row for row in agents if row.get("created_by_account_id") == identity.get("id")]
         profile_ids = {row.get("profile_id") for row in agents if row.get("profile_id")}
@@ -1711,8 +1726,7 @@ def create_app():
             members = [row for row in agents if row.get("profile_id") == profile["id"]]
             if not members:
                 continue
-            profile_workspace = profile.get("workspace_id")
-            if profile_workspace and profile_workspace != workspace_id and any(row.get("workspace_id") for row in members):
+            if (profile.get("workspace_id") or DEFAULT_WORKSPACE_ID) != workspace_id:
                 continue
             result.append({**public_profile(profile), "instances_count": len(members),
                            "online_count": sum(row.get("last_seen", 0) >= now - online_seconds for row in members),
@@ -2187,6 +2201,7 @@ def create_app():
             token = recovery_token(recovery_secret, identifier) if recovery_secret else secrets.token_urlsafe(32)
         now = time.time()
         row = dict(id=identifier, name=body.instance_name, kind=profile["kind"],
+                   chat_name=body.chat_name or body.instance_name,
                    project=body.project or profile["project"], created_at=now, last_seen=now,
                    description=body.description, capabilities=body.capabilities,
                    token_hash=hashlib.sha256(token.encode()).hexdigest(),
@@ -2266,6 +2281,8 @@ def create_app():
     @app.patch("/agents/me")
     def update_my_card(body: AgentCardPatch, identity: Identity):
         fields = body.model_dump(exclude_unset=True)
+        if "chat_name" in fields and fields["chat_name"] is None:
+            raise HTTPException(422, "Chat name cannot be empty")
         if fields.get("name", "") is None:
             fields.pop("name", None)
         fields = {key: value if value is not None else ([] if key == "capabilities" else "")
@@ -2283,6 +2300,14 @@ def create_app():
         row = store.update_agent_card(identifier, {"name": body.name})
         if identity.get("control_user"):
             store.record_control_event(identity["id"], "agent_renamed", identifier)
+        return public_agent(row, time.time())
+
+    @app.patch("/dashboard/agents/{identifier}/chat-name")
+    def rename_dashboard_chat(identifier: Annotated[str, Path(min_length=1, max_length=100,
+                                                               pattern=r"^[A-Za-z0-9_-]+$")],
+                              body: AgentRename, identity: Identity):
+        require_manage_own_agent(identity, identifier)
+        row = store.update_agent_card(identifier, {"chat_name": body.name})
         return public_agent(row, time.time())
 
     @app.post("/dashboard/agents/{identifier}/rotate-token")

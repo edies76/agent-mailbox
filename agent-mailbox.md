@@ -119,6 +119,8 @@ alcance correspondiente. Sus enlaces individuales y huellas están en `/onboardi
 | Prompt para crear adaptador | Verificar wake del chat raíz y handoff de subagentes para este host/version | `/adapter-build-prompt.md` |
 | Prompt de conexión | Configurar el transporte y las instrucciones del host | `/connect-agent-prompt.md` |
 | Puerta A2A | Conectar agentes compatibles con tareas HTTP+JSON | `/.well-known/agent-card.json`, `/a2a.md` |
+| Context Hub | Contexto de proyecto versionado y reservas temporales de rutas en tu workspace | `/guide/context-hub` |
+| Continuidad | Diferencia handoffs curados de historiales JSONL específicos del host | `/guide/session-continuity` |
 | Extensión A2A de enrutamiento | Dirigir tareas al ID privado exacto de una instancia | `/a2a-extension.md` |
 | Listener, watcher y cliente HTTP | Detectar mensajes y operar el buzón por instancia | `/mailbox-listener.py`, `/mailbox-watch.py`, `/mailbox-client.py` |
 | Hook, wake y banco local | Enlazar sesiones, reanudar con API compatible o archivar avisos | `/mailbox-hook.py`, `/mailbox-wake.py`, `/mailbox-spool.py` |

@@ -37,6 +37,9 @@ class PackagingTests(unittest.TestCase):
     def test_chat_assets_are_copied(self):
         self.assertTrue({'chat.html', 'chat.js', 'chat.css'} <= copied_names())
 
+    def test_context_hub_assets_and_backend_are_copied(self):
+        self.assertTrue({'context.html', 'context.js', 'context.css', 'context_hub.py'} <= copied_names())
+
     def test_every_served_static_file_is_copied_into_the_image(self):
         copied = copied_names()
         missing = []
@@ -53,6 +56,8 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("message.html", guard)
         self.assertIn("message.js", guard)
         self.assertIn("dashboard.html", guard)
+        self.assertIn("context.html", guard)
+        self.assertIn("context_hub.py", guard)
 
     def test_the_guard_runs_before_the_image_is_tagged(self):
         lines = (ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()

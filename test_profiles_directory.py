@@ -1,6 +1,7 @@
 """The profiles route must retain every visible instance, including legacy unprofiled rows."""
 import sqlite3
 import unittest
+from contextlib import closing
 import test_mailbox as http_tests
 
 
@@ -13,7 +14,8 @@ class ProfilesDirectoryTests(unittest.TestCase):
     setUp = http_tests.MailboxTests.setUp
 
     def test_unprofiled_legacy_instance_is_grouped_and_visible(self):
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db:
+            db.execute('BEGIN IMMEDIATE')
             db.execute('UPDATE agents SET profile_id=NULL, workspace_id="" WHERE id=?', (self.b_id,))
             db.commit()
         data = self.request('GET', '/dashboard/profiles/data', self.admin)
@@ -24,7 +26,8 @@ class ProfilesDirectoryTests(unittest.TestCase):
         self.assertEqual(group['instances_count'], 1)
 
     def test_workspace_agent_is_not_hidden_when_workspace_is_empty(self):
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db:
+            db.execute('BEGIN IMMEDIATE')
             db.execute('UPDATE agents SET profile_id=NULL, workspace_id="" WHERE id=?', (self.a_id,))
             db.commit()
         data = self.request('GET', '/dashboard/profiles/data', self.admin)

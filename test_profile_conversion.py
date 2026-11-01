@@ -1,5 +1,7 @@
 """Turning a standalone agent into a profile must keep its private inbox intact."""
 import unittest
+from contextlib import closing
+import sqlite3
 import test_mailbox as http_tests
 
 
@@ -14,6 +16,12 @@ class ProfileConversionTests(unittest.TestCase):
 
     def test_convert_keeps_instance_identity_token_and_mail(self):
         original = self.send('Conservar mensaje')
+        with closing(sqlite3.connect(self.db_path)) as db:
+            db.execute('BEGIN IMMEDIATE')
+            old_profile = db.execute('SELECT profile_id FROM agents WHERE id=?', (self.b_id,)).fetchone()[0]
+            db.execute('UPDATE agents SET profile_id=NULL WHERE id=?', (self.b_id,))
+            db.execute('DELETE FROM profiles WHERE id=?', (old_profile,))
+            db.commit()
         path = f'/dashboard/agents/{self.b_id}/create-profile'
         self.request('POST', path, self.a_token, {'name': 'Codex local'}, 403)
         created = self.request('POST', path, self.admin, {'name': 'Codex local'}, 201)
@@ -25,8 +33,14 @@ class ProfileConversionTests(unittest.TestCase):
                                 201, {'X-Mailbox-Recovery-Secret':'x'*40})
         self.assertNotEqual(new_chat['agent']['id'], self.b_id)
         self.assertEqual(self.request('GET', '/inbox', new_chat['token'])['messages'], [])
-        again = self.request('POST', path, self.admin, {'name': 'Duplicado'}, 201)
+        again = self.request('POST', path, self.admin, {'name': 'Codex local'}, 201)
         self.assertEqual(again['profile']['id'], created['profile']['id'])
+        # A sibling has its own inbox token but cannot recover/rotate the profile enrollment key.
+        sibling = self.request('POST', f"/profiles/{created['profile']['id']}/instances/secure",
+                               again['enrollment_token'], {'instance_name':'Tercer chat','session_key':'third'},
+                               201, {'X-Mailbox-Recovery-Secret':'y'*40})
+        self.request('POST', f"/profiles", sibling['token'],
+                     {'name':'No elevar','kind':'codex','project':'Demo'}, 409)
 
 
 if __name__ == '__main__':

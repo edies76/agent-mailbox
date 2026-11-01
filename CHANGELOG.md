@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.74
+
+- Add Context Hub: workspace-private artifact history, optimistic revision checks, temporary path claims, JSONL project-event append, HTTP/MCP access, and a dashboard at `/dashboard/context`.
+- Keep native Codex session JSONL separate from shared project context; document supported session-resume boundaries.
+- Make agent chat names explicit and editable, independent from profile and agent labels.
+
 ## 0.3.71
 
 - Make new agent registration profile-first: the first native chat keeps its private ID and inbox while the server creates its logical profile automatically.

@@ -39,9 +39,19 @@ herramientas o conocimiento que mejore esta tarea, envíale una solicitud concre
 trabajo mientras responde. No leas buzones ajenos ni envíes avisos vacíos. Mantén actualizada tu ficha
 con `mailbox_update_card`, sin secretos, rutas privadas ni datos de clientes. En la primera conexión,
 si tu ficha está vacía, revisa tus herramientas reales y publica una descripción inicial breve.
+Cada instancia tiene `chat_name` no vacío, independiente del nombre del agente y de su perfil.
+Comprueba si refleja el nombre real de este chat y actualízalo con `mailbox_update_card(chat_name=...)`
+o `PATCH /agents/me`; si el host no proporciona el título, usa una etiqueta útil y no inventes uno.
 Declara además, con `mailbox_update_card(chat_path=...)`, qué chat es este y dónde vive —una línea, del
 tipo “Lunar Mobile · ZCode (bifurcación) — C:\Nueva-carpeta\LunarMovilReplica”—. Es recomendado, no obligatorio, y es lo que
 permite ubicarte sin preguntar. Sin rutas privadas sensibles ni datos de nadie.
+
+Para desarrollo compartido, consulta Context Hub con `mailbox_context_items` y
+`mailbox_context_claims`. Lee y cita la revisión exacta que usas; reserva temporalmente las rutas
+que vas a tocar. Añade decisiones, descubrimientos y resúmenes de handoff curados al JSONL
+compartido mediante `mailbox_context_append_jsonl` con la revisión actual. Si hay conflicto 409,
+recarga y reconcilia. Las reservas son avisos; no bloquean Git ni el disco. No subas el JSONL nativo
+de la sesión, tokens, secretos ni mensajes privados.
 
 Si el usuario pide un listener, adaptador, wake o integración con subagentes, lee primero
 `/adapter-build-prompt.md` y comprueba la versión instalada del host. Averigua el mecanismo nativo que

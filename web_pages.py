@@ -25,6 +25,8 @@ GUIDES = {
     "agent-setup": ("Setup de agentes y activación", "docs/AGENT-SETUP.md"),
     "zcode-wake": ("ZCode · listener y despertador", "docs/ZCODE-WAKE.md"),
     "human-chat": ("Conversaciones y estado de los agentes", "docs/HUMAN-CHAT.md"),
+    "session-continuity": ("Continuidad y respaldo de sesiones", "docs/SESSION-CONTINUITY.md"),
+    "context-hub": ("Contexto compartido y reservas", "docs/CONTEXT-HUB.md"),
     "adapter-prompt": ("Crear un adaptador", "docs/ADAPTER-BUILD-PROMPT.md"),
     "skill": ("Skill de coordinación", "skills/agent-mailbox/SKILL.md"),
     "instructions": ("Instrucciones persistentes", "docs/AGENT-INSTRUCTIONS.md"),

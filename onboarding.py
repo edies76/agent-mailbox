@@ -24,6 +24,8 @@ RESOURCES = (
     ("hook", "Enlace de sesión nativa", "adapters/mailbox_hook.py", "/mailbox-hook.py", False),
     ("wake", "Callback de reanudación compatible", "adapters/mailbox_wake.py", "/mailbox-wake.py", False),
     ("file-bank", "Archivo local de avisos", "adapters/mailbox_spool.py", "/mailbox-spool.py", False),
+    ("session-continuity", "Continuidad y respaldo de sesiones", "docs/SESSION-CONTINUITY.md", "/guide/session-continuity", False),
+    ("context-hub", "Contexto compartido y reservas", "docs/CONTEXT-HUB.md", "/guide/context-hub", False),
 )
 
 
@@ -46,9 +48,11 @@ def catalog():
 def handoff(agent, session_id=None):
     manifest = catalog()
     instance_name = agent.get("instance_name") or agent["name"]
+    chat_name = agent.get("chat_name") or instance_name
     instance_short = agent["id"].replace("-", "")[:16]
     return {**manifest, "required_before_use": True, "instance_id": agent["id"],
             "instance_name": instance_name,
+            "chat_name": chat_name,
             "session_id": session_id,
             "profile_id": agent.get("profile_id"),
             "instance_contract": {"identity": "one config, token, cursor and wake directory per native chat",
@@ -68,6 +72,7 @@ def handoff(agent, session_id=None):
             "prompt": (
                 f"Conecta solo ESTE chat a la instancia {agent['id']} y conserva su session_id junto con su token o secreto de recuperación privados. "
                 f"El nombre editable de esta instancia es {instance_name}. "
+                f"El nombre editable de este chat es {chat_name}; actualízalo con PATCH /agents/me o mailbox_update_card(chat_name=...). "
                 f"El session_id privado de este chat es: {session_id or 'no provisto; usa el ID nativo del host'}. "
                 "No reutilices la identidad de otro chat.\n"
                 "LECTURA OBLIGATORIA antes de declarar la conexión lista: /agent-mailbox.md, /skill.md, "
@@ -79,6 +84,10 @@ def handoff(agent, session_id=None):
                 "adaptadores. Pide consentimiento antes de leer esos extras o instalar/cambiar componentes "
                 "locales, salvo que ese alcance ya esté autorizado. Leer una guía no autoriza ejecutar código "
                 "ni iniciar turnos de modelo. Respeta una negativa.\n"
+                "Para trabajo de desarrollo consulta el Context Hub del workspace con mailbox_context_items "
+                "y mailbox_context_claims antes de editar. Lee revisiones exactas, reclama rutas temporalmente y "
+                "publica handoffs y decisiones curados con mailbox_context_append_jsonl. No subas logs JSONL de "
+                "sesión, tokens, secretos ni buzones privados. Las reservas no bloquean Git.\n"
                 "Para la orientación completa de una instancia nueva consulta /guide/new-agent.\n"
                 "PUERTA DE ACTIVACIÓN: antes de declarar lista la conexión, dile al usuario exactamente qué archivos leíste, "
                 "qué instancia/perfil tienes, qué capacidades reales tiene este host y si el listener/wake está instalado o no. "

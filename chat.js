@@ -14,10 +14,10 @@
   function updateDirectory() {
     const select=byId('agent'), selected=select.value;
     byId('agent-count').textContent=`${state.agents.length} ${state.agents.length===1?'instancia':'instancias'}`;
-    const key=JSON.stringify(state.agents.map(a=>[a.id,a.instance_name||a.name,a.kind,!!a.listener?.active,a.wake?.configured]));
+    const key=JSON.stringify(state.agents.map(a=>[a.id,a.chat_name,a.instance_name||a.name,a.kind,!!a.listener?.active,a.wake?.configured]));
     if(key!==state.directoryKey){
       select.replaceChildren(new Option('Selecciona una instancia',''));
-      for(const agent of state.agents) { const wake=agent.listener?.active?(agent.wake?.configured?'wake configurado':'sin wake'):'sin señal';select.add(new Option(`${agent.instance_name || agent.name} · ${wake}`,agent.id)); }
+      for(const agent of state.agents) { const wake=agent.listener?.active?(agent.wake?.configured?'wake configurado':'sin wake'):'sin señal';select.add(new Option(`${agent.chat_name || agent.instance_name || agent.name} · ${wake}`,agent.id)); }
       if(state.agents.some(a=>a.id===selected)) select.value=selected;
       state.directoryKey=key;
     }
@@ -27,13 +27,13 @@
   }
   function renderAgentList() {
     const list=byId('agent-list'), selected=byId('agent').value, query=byId('agent-search').value.trim().toLocaleLowerCase();
-    const rows=state.agents.filter(a=>`${a.instance_name||a.name} ${a.kind} ${a.project||''}`.toLocaleLowerCase().includes(query));
-    const key=JSON.stringify([selected,query,rows.map(a=>[a.id,a.instance_name||a.name,a.kind,a.project,!!a.listener?.active,a.wake?.configured])]);
+    const rows=state.agents.filter(a=>`${a.chat_name||''} ${a.instance_name||a.name} ${a.kind} ${a.project||''}`.toLocaleLowerCase().includes(query));
+    const key=JSON.stringify([selected,query,rows.map(a=>[a.id,a.chat_name,a.instance_name||a.name,a.kind,a.project,!!a.listener?.active,a.wake?.configured])]);
     if(list.dataset.renderKey===key)return;
     list.dataset.renderKey=key;list.replaceChildren();
     if(!rows.length){const empty=document.createElement('p');empty.className='agent-empty';empty.textContent=state.agents.length?'No hay agentes con ese nombre.':'Aún no hay agentes registrados.';list.append(empty);return;}
     for(const agent of rows){
-      const name=agent.instance_name||agent.name;const ready=!!agent.listener?.active&&!!agent.wake?.configured;
+      const name=agent.chat_name||agent.instance_name||agent.name;const ready=!!agent.listener?.active&&!!agent.wake?.configured;
       const button=document.createElement('button');button.type='button';button.className='agent-item';button.setAttribute('aria-pressed',String(agent.id===selected));
       const icon=document.createElement('span');icon.className='agent-initial';icon.setAttribute('aria-hidden','true');icon.textContent=(name.trim()[0]||'A').toUpperCase();
       const copy=document.createElement('span');copy.className='agent-copy';const title=document.createElement('span');title.className='agent-name';title.textContent=name;
@@ -45,11 +45,11 @@
   function renderState() {
     const agent=state.agents.find(a=>a.id===byId('agent').value), label=byId('agent-state');
     byId('send').disabled=!agent||state.sending;
-    byId('title').textContent=agent ? (agent.instance_name || agent.name) : 'Elige un agente';
+    byId('title').textContent=agent ? (agent.chat_name || agent.instance_name || agent.name) : 'Elige un agente';
     if(!agent){label.textContent='Selecciona una instancia para ver su estado.';byId('subtitle').textContent='Selecciona una instancia para comenzar.';return;}
     const listener=agent.listener?.active, wake=agent.wake?.configured;
     label.textContent=`Listener: ${listener?'activo':'sin señal'} · Despertador: ${!listener?'desconocido':wake?'configurado, sin verificar':'no configurado'}`;
-    byId('subtitle').textContent=`${agent.kind} · ${agent.project || 'Sin proyecto'} · ID ${agent.id}`;
+    byId('subtitle').textContent=`${agent.instance_name || agent.name} · ${agent.kind} · ${agent.project || 'Sin proyecto'} · ID ${agent.id}`;
   }
   async function addAttachment(box, message, file) {
     const link=document.createElement('a'); link.href='#';link.textContent=`Adjunto · ${file.filename}`;

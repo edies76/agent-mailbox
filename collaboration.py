@@ -71,6 +71,7 @@ class CollaborationStore:
                            # Recomendado, no obligatorio: el nombre del chat y la ruta donde vive, declarados
                            # por el propio agente. Sirve para ubicarlo sin preguntar.
                            "chat_path": "TEXT NOT NULL DEFAULT ''",
+                           "chat_name": "TEXT NOT NULL DEFAULT ''",
                            "workspace_id": f"TEXT NOT NULL DEFAULT '{DEFAULT_WORKSPACE_ID}'",
                            "created_by_account_id": "TEXT",
                            "created_by_username": "TEXT NOT NULL DEFAULT ''",
@@ -90,6 +91,7 @@ class CollaborationStore:
                 for column, declaration in columns.items():
                     if column not in present:
                         db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+            db.execute("UPDATE agents SET chat_name=COALESCE(NULLIF(instance_name, ''), name) WHERE chat_name IS NULL OR trim(chat_name)=''")
             db.execute("CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, data_json TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS delivery_keys (key_hash TEXT PRIMARY KEY, sender_id TEXT NOT NULL, "
                        "payload_hash TEXT NOT NULL, message_id INTEGER NOT NULL, created_at REAL NOT NULL)")
@@ -804,28 +806,22 @@ class CollaborationStore:
                     existing = db.execute("SELECT data_json FROM profiles WHERE id = ?", (agent["profile_id"],)).fetchone()
                     if not existing:
                         raise HTTPException(409, "Instance points to a missing profile")
-                    profile = json.loads(existing["data_json"])
-                    if name.strip():
-                        profile["name"] = name.strip()
-                    if kind.strip():
-                        profile["kind"] = kind.strip()
-                    if project.strip():
-                        profile["project"] = project.strip()
-                    if description.strip():
-                        profile["description"] = description.strip()
-                    if capabilities:
-                        profile["capabilities"] = capabilities
-                    profile["enrollment_hash"] = hashlib.sha256(token.encode()).hexdigest()
-                    db.execute("UPDATE profiles SET data_json = ? WHERE id = ?",
-                               (json.dumps(profile, ensure_ascii=False), profile["id"]))
-                    return profile, token
+                    existing_profile = json.loads(existing["data_json"])
+                    if existing_profile.get("bootstrap_instance_id") != identifier:
+                        raise HTTPException(409, "Only the profile's first instance can recover its enrollment credential")
+                    existing_profile.update(name=name, kind=kind, project=project or existing_profile.get("project", ""),
+                                            enrollment_hash=hashlib.sha256(token.encode()).hexdigest())
+                    db.execute("UPDATE profiles SET data_json=? WHERE id=?",
+                               (json.dumps(existing_profile, ensure_ascii=False), agent["profile_id"]))
+                    return existing_profile, token
                 description = description or agent["description"]
                 capabilities = capabilities or json.loads(agent["capabilities_json"] or "[]")
                 profile.update(description=description, capabilities=capabilities,
                                workspace_id=agent["workspace_id"] or DEFAULT_WORKSPACE_ID,
                                created_by_account_id=agent["created_by_account_id"],
                                created_by_username=agent["created_by_username"],
-                               registration_method="profile_created_from_instance")
+                               registration_method="profile_created_from_instance",
+                               bootstrap_instance_id=identifier)
                 db.execute("INSERT INTO profiles VALUES (?, ?)", (profile["id"], json.dumps(profile)))
                 db.execute("UPDATE agents SET profile_id = ?, instance_name = name WHERE id = ?",
                            (profile["id"], identifier))
@@ -841,27 +837,20 @@ class CollaborationStore:
                     existing = existing_ref.get(transaction=transaction).to_dict()
                     if not existing:
                         raise HTTPException(409, "Instance points to a missing profile")
-                    profile = {**existing, "enrollment_hash": hashlib.sha256(token.encode()).hexdigest()}
-                    if name.strip():
-                        profile["name"] = name.strip()
-                    if kind.strip():
-                        profile["kind"] = kind.strip()
-                    if project.strip():
-                        profile["project"] = project.strip()
-                    if description.strip():
-                        profile["description"] = description.strip()
-                    if capabilities:
-                        profile["capabilities"] = capabilities
-                    profile["enrollment_hash"] = hashlib.sha256(token.encode()).hexdigest()
-                    transaction.update(existing_ref, {key: value for key, value in profile.items()
-                                                     if key != "id"})
+                    if existing.get("bootstrap_instance_id") != identifier:
+                        raise HTTPException(409, "Only the profile's first instance can recover its enrollment credential")
+                    profile.update(existing)
+                    profile.update(name=name, kind=kind, project=project or existing.get("project", ""),
+                                   enrollment_hash=hashlib.sha256(token.encode()).hexdigest())
+                    transaction.update(existing_ref, {key: value for key, value in profile.items() if key != "id"})
                     return profile
                 profile.update(description=description or agent.get("description", ""),
                                capabilities=capabilities or agent.get("capabilities", []),
                                workspace_id=agent.get("workspace_id") or DEFAULT_WORKSPACE_ID,
                                created_by_account_id=agent.get("created_by_account_id"),
                                created_by_username=agent.get("created_by_username", ""),
-                               registration_method="profile_created_from_instance")
+                               registration_method="profile_created_from_instance",
+                               bootstrap_instance_id=identifier)
                 transaction.create(self.client.collection("profiles").document(profile["id"]), profile)
                 transaction.update(ref, {"profile_id": profile["id"], "instance_name": agent["name"]})
             created_profile = create(self.client.transaction(max_attempts=5))
@@ -1073,9 +1062,9 @@ class CollaborationStore:
                 verify(dict(old) if old else None, workspace_id)
                 if old:
                     return False
-                columns = ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "profile_id", "instance_name", "description", "capabilities_json", "workspace_id", "recovery_hash", "created_by_account_id", "created_by_username", "registration_method")
+                columns = ("id", "name", "kind", "project", "token_hash", "created_at", "last_seen", "profile_id", "instance_name", "description", "capabilities_json", "workspace_id", "recovery_hash", "created_by_account_id", "created_by_username", "registration_method", "chat_name")
                 db.execute(f"INSERT INTO agents ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
-                           tuple(json.dumps(row["capabilities"], ensure_ascii=False) if key == "capabilities_json" else row.get(key)
+                           tuple(json.dumps(row["capabilities"], ensure_ascii=False) if key == "capabilities_json" else (row.get(key) or row["name"]) if key == "chat_name" else row.get(key)
                                  for key in columns))
             return True
         @self.firestore.transactional
