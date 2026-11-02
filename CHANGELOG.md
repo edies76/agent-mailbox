@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.79
+
+- Add a full workspace task board with columns for pending, in-progress, blocked, review and completed tasks.
+
 ## 0.3.78
 
 - Search the full current content of text resources, including text beyond 64 KiB.
