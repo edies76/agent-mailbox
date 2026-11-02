@@ -81,6 +81,20 @@ class ContextSources(BaseModel):
     source_item_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
+class GitChange(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    path: str = Field(min_length=1, max_length=400)
+    branch: str = Field(default='', max_length=200)
+    status: str = Field(min_length=1, max_length=50)
+
+
+class GitSnapshot(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    project: str = Field(min_length=1, max_length=120)
+    changes: list[GitChange] = Field(max_length=500)
+    ttl_seconds: int = Field(default=900, ge=60, le=3600)
+
+
 def clean_path(path):
     path = path.replace('\\', '/')
     if path.startswith('/') or ':' in path or any(p in ('', '.', '..') for p in path.split('/')):
@@ -127,6 +141,10 @@ def initialize_context(store):
         CREATE TABLE IF NOT EXISTS context_claim_details (
             workspace_id TEXT NOT NULL, path_key TEXT NOT NULL, intent TEXT NOT NULL,
             branch TEXT NOT NULL, PRIMARY KEY(workspace_id, path_key));
+        CREATE TABLE IF NOT EXISTS context_git_snapshots (
+            workspace_id TEXT NOT NULL, owner_id TEXT NOT NULL, project TEXT NOT NULL,
+            changes_json TEXT NOT NULL, updated_at REAL NOT NULL, expires_at REAL NOT NULL,
+            PRIMARY KEY(workspace_id, owner_id, project));
         CREATE TABLE IF NOT EXISTS context_tasks (
             id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, title TEXT NOT NULL,
             description TEXT NOT NULL, acceptance TEXT NOT NULL, assignee_id TEXT NOT NULL,
@@ -279,21 +297,21 @@ def register_context_routes(app, store, authenticate, identity_workspace):
         if len(needle) < 2:
             raise HTTPException(422, 'Search requires at least two characters')
         with store.database() as db:
-            rows = db.execute('''SELECT i.id,i.title,i.path,i.revision,v.content_type,v.size_bytes,
-                substr(v.data,1,65536) AS prefix FROM context_items i JOIN context_versions v
+            rows = db.execute('''SELECT i.id,i.title,i.path,i.revision,v.content_type,v.data
+                FROM context_items i JOIN context_versions v
                 ON i.id=v.item_id AND i.revision=v.revision WHERE i.workspace_id=?
-                ORDER BY i.updated_at DESC LIMIT ?''', (workspace, MAX_ITEMS)).fetchall()
-            hits, partial = [], False
+                ORDER BY i.updated_at DESC LIMIT ?''', (workspace, MAX_ITEMS))
+            hits = []
             for row in rows:
                 content_type = row['content_type'].lower()
                 text_like = content_type.startswith('text/') or content_type in (
                     'application/json', 'application/x-ndjson', 'application/xml')
-                content = bytes(row['prefix']).decode('utf-8', errors='replace') if text_like else ''
-                partial = partial or bool(text_like and row['size_bytes'] > 65536)
+                content = bytes(row['data']).decode('utf-8', errors='replace') if text_like else ''
                 if needle in (row['title'] + ' ' + row['path']).casefold() or needle in content.casefold():
                     hits.append({'id': row['id'], 'title': row['title'], 'path': row['path'], 'revision': row['revision']})
-            return {'items': hits[:100], 'truncated': len(hits) > 100, 'partial_text': partial,
-                    'text_bytes_per_item': 65536}
+                    if len(hits) > 100:
+                        break
+            return {'items': hits[:100], 'truncated': len(hits) > 100, 'partial_text': False}
 
     @app.get('/context/items/{item_id}/sources')
     def get_sources(item_id: str, identity=Depends(authenticate)):
@@ -455,6 +473,53 @@ def register_context_routes(app, store, authenticate, identity_workspace):
                     overlaps.append(item)
             return {'path': path, 'overlaps': overlaps, 'advisory': True}
 
+    @app.get('/context/git-snapshots')
+    def list_git_snapshots(identity=Depends(authenticate)):
+        workspace, _ = scope(identity)
+        with store.database() as db:
+            rows = db.execute('''SELECT owner_id,project,changes_json,updated_at,expires_at
+                FROM context_git_snapshots WHERE workspace_id=? AND expires_at>?
+                ORDER BY updated_at DESC LIMIT 100''', (workspace, time.time())).fetchall()
+            result = []
+            for row in rows:
+                snapshot = dict(row)
+                snapshot['changes'] = json.loads(snapshot.pop('changes_json'))
+                result.append(snapshot)
+            return {'snapshots': result, 'advisory': True}
+
+    @app.post('/context/git-snapshots')
+    def put_git_snapshot(body: GitSnapshot, identity=Depends(authenticate)):
+        workspace, actor = scope(identity, True)
+        if '/' in body.project or '\\' in body.project or any(ord(c) < 32 or ord(c) == 127 for c in body.project):
+            raise HTTPException(422, 'Use a project label, not a local path')
+        if any(any(ord(c) < 32 or ord(c) == 127 for c in change.branch + change.status) for change in body.changes):
+            raise HTTPException(422, 'Invalid branch or status')
+        changes = [{'path': clean_path(change.path), 'branch': change.branch, 'status': change.status}
+                   for change in body.changes]
+        now = time.time()
+        with store.database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('DELETE FROM context_git_snapshots WHERE workspace_id=? AND expires_at<=?', (workspace, now))
+            exists = db.execute('SELECT 1 FROM context_git_snapshots WHERE workspace_id=? AND owner_id=? AND project=?',
+                                (workspace, actor, body.project)).fetchone()
+            if not exists and db.execute('SELECT COUNT(*) FROM context_git_snapshots WHERE workspace_id=?', (workspace,)).fetchone()[0] >= 100:
+                raise HTTPException(413, 'Workspace snapshot limit reached')
+            db.execute('''INSERT INTO context_git_snapshots VALUES (?,?,?,?,?,?)
+                ON CONFLICT(workspace_id,owner_id,project) DO UPDATE SET changes_json=excluded.changes_json,
+                updated_at=excluded.updated_at,expires_at=excluded.expires_at''',
+                (workspace, actor, body.project, json.dumps(changes, ensure_ascii=False), now, now + body.ttl_seconds))
+        return {'project': body.project, 'count': len(changes), 'expires_at': now + body.ttl_seconds}
+
+    @app.delete('/context/git-snapshots')
+    def delete_git_snapshot(project: str = Query(min_length=1, max_length=120), identity=Depends(authenticate)):
+        workspace, actor = scope(identity, True)
+        with store.database() as db:
+            cursor = db.execute('DELETE FROM context_git_snapshots WHERE workspace_id=? AND owner_id=? AND project=?',
+                                (workspace, actor, project))
+            if not cursor.rowcount:
+                raise HTTPException(404, 'Your snapshot was not found')
+        return {'deleted': True}
+
     @app.post('/context/claims', status_code=201)
     def create_claim(body: ClaimCreate, identity=Depends(authenticate)):
         workspace, actor = scope(identity, True)
@@ -504,6 +569,12 @@ def register_context_routes(app, store, authenticate, identity_workspace):
             return list_claims(identity)
         if path == '/context/radar' and method == 'GET':
             return check_radar(query.get('path', ''), identity)
+        if path == '/context/git-snapshots' and method == 'GET':
+            return list_git_snapshots(identity)
+        if path == '/context/git-snapshots' and method == 'POST':
+            return put_git_snapshot(GitSnapshot(**payload), identity)
+        if path == '/context/git-snapshots' and method == 'DELETE':
+            return delete_git_snapshot(query.get('project', ''), identity)
         if path == '/context/claims' and method == 'POST':
             return create_claim(ClaimCreate(**payload), identity)
         if path == '/context/claims' and method == 'DELETE':

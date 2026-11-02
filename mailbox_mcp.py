@@ -304,7 +304,7 @@ def mailbox_context_items() -> dict:
 
 @mailbox_tool()
 def mailbox_context_search(q: str) -> dict:
-    """Search titles, paths and the first 64 KiB of text resources in this workspace."""
+    """Search titles, paths and entire current text resources in this workspace."""
     return api("/context/search", query={"q": q})
 
 
@@ -406,6 +406,24 @@ def mailbox_context_claim(path: str, ttl_seconds: int = 900, intent: str = "", b
 def mailbox_context_radar(path: str) -> dict:
     """Check active overlapping path reservations before editing; warnings do not lock files."""
     return api("/context/radar", query={"path": path})
+
+
+@mailbox_tool()
+def mailbox_git_snapshots() -> dict:
+    """List explicitly shared, temporary Git change snapshots in this workspace."""
+    return api("/context/git-snapshots")
+
+
+@mailbox_tool()
+def mailbox_git_snapshot_publish(project: str, changes: list[dict], ttl_seconds: int = 900) -> dict:
+    """Share project-relative paths and branch names; obtain user consent before disclosing local paths."""
+    return api("/context/git-snapshots", "POST", {"project": project, "changes": changes, "ttl_seconds": ttl_seconds})
+
+
+@mailbox_tool()
+def mailbox_git_snapshot_delete(project: str) -> dict:
+    """Delete this instance's own shared Git snapshot for the project label."""
+    return api("/context/git-snapshots", "DELETE", query={"project": project})
 
 
 @mailbox_tool()

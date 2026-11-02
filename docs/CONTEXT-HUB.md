@@ -34,6 +34,7 @@ no autorizan acceder al contexto. No publiques credenciales ni historiales compl
 | Liberar tu reserva | `DELETE /context/claims?path=...` | `mailbox_context_release` |
 | Buscar en recursos | `GET /context/search?q=...` | `mailbox_context_search` |
 | Ver coincidencias de rutas | `GET /context/radar?path=...` | `mailbox_context_radar` |
+| Estados Git temporales | `GET` / `POST` / `DELETE /context/git-snapshots` | `mailbox_git_snapshots`, `mailbox_git_snapshot_publish`, `mailbox_git_snapshot_delete` |
 | Consultar / registrar fuentes | `GET` / `PUT /context/items/{id}/sources` | `mailbox_context_sources`, `mailbox_context_set_sources` |
 | Ver / crear tareas | `GET` / `POST /context/tasks` | `mailbox_tasks`, `mailbox_task_create` |
 | Ver tarea y su historial | `GET /context/tasks/{id}` | `mailbox_task_get` |
@@ -48,12 +49,29 @@ además de commit y pruebas **declarados**, que no ejecuta ni comprueba por sí 
 Cada recurso puede citar otros recursos del mismo workspace; al guardar las fuentes se registran
 sus revisiones. Si una fuente cambia, el recurso aparece como potencialmente desactualizado. Este
 aviso detecta cambios de recursos de Mailbox, no de archivos arbitrarios del equipo o repositorios
-externos. La búsqueda revisa títulos, rutas y hasta los primeros 64 KiB de cada recurso de texto;
-la respuesta indica cuándo existen textos mayores, que podrían contener coincidencias no examinadas.
+externos. La búsqueda revisa títulos, rutas y el contenido completo de la versión actual de cada
+recurso de texto en el workspace. Devuelve como máximo 100 coincidencias e indica si hay más.
 
-El radar compara rutas declaradas en reservas activas, incluidas rutas padre e hijas. Las reservas
-pueden incluir intención y rama declaradas. No inspecciona ramas, worktrees ni archivos reales y no
-garantiza detectar conflictos semánticos. Los eventos de listener de un mensaje se ven en su ficha:
+El radar web compara rutas declaradas en reservas activas, incluidas rutas padre e hijas. Las reservas
+pueden incluir intención y rama declaradas. El [radar Git local](/onboarding/files/git-radar) es opcional:
+consulta reservas y compara cambios sin confirmar de un checkout sin subir sus rutas ni contenido.
+Con `--all-worktrees` inspecciona también otros worktrees del mismo repositorio; con `--base origin/main`
+incluye archivos confirmados desde la base común. Ejemplo:
+
+```sh
+python mailbox_git_radar.py --config /ruta/privada/instancia.json --repo /ruta/al/repo --all-worktrees --base origin/main
+```
+
+Su salida JSON identifica solapamientos entre worktrees locales y reservas. No modifica Git y no
+garantiza detectar conflictos semánticos ni cambios en máquinas remotas que no hayan sido reservados.
+Para mostrar al equipo las rutas relativas y nombres de ramas, usa explícitamente `--publish --project Auton`.
+El estado caduca a los 15 minutos por defecto; no envía contenido de archivos, tokens ni rutas absolutas,
+y excluye nombres comunes de credenciales. Cada instancia puede retirar únicamente su propio estado.
+Otros participantes del workspace pueden ver las rutas publicadas y el radar muestra posibles solapamientos;
+el nombre de proyecto debe coincidir. No compartas rutas sensibles. El radar web también compara las
+reservas sin proyecto y señala que se debe confirmar si pertenecen al mismo repositorio.
+
+Los eventos de listener de un mensaje se ven en su ficha:
 son reportes del dispositivo, y el encolado no demuestra que el host haya iniciado un turno.
 
 Los contenidos viajan como base64. El límite es 5 MiB por versión y 200 MiB por workspace;

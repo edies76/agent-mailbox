@@ -78,6 +78,34 @@ class ContextHubTests(unittest.TestCase):
         token = friend['create_agent']('Search friend')['token']
         self.assertEqual(self.request('GET', '/context/search?q=different', token)['items'], [])
 
+    def test_search_finds_text_beyond_64k(self):
+        value = b'a' * 70000 + b' distant-needle'
+        item = self.request('POST', '/context/items', self.a_token,
+                            {'title':'Long text', 'path':'long.txt', 'data_base64':content(value)}, 201)['item']
+        result = self.request('GET', '/context/search?q=distant-needle', self.a_token)
+        self.assertEqual([entry['id'] for entry in result['items']], [item['id']])
+        self.assertFalse(result['partial_text'])
+
+    def test_git_snapshots_are_scoped_expiring_and_owner_controlled(self):
+        payload = {'project':'Auton', 'ttl_seconds':60,
+                   'changes':[{'path':'app/input.kt', 'branch':'feature/input', 'status':' M'}]}
+        self.request('POST', '/context/git-snapshots', self.a_token, payload)
+        rows = self.request('GET', '/context/git-snapshots', self.b_token)['snapshots']
+        self.assertEqual(rows[0]['owner_id'], 'agent:' + self.a_id)
+        self.assertEqual(rows[0]['changes'][0]['path'], 'app/input.kt')
+        self.request('DELETE', '/context/git-snapshots?project=Auton', self.b_token, expected=404)
+        self.request('POST', '/context/git-snapshots', self.a_token,
+                     {'project':'Auton', 'changes':[{'path':'.env', 'branch':'', 'status':'M'}]}, 415)
+        friend = self.create_workspace(self.invite(), 'Git isolation')
+        token = friend['create_agent']('Git friend')['token']
+        self.assertEqual(self.request('GET', '/context/git-snapshots', token)['snapshots'], [])
+        with closing(sqlite3.connect(self.db_path)) as db:
+            db.execute('UPDATE context_git_snapshots SET expires_at=0 WHERE project=?', ('Auton',))
+            db.commit()
+        self.assertEqual(self.request('GET', '/context/git-snapshots', self.a_token)['snapshots'], [])
+        self.request('DELETE', '/context/git-snapshots?project=Auton', self.a_token)
+        self.assertEqual(self.request('GET', '/context/git-snapshots', self.a_token)['snapshots'], [])
+
     def test_workspace_isolation_versions_and_stale_write(self):
         created = self.request('POST', '/context/items', self.a_token,
                                {'title':'Plan', 'path':'docs/plan.md', 'data_base64':content(b'first')}, 201)
@@ -190,6 +218,12 @@ class ContextHubTests(unittest.TestCase):
         self.assertFalse(task.get('isError', False), task)
         denied = call(token, 'mailbox_task_get', {'task_id':task_id})
         self.assertTrue(denied.get('isError'), denied)
+        snapshot = call(self.a_token, 'mailbox_git_snapshot_publish',
+                        {'project':'MCP','changes':[{'path':'src/main.py','branch':'feature','status':'M'}]})
+        self.assertFalse(snapshot.get('isError', False), snapshot)
+        listed = call(self.b_token, 'mailbox_git_snapshots', {})
+        data = listed.get('structuredContent') or json.loads(listed['content'][0]['text'])
+        self.assertEqual(data['snapshots'][0]['changes'][0]['path'], 'src/main.py')
 
     def test_legacy_empty_workspace_not_visible_to_other_workspace(self):
         with closing(sqlite3.connect(self.db_path)) as db:

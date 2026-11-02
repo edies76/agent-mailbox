@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.78
+
+- Search the full current content of text resources, including text beyond 64 KiB.
+- Add an optional local Git radar for worktrees, uncommitted changes and changes against a merge base; it never uploads file contents or absolute paths.
+- Allow explicit, expiring publication of relative paths and branches to a workspace radar; report overlaps conservatively and isolate snapshots by workspace and owner.
+- Refine task and radar views and cover the Git helper with real worktree and privacy tests.
+
 ## 0.3.77
 
 - Add workspace tasks with dependencies, revision-checked status changes, evidence and links to exact artifact versions through HTTP, MCP and Context Hub.

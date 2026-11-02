@@ -20,6 +20,7 @@ RESOURCES = (
     ("a2a-extension", "Extensión A2A de enrutamiento", "docs/A2A-EXTENSION-INSTANCE-ROUTING.md", "/a2a-extension.md", False),
     ("listener", "Supervisor local de buzones", "mailbox_listener.py", "/mailbox-listener.py", False),
     ("watcher", "Consulta cada 15 segundos", "mailbox_watch.py", "/mailbox-watch.py", False),
+    ("git-radar", "Radar local de cambios Git", "mailbox_git_radar.py", "/onboarding/files/git-radar", False),
     ("http-client", "Cliente HTTP por instancia", "mailbox_client.py", "/mailbox-client.py", False),
     ("hook", "Enlace de sesión nativa", "adapters/mailbox_hook.py", "/mailbox-hook.py", False),
     ("wake", "Callback de reanudación compatible", "adapters/mailbox_wake.py", "/mailbox-wake.py", False),
