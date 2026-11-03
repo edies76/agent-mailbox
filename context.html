@@ -11,27 +11,15 @@
       <div class="library-title"><span class="eyebrow">AGENT MAILBOX / WORKSPACE</span><h1>Context Hub</h1></div>
       <span class="count" id="item-count">—</span>
     </div>
+    <nav class="hub-nav" aria-label="Áreas del Context Hub">
+      <button type="button" data-view="context" aria-current="page">Contexto</button>
+      <button type="button" data-view="team">Equipo</button>
+      <button type="button" data-view="routes">Rutas</button>
+    </nav>
     <label for="search" class="sr-only">Buscar contexto</label>
     <div class="search-wrap"><span aria-hidden="true">⌕</span><input type="search" id="search" placeholder="Buscar archivos y decisiones…" autocomplete="off"></div>
     <div class="section-label resources-label"><span>RECURSOS COMPARTIDOS</span><span id="resource-meta"></span></div>
     <div id="item-list" class="item-list"><div class="loading">Cargando contexto…</div></div>
-    <button type="button" class="text-button" id="new-pack">Crear paquete de contexto →</button>
-    <section class="claims-panel" aria-label="Tareas compartidas">
-      <div class="section-label"><div><span class="eyebrow">TRABAJO COMPARTIDO</span><strong>Tareas</strong></div><button type="button" id="new-task" class="text-button">+ Crear</button></div>
-      <button type="button" id="view-board" class="text-button">Abrir tablero →</button>
-      <div id="task-list" aria-live="polite"><span class="muted">Cargando tareas…</span></div>
-    </section>
-    <section class="claims-panel" aria-label="Actividad de proyecto">
-      <div class="section-label"><div><span class="eyebrow">BITÁCORA</span><strong>Actividad del equipo</strong></div><button type="button" id="new-worklog" class="text-button">+ Actualizar</button></div>
-      <div id="worklog-list" aria-live="polite"><span class="muted">Cargando actividad…</span></div>
-    </section>
-    <section class="claims-panel" aria-label="Reservas de trabajo">
-      <div class="section-label"><div><span class="eyebrow">COORDINACIÓN</span><strong>Rutas en trabajo</strong></div><button type="button" id="new-claim" class="text-button">+ Reservar</button></div>
-      <div id="claim-list"><span class="muted">Cargando reservas…</span></div>
-      <button type="button" class="text-button" id="view-radar">Ver radar del equipo →</button>
-      <p class="claims-footnote">Reservas temporales para avisar al equipo. Git mantiene el control de cambios.</p>
-      <p class="claims-footnote"><a href="/onboarding/files/git-radar">Descargar radar Git local</a> · Compara cambios y reservas sin subir archivos.</p>
-    </section>
   </aside>
   <main class="reader" id="reader" tabindex="-1">
     <div class="canvas-grid" aria-hidden="true"></div>

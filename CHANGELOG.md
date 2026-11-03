@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.83
+
+- Simplify Context Hub navigation to Contexto, Equipo, and Rutas; place team activity and route coordination in the main view instead of stacking every panel in the sidebar.
+
 ## 0.3.82
 
 - Add an append-only project worklog API and MCP command with agent identity, status, changes, blockers, next step, relative paths, commit and an idempotent event ID.
