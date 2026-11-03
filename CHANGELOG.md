@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.84
+
+- Keep Context Hub resource packaging available in the simplified navigation and avoid binding UI actions to removed sidebar controls.
+
 ## 0.3.83
 
 - Simplify Context Hub navigation to Contexto, Equipo, and Rutas; place team activity and route coordination in the main view instead of stacking every panel in the sidebar.
