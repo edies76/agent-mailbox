@@ -27,6 +27,7 @@ RESOURCES = (
     ("file-bank", "Archivo local de avisos", "adapters/mailbox_spool.py", "/mailbox-spool.py", False),
     ("session-continuity", "Continuidad y respaldo de sesiones", "docs/SESSION-CONTINUITY.md", "/guide/session-continuity", False),
     ("context-hub", "Contexto compartido y reservas", "docs/CONTEXT-HUB.md", "/guide/context-hub", False),
+    ("jsonl-sync", "Sincronización versionada de un JSONL local", "mailbox_jsonl_sync.py", "/onboarding/files/jsonl-sync", False),
 )
 
 

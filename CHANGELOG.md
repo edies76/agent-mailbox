@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.80
+
+- Add an opt-in local JSONL watcher that publishes a new Context Hub version only when the selected file changes.
+- Keep snapshots bound to one instance, an allowed local root, a private state file, and explicit acknowledgement that the complete chat log is shared.
+
 ## 0.3.79
 
 - Add a full workspace task board with columns for pending, in-progress, blocked, review and completed tasks.

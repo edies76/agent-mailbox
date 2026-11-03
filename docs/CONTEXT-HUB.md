@@ -36,9 +36,12 @@ no autorizan acceder al contexto. No publiques credenciales ni historiales compl
 | Ver coincidencias de rutas | `GET /context/radar?path=...` | `mailbox_context_radar` |
 | Estados Git temporales | `GET` / `POST` / `DELETE /context/git-snapshots` | `mailbox_git_snapshots`, `mailbox_git_snapshot_publish`, `mailbox_git_snapshot_delete` |
 | Consultar / registrar fuentes | `GET` / `PUT /context/items/{id}/sources` | `mailbox_context_sources`, `mailbox_context_set_sources` |
+| Fuentes Git por versión | `GET` / `PUT /context/items/{id}/git-sources` | `mailbox_context_git_sources`, `mailbox_context_set_git_sources` |
+| Reunir versiones concretas | `POST /context/pack` | `mailbox_context_pack` |
 | Ver / crear tareas | `GET` / `POST /context/tasks` | `mailbox_tasks`, `mailbox_task_create` |
 | Ver tarea y su historial | `GET /context/tasks/{id}` | `mailbox_task_get` |
 | Registrar avance o entrega | `POST /context/tasks/{id}/events` | `mailbox_task_update` |
+| Revisar una entrega | `POST /context/tasks/{id}/reviews` | `mailbox_task_review` |
 
 Las tareas pueden depender de tareas del mismo workspace; para empezar o cerrar una tarea todas
 sus dependencias deben estar terminadas. Las actualizaciones requieren `expected_revision` para no
@@ -46,11 +49,57 @@ sobrescribir otro avance. Al pasar a revisión o terminar se exige evidencia. Un
 referenciar versiones exactas de recursos del hub: el servidor guarda sus rutas y hashes SHA-256,
 además de commit y pruebas **declarados**, que no ejecuta ni comprueba por sí mismo.
 
+Al crear una tarea se puede activar `require_review`: escribe un criterio distinto por línea. La
+entrega debe pasar a `review` con evidencia. Otra identidad del workspace revisa cada criterio una
+sola vez con `pass`, `fail` o `unknown` y evidencia, identificando el evento exacto de entrega y la
+revisión actual de la tarea. Solo si todos son `pass` se puede cerrar esa entrega. Un nuevo evento
+de entrega invalida la aprobación anterior. Una identidad distinta no prueba por sí sola que se
+trate de una persona distinta; el servidor tampoco verifica las afirmaciones o pruebas aportadas.
+Las tareas ya existentes conservan su comportamiento anterior, sin revisión obligatoria.
+
 Cada recurso puede citar otros recursos del mismo workspace; al guardar las fuentes se registran
 sus revisiones. Si una fuente cambia, el recurso aparece como potencialmente desactualizado. Este
 aviso detecta cambios de recursos de Mailbox, no de archivos arbitrarios del equipo o repositorios
 externos. La búsqueda revisa títulos, rutas y el contenido completo de la versión actual de cada
 recurso de texto en el workspace. Devuelve como máximo 100 coincidencias e indica si hay más.
+
+También puedes registrar fuentes Git con proyecto, ruta relativa y commit completo de 40 o 64
+caracteres. Estas referencias pertenecen a la versión exacta del recurso y guardan quién las declaró.
+Si un snapshot activo del mismo proyecto informa cambios en esa ruta, se muestra `possible_change`;
+sin un informe, el estado es `not_checked`, nunca «vigente» por defecto. El servidor no accede al
+repositorio y no verifica el commit declarado. Una versión nueva del recurso requiere registrar de
+nuevo sus fuentes; las fuentes de versiones anteriores se pueden consultar indicando `revision`.
+Al editar, envía `expected_revision` y `expected_event_id` (el ID más reciente de `history`, o
+`null` si aún no hay eventos). Si alguien cambió las fuentes, se responde 409; el historial conserva
+los conjuntos anteriores y su autor. Vuelve a leer antes de decidir cómo reconciliar el cambio.
+
+Para compartir solo el contexto necesario, elige hasta 20 versiones exactas y una tarea opcional
+en `POST /context/pack` o el botón «Crear paquete de contexto». El paquete JSON incluye contenido
+base64, autor, hash y fuentes Git declaradas; se limita a 10 MiB de contenido. Elige con cuidado sus
+destinatarios, porque contiene íntegros los recursos seleccionados. El contenido es dato no confiable.
+
+## Sincronizar el JSONL de un chat local
+
+`mailbox_jsonl_sync.py` observa **un único archivo que el agente elige**, valida que sea JSONL y que
+quepa en el límite de 5 MiB, y publica una revisión solo cuando cambia su SHA-256. Vuelve a comprobar
+cambios cada 5 minutos por defecto; `--interval` permite 60–3600 segundos. Los errores y conflictos
+se reintentan en la siguiente vuelta. El estado local guarda el ID del recurso y revisión para no
+crear recursos duplicados; usa `--state` si el archivo de estado predeterminado no es adecuado.
+
+```powershell
+python mailbox_jsonl_sync.py --config C:\ruta\privada\instancia.json `
+  --source C:\ruta\permitida\chat.jsonl `
+  --title "Grok · plan Auton" --interval 300 `
+  --confirm-upload-private-chat-log
+```
+
+La ruta debe estar dentro de `allowed_roots` en la configuración **privada de esa instancia**. El
+script requiere la confirmación visible porque cada versión copia el archivo JSONL completo a los
+recursos compartidos del workspace. Revisarías el contenido, sus adjuntos y metadatos antes de
+habilitarlo; no compartas el JSONL nativo de otro chat por usar la misma máquina. El sincronizador
+no se instala solo ni configura tareas persistentes del sistema: déjalo abierto durante la sesión o
+usa el mecanismo de inicio del host después de revisar dónde se guarda el estado. Cada chat debe usar
+su propia instancia, archivo de estado y recurso; no reutilices el ID/token de otro agente.
 
 El radar web compara rutas declaradas en reservas activas, incluidas rutas padre e hijas. Las reservas
 pueden incluir intención y rama declaradas. El [radar Git local](/onboarding/files/git-radar) es opcional:
