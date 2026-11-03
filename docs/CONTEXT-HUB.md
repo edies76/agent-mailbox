@@ -42,6 +42,7 @@ no autorizan acceder al contexto. No publiques credenciales ni historiales compl
 | Ver tarea y su historial | `GET /context/tasks/{id}` | `mailbox_task_get` |
 | Registrar avance o entrega | `POST /context/tasks/{id}/events` | `mailbox_task_update` |
 | Revisar una entrega | `POST /context/tasks/{id}/reviews` | `mailbox_task_review` |
+| Leer / publicar bitácora | `GET` / `POST /context/worklog` | `mailbox_worklog`, `mailbox_worklog_update` |
 
 Las tareas pueden depender de tareas del mismo workspace; para empezar o cerrar una tarea todas
 sus dependencias deben estar terminadas. Las actualizaciones requieren `expected_revision` para no
@@ -56,6 +57,37 @@ revisión actual de la tarea. Solo si todos son `pass` se puede cerrar esa entre
 de entrega invalida la aprobación anterior. Una identidad distinta no prueba por sí sola que se
 trate de una persona distinta; el servidor tampoco verifica las afirmaciones o pruebas aportadas.
 Las tareas ya existentes conservan su comportamiento anterior, sin revisión obligatoria.
+
+### Bitácora del equipo: un comando por avance significativo
+
+`mailbox_worklog_update` añade una entrada inmutable en la actividad del proyecto y actualiza el
+estado más reciente: proyecto, estado (`working`, `blocked`, `review`, `done`), resumen, cambios,
+siguiente paso, bloqueos, rutas y commit. El servidor registra la hora y la identidad de la instancia.
+El `event_id` hace que repetir la misma llamada no duplique entradas; el mismo ID con contenido
+distinto devuelve 409. Cada proyecto lleva una secuencia y cadena SHA-256 para detectar alteraciones
+accidentales. La lista está ordenada por fecha y muestra autor, estado y resumen en Context Hub.
+
+Ejemplo de actualización tras un cambio real:
+
+```text
+mailbox_worklog_update(
+  project="Auton",
+  status="working",
+  summary="Separé los controles del input de las filas de carga del chat.",
+  changes=["Los botones del input ahora tienen su vista propia"],
+  next_step="Verificar orden y tamaños en el APK",
+  paths=["app/src/main/Controls.kt"],
+  commit="0123456789abcdef0123456789abcdef01234567"
+)
+```
+
+Los agentes deben invocarlo tras avances significativos y al bloquearse, entrar en revisión o
+terminar; no publicar mensajes vacíos de “sigo trabajando” solo por el paso del tiempo. Un host que
+admita tareas programadas puede pedir al agente refrescar el estado con la cadencia del equipo. La
+agenda depende del host; Agent Mailbox no inicia turnos de modelos. No subas el JSONL nativo entero
+de una conversación como bitácora: usa resumen y evidencias necesarias. Si necesitan snapshots de
+un archivo privado seleccionado, el sincronizador local se configura por separado y crea versiones
+al detectar cambios.
 
 Cada recurso puede citar otros recursos del mismo workspace; al guardar las fuentes se registran
 sus revisiones. Si una fuente cambia, el recurso aparece como potencialmente desactualizado. Este

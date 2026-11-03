@@ -9,6 +9,7 @@ import json
 import re
 import time
 from uuid import uuid4
+from typing import Literal
 
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -57,6 +58,7 @@ class TaskCreate(BaseModel):
     assignee_id: str = Field(default='', max_length=100)
     acceptance: str = Field(default='', max_length=8000)
     dependencies: list[str] = Field(default_factory=list, max_length=50)
+    require_review: bool = False
 
 
 class ArtifactReference(BaseModel):
@@ -81,6 +83,20 @@ class ContextSources(BaseModel):
     source_item_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
+class CriterionReview(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    criterion: str = Field(min_length=1, max_length=500)
+    result: str = Field(pattern='^(pass|fail|unknown)$')
+    evidence: str = Field(min_length=1, max_length=4000)
+
+
+class TaskReview(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    expected_revision: int = Field(ge=1)
+    delivery_event_id: str = Field(min_length=1, max_length=100)
+    checks: list[CriterionReview] = Field(min_length=1, max_length=50)
+
+
 class GitChange(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     path: str = Field(min_length=1, max_length=400)
@@ -93,6 +109,39 @@ class GitSnapshot(BaseModel):
     project: str = Field(min_length=1, max_length=120)
     changes: list[GitChange] = Field(max_length=500)
     ttl_seconds: int = Field(default=900, ge=60, le=3600)
+
+
+class GitSource(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    project: str = Field(min_length=1, max_length=120)
+    path: str = Field(min_length=1, max_length=400)
+    commit: str = Field(pattern='^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$')
+
+
+class GitSources(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_revision: int = Field(ge=1)
+    expected_event_id: str | None
+    sources: list[GitSource] = Field(default_factory=list, max_length=50)
+
+
+class ContextPack(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    items: list[ArtifactReference] = Field(min_length=1, max_length=20)
+    task_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class WorklogUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    project: str = Field(min_length=1, max_length=120)
+    status: Literal['working','blocked','review','done']
+    summary: str = Field(min_length=1, max_length=2000)
+    changes: list[str] = Field(default_factory=list, max_length=30)
+    next_step: str = Field(default='', max_length=1000)
+    blockers: list[str] = Field(default_factory=list, max_length=20)
+    paths: list[str] = Field(default_factory=list, max_length=30)
+    commit: str = Field(default='', max_length=100)
+    event_id: str = Field(min_length=1, max_length=100)
 
 
 def clean_path(path):
@@ -158,11 +207,40 @@ def initialize_context(store):
         CREATE TABLE IF NOT EXISTS context_task_deliveries (
             event_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, artifacts_json TEXT NOT NULL,
             git_commit TEXT NOT NULL, checks TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS context_task_reviews (
+            id TEXT PRIMARY KEY, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+            delivery_event_id TEXT NOT NULL, actor_id TEXT NOT NULL, checks_json TEXT NOT NULL,
+            verdict TEXT NOT NULL, created_at REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS context_sources (
             item_id TEXT NOT NULL, source_item_id TEXT NOT NULL,
             workspace_id TEXT NOT NULL, source_revision INTEGER NOT NULL,
             PRIMARY KEY(item_id, source_item_id));
+        CREATE TABLE IF NOT EXISTS context_git_sources (
+            item_id TEXT NOT NULL, item_revision INTEGER NOT NULL, workspace_id TEXT NOT NULL,
+            project TEXT NOT NULL, path TEXT NOT NULL, commit_hash TEXT NOT NULL,
+            actor_id TEXT NOT NULL, recorded_at REAL NOT NULL,
+            PRIMARY KEY(item_id,item_revision,project,path));
+        CREATE TABLE IF NOT EXISTS context_git_source_events (
+            id TEXT PRIMARY KEY, item_id TEXT NOT NULL, item_revision INTEGER NOT NULL,
+            workspace_id TEXT NOT NULL, actor_id TEXT NOT NULL, sources_json TEXT NOT NULL,
+            created_at REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS context_worklog_projects (
+            workspace_id TEXT NOT NULL, project_key TEXT NOT NULL, project TEXT NOT NULL,
+            revision INTEGER NOT NULL, last_hash TEXT NOT NULL, updated_at REAL NOT NULL,
+            PRIMARY KEY(workspace_id,project_key));
+        CREATE TABLE IF NOT EXISTS context_worklog_entries (
+            id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, project_key TEXT NOT NULL,
+            revision INTEGER NOT NULL, event_id TEXT NOT NULL, payload_hash TEXT NOT NULL,
+            actor_id TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL,
+            changes_json TEXT NOT NULL, next_step TEXT NOT NULL, blockers_json TEXT NOT NULL,
+            paths_json TEXT NOT NULL, commit_hash TEXT NOT NULL, previous_hash TEXT NOT NULL,
+            entry_hash TEXT NOT NULL, created_at REAL NOT NULL,
+            UNIQUE(workspace_id,project_key,event_id), UNIQUE(workspace_id,project_key,revision));
+        CREATE INDEX IF NOT EXISTS context_worklog_feed ON context_worklog_entries(workspace_id,project_key,revision DESC);
         ''')
+        task_columns = {row[1] for row in db.execute('PRAGMA table_info(context_tasks)')}
+        if 'review_required' not in task_columns:
+            db.execute('ALTER TABLE context_tasks ADD COLUMN review_required INTEGER NOT NULL DEFAULT 0')
 
 
 def register_context_routes(app, store, authenticate, identity_workspace):
@@ -207,7 +285,90 @@ def register_context_routes(app, store, authenticate, identity_workspace):
             raise HTTPException(404, 'Task not found')
         task = dict(row)
         task['dependencies'] = json.loads(task.pop('dependencies_json'))
+        task['review_required'] = bool(task['review_required'])
         return task
+
+    def task_criteria(acceptance):
+        return [line.strip() for line in acceptance.splitlines() if line.strip()]
+
+    def worklog_entry(row):
+        item = dict(row)
+        for field in ('changes_json','blockers_json','paths_json'):
+            item[field[:-5]] = json.loads(item.pop(field))
+        return item
+
+    @app.get('/context/worklog')
+    def list_worklog(project: str | None = Query(default=None, max_length=120),
+                     after: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200),
+                     identity=Depends(authenticate)):
+        workspace, _ = scope(identity)
+        with store.database() as db:
+            if project:
+                key = project.strip().casefold()
+                rows = db.execute('''SELECT * FROM context_worklog_entries WHERE workspace_id=? AND project_key=?
+                    AND revision>? ORDER BY revision DESC LIMIT ?''',(workspace,key,after,limit)).fetchall()
+                head = db.execute('SELECT project,revision,last_hash,updated_at FROM context_worklog_projects WHERE workspace_id=? AND project_key=?',
+                                  (workspace,key)).fetchone()
+                projects = [dict(head)] if head else []
+            else:
+                rows = db.execute('SELECT * FROM context_worklog_entries WHERE workspace_id=? ORDER BY created_at DESC,id DESC LIMIT ?',
+                                  (workspace,limit)).fetchall()
+                projects = [dict(row) for row in db.execute('SELECT project,revision,last_hash,updated_at FROM context_worklog_projects WHERE workspace_id=? ORDER BY project COLLATE NOCASE',(workspace,)).fetchall()]
+            entries=[]
+            for row in rows:
+                entry=worklog_entry(row)
+                actor=entry['actor_id']
+                if actor.startswith('agent:'):
+                    agent=store.get_agent(actor[6:]) or {}
+                    entry['author']=agent.get('instance_name') or agent.get('name') or actor
+                else:
+                    account=store.account_by_id(actor[8:]) or {} if actor.startswith('account:') else {}
+                    entry['author']=account.get('display_name') or account.get('username') or actor
+                entries.append(entry)
+            return {'projects':projects,'entries':entries,'order':'newest_first'}
+
+    @app.post('/context/worklog', status_code=201)
+    def append_worklog(body: WorklogUpdate, identity=Depends(authenticate)):
+        workspace, actor = scope(identity, True)
+        project=body.project.strip()
+        if any(ord(c)<32 or ord(c)==127 for c in project):
+            raise HTTPException(422,'Invalid project label')
+        if body.commit and not re.fullmatch(r'[0-9a-fA-F]{7,64}',body.commit):
+            raise HTTPException(422,'Commit must be a hexadecimal Git hash')
+        paths=[]
+        for path in body.paths:
+            paths.append(clean_path(path))
+        payload={'project':project,'status':body.status,'summary':body.summary,'changes':body.changes,
+                 'next_step':body.next_step,'blockers':body.blockers,'paths':paths,'commit':body.commit.lower()}
+        payload_hash=hashlib.sha256(json.dumps(payload,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        key=project.casefold()
+        now= time.time()
+        with store.database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT * FROM context_worklog_entries WHERE workspace_id=? AND project_key=? AND event_id=?',
+                           (workspace,key,body.event_id)).fetchone()
+            if old:
+                if old['payload_hash']!=payload_hash or old['actor_id']!=actor:
+                    raise HTTPException(409,'event_id was already used with different worklog content')
+                result=worklog_entry(old)
+                result['replayed']=True
+                return {'entry':result,'revision':old['revision'],'replayed':True}
+            head=db.execute('SELECT revision,last_hash FROM context_worklog_projects WHERE workspace_id=? AND project_key=?',(workspace,key)).fetchone()
+            revision=(head['revision'] if head else 0)+1
+            previous=head['last_hash'] if head else '0'*64
+            entry_id=str(uuid4())
+            record={'id':entry_id,'workspace_id':workspace,'project_key':key,'project':project,'revision':revision,
+                    'event_id':body.event_id,'actor_id':actor,'status':body.status,'summary':body.summary,
+                    'changes':body.changes,'next_step':body.next_step,'blockers':body.blockers,'paths':paths,
+                    'commit':body.commit.lower(),'previous_hash':previous,'created_at':now}
+            digest=hashlib.sha256((previous+'\n'+json.dumps(record,ensure_ascii=False,sort_keys=True,separators=(',',':'))).encode()).hexdigest()
+            db.execute('INSERT INTO context_worklog_projects VALUES (?,?,?,?,?,?) ON CONFLICT(workspace_id,project_key) DO UPDATE SET project=excluded.project,revision=excluded.revision,last_hash=excluded.last_hash,updated_at=excluded.updated_at',
+                       (workspace,key,project,revision,digest,now))
+            db.execute('''INSERT INTO context_worklog_entries VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                       (entry_id,workspace,key,revision,body.event_id,payload_hash,actor,body.status,body.summary,
+                        json.dumps(body.changes,ensure_ascii=False),body.next_step,json.dumps(body.blockers,ensure_ascii=False),
+                        json.dumps(paths,ensure_ascii=False),body.commit.lower(),previous,digest,now))
+            return {'entry':record,'revision':revision,'hash':digest,'replayed':False}
 
     @app.get('/context/tasks')
     def list_tasks(identity=Depends(authenticate)):
@@ -221,6 +382,10 @@ def register_context_routes(app, store, authenticate, identity_workspace):
         workspace, actor = scope(identity, True)
         now, task_id = time.time(), str(uuid4())
         dependencies = list(dict.fromkeys(body.dependencies))
+        criteria = task_criteria(body.acceptance)
+        if body.require_review and (not criteria or len(criteria) > 50 or
+                                    len(set(criteria)) != len(criteria) or any(len(line) > 500 for line in criteria)):
+            raise HTTPException(422, 'Review requires 1–50 distinct criteria of at most 500 characters, one per line')
         with store.database() as db:
             db.execute('BEGIN IMMEDIATE')
             for dependency in dependencies:
@@ -229,9 +394,10 @@ def register_context_routes(app, store, authenticate, identity_workspace):
                 assignee = store.get_agent(body.assignee_id)
                 if not assignee or (assignee.get('workspace_id') or 'workspace-default') != workspace:
                     raise HTTPException(422, 'Assignee must be an instance in this workspace')
-            db.execute('INSERT INTO context_tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            db.execute('''INSERT INTO context_tasks (id,workspace_id,title,description,acceptance,assignee_id,status,
+                dependencies_json,revision,created_by,created_at,updated_at,review_required) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                        (task_id, workspace, body.title, body.description, body.acceptance, body.assignee_id,
-                        'queued', json.dumps(dependencies), 1, actor, now, now))
+                        'queued', json.dumps(dependencies), 1, actor, now, now, int(body.require_review)))
             return {'task': task_row(db, workspace, task_id)}
 
     @app.get('/context/tasks/{task_id}')
@@ -250,7 +416,14 @@ def register_context_routes(app, store, authenticate, identity_workspace):
                 event['commit'] = event.pop('git_commit') or ''
                 event['checks'] = event.get('checks') or ''
                 events.append(event)
-            return {'task': task, 'events': events}
+            rows = db.execute('''SELECT id,delivery_event_id,actor_id,checks_json,verdict,created_at
+                FROM context_task_reviews WHERE workspace_id=? AND task_id=? ORDER BY created_at,id''', (workspace, task_id)).fetchall()
+            reviews = []
+            for row in rows:
+                review = dict(row)
+                review['checks'] = json.loads(review.pop('checks_json'))
+                reviews.append(review)
+            return {'task': task, 'events': events, 'reviews': reviews}
 
     @app.post('/context/tasks/{task_id}/events', status_code=201)
     def update_task(task_id: str, body: TaskUpdate, identity=Depends(authenticate)):
@@ -266,6 +439,14 @@ def register_context_routes(app, store, authenticate, identity_workspace):
                     raise HTTPException(409, 'Complete dependencies before starting this task')
             if body.status in ('review', 'done') and not body.evidence:
                 raise HTTPException(422, 'Evidence is required for review or completion')
+            if body.status == 'done' and task['review_required']:
+                latest = db.execute('''SELECT id FROM context_task_events WHERE task_id=? AND workspace_id=?
+                    ORDER BY rowid DESC LIMIT 1''', (task_id, workspace)).fetchone()
+                review = db.execute('''SELECT verdict FROM context_task_reviews WHERE task_id=? AND workspace_id=?
+                    AND delivery_event_id=? ORDER BY rowid DESC LIMIT 1''',
+                    (task_id, workspace, latest['id'] if latest else '')).fetchone()
+                if task['status'] != 'review' or not review or review['verdict'] != 'accepted':
+                    raise HTTPException(409, 'The latest delivery needs an accepted independent review')
             artifacts = []
             for reference in body.artifacts:
                 item = item_row(db, workspace, reference.item_id)
@@ -283,12 +464,72 @@ def register_context_routes(app, store, authenticate, identity_workspace):
                        (body.status, now, workspace, task_id))
             return {'task': task_row(db, workspace, task_id)}
 
+    @app.post('/context/tasks/{task_id}/reviews', status_code=201)
+    def review_task(task_id: str, body: TaskReview, identity=Depends(authenticate)):
+        workspace, actor = scope(identity, True)
+        with store.database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            task = task_row(db, workspace, task_id)
+            if task['revision'] != body.expected_revision:
+                raise HTTPException(409, 'Task changed; reload before reviewing')
+            latest = db.execute('''SELECT id,actor_id,status FROM context_task_events WHERE task_id=? AND workspace_id=?
+                ORDER BY rowid DESC LIMIT 1''', (task_id, workspace)).fetchone()
+            if task['status'] != 'review' or not latest or latest['status'] != 'review' or latest['id'] != body.delivery_event_id:
+                raise HTTPException(409, 'Review the latest delivery in review status')
+            if task['review_required'] and latest['actor_id'] == actor:
+                raise HTTPException(403, 'This task requires a different reviewer')
+            criteria = task_criteria(task['acceptance'])
+            submitted = [check.criterion for check in body.checks]
+            if not criteria or len(criteria) > 50 or len(set(criteria)) != len(criteria) or len(set(submitted)) != len(submitted) or set(criteria) != set(submitted):
+                raise HTTPException(422, 'Review every distinct acceptance criterion exactly once')
+            verdict = 'accepted' if all(check.result == 'pass' for check in body.checks) else 'needs_work'
+            review_id, now = str(uuid4()), time.time()
+            db.execute('INSERT INTO context_task_reviews VALUES (?,?,?,?,?,?,?,?)',
+                       (review_id, task_id, workspace, latest['id'], actor,
+                        json.dumps([check.model_dump() for check in body.checks], ensure_ascii=False), verdict, now))
+            db.execute('UPDATE context_tasks SET revision=revision+1,updated_at=? WHERE workspace_id=? AND id=?',
+                       (now, workspace, task_id))
+            return {'review': {'id': review_id, 'actor_id': actor, 'delivery_event_id': latest['id'],
+                               'verdict': verdict, 'created_at': now}, 'task': task_row(db, workspace, task_id)}
+
     @app.get('/context/items')
     def list_items(identity=Depends(authenticate)):
         workspace, _ = scope(identity)
         with store.database() as db:
             ids = db.execute('SELECT id FROM context_items WHERE workspace_id=? ORDER BY updated_at DESC LIMIT ?', (workspace, MAX_ITEMS)).fetchall()
             return {'items': [item_row(db, workspace, row['id']) for row in ids]}
+
+    @app.post('/context/pack')
+    def build_context_pack(body: ContextPack, identity=Depends(authenticate)):
+        workspace, _ = scope(identity)
+        with store.database() as db:
+            task = task_row(db, workspace, body.task_id) if body.task_id else None
+            packed, total, seen = [], 0, set()
+            for reference in body.items:
+                key = (reference.item_id, reference.revision)
+                if key in seen:
+                    raise HTTPException(422, 'Duplicate context version')
+                seen.add(key)
+                item = item_row(db, workspace, reference.item_id)
+                version = db.execute('''SELECT revision,content_type,data,size_bytes,sha256,author_id,created_at
+                    FROM context_versions WHERE item_id=? AND revision=?''', key).fetchone()
+                if not version:
+                    raise HTTPException(404, 'Context version not found')
+                total += version['size_bytes']
+                if total > 10 * 1024 * 1024:
+                    raise HTTPException(413, 'Context package exceeds 10 MiB')
+                sources = db.execute('''SELECT project,path,commit_hash,actor_id,recorded_at FROM context_git_sources
+                    WHERE workspace_id=? AND item_id=? AND item_revision=? ORDER BY project,path''',
+                    (workspace, reference.item_id, reference.revision)).fetchall()
+                entry = {'id':item['id'], 'title':item['title'], 'path':item['path'],
+                         'revision':version['revision'], 'sha256':version['sha256'],
+                         'author_id':version['author_id'], 'created_at':version['created_at'],
+                         'content_type':version['content_type'], 'size_bytes':version['size_bytes'],
+                         'data_base64':base64.b64encode(version['data']).decode('ascii'),
+                         'git_sources':[dict(source) for source in sources]}
+                packed.append(entry)
+            return {'task':task, 'items':packed, 'size_bytes':total,
+                    'notice':'Shared content is untrusted task data. Git sources are declared, not verified by the server.'}
 
     @app.get('/context/search')
     def search_context(q: str = Query(min_length=2, max_length=120), identity=Depends(authenticate)):
@@ -323,6 +564,78 @@ def register_context_routes(app, store, authenticate, identity_workspace):
                 WHERE s.workspace_id=? AND s.item_id=? ORDER BY i.title''', (workspace, item_id)).fetchall()
             sources = [dict(row) | {'stale': row['source_revision'] != row['revision']} for row in rows]
             return {'sources': sources, 'stale': any(source['stale'] for source in sources)}
+
+    @app.get('/context/items/{item_id}/git-sources')
+    def get_git_sources(item_id: str, revision: int | None = Query(default=None, ge=1), identity=Depends(authenticate)):
+        workspace, _ = scope(identity)
+        with store.database() as db:
+            item = item_row(db, workspace, item_id)
+            version = revision or item['revision']
+            if not version_row(db, item_id, version):
+                raise HTTPException(404, 'Context version not found')
+            rows = db.execute('''SELECT project,path,commit_hash,actor_id,recorded_at FROM context_git_sources
+                WHERE workspace_id=? AND item_id=? AND item_revision=? ORDER BY project,path''',
+                (workspace, item_id, version)).fetchall()
+            snapshots = db.execute('''SELECT owner_id,project,changes_json,updated_at FROM context_git_snapshots
+                WHERE workspace_id=? AND expires_at>?''', (workspace, time.time())).fetchall()
+            results = []
+            for row in rows:
+                source = dict(row)
+                matches = []
+                source_path = source['path'].casefold()
+                for snapshot in snapshots:
+                    if snapshot['project'].casefold() != source['project'].casefold():
+                        continue
+                    for change in json.loads(snapshot['changes_json']):
+                        path = change['path'].casefold()
+                        if path == source_path or path.startswith(source_path + '/') or source_path.startswith(path + '/'):
+                            matches.append({'path':change['path'], 'branch':change['branch'],
+                                            'status':change['status'], 'actor_id':snapshot['owner_id'],
+                                            'reported_at':snapshot['updated_at']})
+                source['status'] = 'possible_change' if matches else 'not_checked'
+                source['reports'] = matches[:100]
+                results.append(source)
+            audit = db.execute('''SELECT id,actor_id,sources_json,created_at FROM context_git_source_events
+                WHERE workspace_id=? AND item_id=? AND item_revision=? ORDER BY rowid DESC LIMIT 50''',
+                (workspace, item_id, version)).fetchall()
+            history = []
+            for row in audit:
+                entry = dict(row)
+                entry['sources'] = json.loads(entry.pop('sources_json'))
+                history.append(entry)
+            return {'item_revision':version, 'sources':results, 'history':history,
+                    'notice':'Active reports are advisory; absence of a report does not prove source freshness.'}
+
+    @app.put('/context/items/{item_id}/git-sources')
+    def set_git_sources(item_id: str, body: GitSources, identity=Depends(authenticate)):
+        workspace, actor = scope(identity, True)
+        now = time.time()
+        with store.database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            item = item_row(db, workspace, item_id)
+            if item['revision'] != body.expected_revision:
+                raise HTTPException(409, 'Context changed; reload before recording sources')
+            latest = db.execute('''SELECT id FROM context_git_source_events WHERE workspace_id=? AND item_id=?
+                AND item_revision=? ORDER BY rowid DESC LIMIT 1''', (workspace, item_id, item['revision'])).fetchone()
+            if (latest['id'] if latest else None) != body.expected_event_id:
+                raise HTTPException(409, 'Git sources changed; reload before editing')
+            seen, prepared = set(), []
+            for source in body.sources:
+                if '/' in source.project or '\\' in source.project or any(ord(c) < 32 or ord(c) == 127 for c in source.project):
+                    raise HTTPException(422, 'Use a project label, not a local path')
+                path = clean_path(source.path)
+                key = (source.project.casefold(), path.casefold())
+                if key in seen:
+                    raise HTTPException(422, 'Duplicate Git source')
+                seen.add(key)
+                prepared.append((item_id, item['revision'], workspace, source.project, path, source.commit.lower(), actor, now))
+            db.execute('DELETE FROM context_git_sources WHERE workspace_id=? AND item_id=? AND item_revision=?',
+                       (workspace, item_id, item['revision']))
+            db.executemany('INSERT INTO context_git_sources VALUES (?,?,?,?,?,?,?,?)', prepared)
+            db.execute('INSERT INTO context_git_source_events VALUES (?,?,?,?,?,?,?)',
+                       (str(uuid4()), item_id, item['revision'], workspace, actor,
+                        json.dumps([{'project':row[3],'path':row[4],'commit':row[5]} for row in prepared], ensure_ascii=False), now))
+        return get_git_sources(item_id, item['revision'], identity)
 
     @app.put('/context/items/{item_id}/sources')
     def set_sources(item_id: str, body: ContextSources, identity=Depends(authenticate)):
@@ -557,6 +870,12 @@ def register_context_routes(app, store, authenticate, identity_workspace):
             return create_item(ItemCreate(**payload), identity)
         if path == '/context/tasks' and method == 'GET':
             return list_tasks(identity)
+        if path == '/context/worklog' and method == 'GET':
+            return list_worklog(query.get('project'), int(query.get('after',0)), int(query.get('limit',50)), identity)
+        if path == '/context/worklog' and method == 'POST':
+            return append_worklog(WorklogUpdate(**payload), identity)
+        if path == '/context/pack' and method == 'POST':
+            return build_context_pack(ContextPack(**payload), identity)
         if path == '/context/search' and method == 'GET':
             return search_context(query.get('q', ''), identity)
         if path == '/context/tasks' and method == 'POST':
@@ -565,6 +884,8 @@ def register_context_routes(app, store, authenticate, identity_workspace):
             return get_task(parts[2], identity)
         if len(parts) == 4 and parts[:2] == ['context', 'tasks'] and parts[3] == 'events' and method == 'POST':
             return update_task(parts[2], TaskUpdate(**payload), identity)
+        if len(parts) == 4 and parts[:2] == ['context', 'tasks'] and parts[3] == 'reviews' and method == 'POST':
+            return review_task(parts[2], TaskReview(**payload), identity)
         if path == '/context/claims' and method == 'GET':
             return list_claims(identity)
         if path == '/context/radar' and method == 'GET':
@@ -581,6 +902,18 @@ def register_context_routes(app, store, authenticate, identity_workspace):
             return delete_claim(query.get('path', ''), identity)
         if len(parts) >= 3 and parts[:2] == ['context', 'items']:
             item_id = parts[2]
+            if len(parts) == 4 and parts[3] == 'git-sources':
+                if method == 'GET':
+                    revision = query.get('revision')
+                    try:
+                        revision = int(revision) if revision is not None else None
+                    except (TypeError, ValueError):
+                        raise HTTPException(422, 'Invalid revision')
+                    if revision is not None and revision < 1:
+                        raise HTTPException(422, 'Invalid revision')
+                    return get_git_sources(item_id, revision, identity)
+                if method == 'PUT':
+                    return set_git_sources(item_id, GitSources(**payload), identity)
             if len(parts) == 4 and parts[3] == 'sources':
                 if method == 'GET':
                     return get_sources(item_id, identity)

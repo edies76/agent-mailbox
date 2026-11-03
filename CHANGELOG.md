@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.82
+
+- Add an append-only project worklog API and MCP command with agent identity, status, changes, blockers, next step, relative paths, commit and an idempotent event ID.
+- Show the workspace activity feed in Context Hub and document the one-command update workflow for agents.
+
 ## 0.3.81
 
 - Generalize the local watcher to any explicitly selected file up to 5 MiB; Agent Mailbox stores a new version only when its content hash changes.

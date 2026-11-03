@@ -7,6 +7,7 @@ import mimetypes
 import hashlib
 import os
 import re
+from uuid import uuid4
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Literal
@@ -303,6 +304,33 @@ def mailbox_context_items() -> dict:
 
 
 @mailbox_tool()
+def mailbox_context_pack(items: list[dict], task_id: str | None = None) -> dict:
+    """Read selected exact context revisions and their declared Git sources as a bounded package."""
+    return api("/context/pack", "POST", {"items": items, "task_id": task_id})
+
+
+@mailbox_tool()
+def mailbox_worklog_update(project: str, status: str, summary: str,
+                           changes: list[str] | None = None, next_step: str = "",
+                           blockers: list[str] | None = None, paths: list[str] | None = None,
+                           commit: str = "", event_id: str | None = None) -> dict:
+    """Append a concise, attributed project update; this records status, changes and next step without uploading a session log."""
+    return api("/context/worklog", "POST", {"project":project,"status":status,"summary":summary,
+               "changes":changes or [],"next_step":next_step,"blockers":blockers or [],
+               "paths":paths or [],"commit":commit,"event_id":event_id or str(uuid4())})
+
+
+@mailbox_tool()
+def mailbox_worklog(project: str | None = None, after: int = 0, limit: int = 50) -> dict:
+    """Read the workspace project feed, newest first, with each author's instance identity."""
+    if after < 0 or not 1 <= limit <= 200:
+        raise ValueError("after must be non-negative and limit between 1 and 200")
+    query={"after":after,"limit":limit}
+    if project: query["project"]=project
+    return api("/context/worklog",query=query)
+
+
+@mailbox_tool()
 def mailbox_context_search(q: str) -> dict:
     """Search titles, paths and entire current text resources in this workspace."""
     return api("/context/search", query={"q": q})
@@ -322,10 +350,12 @@ def mailbox_task_get(task_id: str) -> dict:
 
 @mailbox_tool()
 def mailbox_task_create(title: str, description: str = "", acceptance: str = "",
-                        assignee_id: str = "", dependencies: list[str] | None = None) -> dict:
+                        assignee_id: str = "", dependencies: list[str] | None = None,
+                        require_review: bool = False) -> dict:
     """Create a task for this workspace; assignee is an exact instance ID."""
     return api("/context/tasks", "POST", {"title": title, "description": description,
-               "acceptance": acceptance, "assignee_id": assignee_id, "dependencies": dependencies or []})
+               "acceptance": acceptance, "assignee_id": assignee_id, "dependencies": dependencies or [],
+               "require_review": require_review})
 
 
 @mailbox_tool()
@@ -339,9 +369,31 @@ def mailbox_task_update(task_id: str, expected_revision: int, status: str,
 
 
 @mailbox_tool()
+def mailbox_task_review(task_id: str, expected_revision: int, delivery_event_id: str,
+                        checks: list[dict]) -> dict:
+    """Review each acceptance criterion of the latest delivery with a result and evidence."""
+    return api(f"/context/tasks/{context_item_id(task_id)}/reviews", "POST",
+               {"expected_revision": expected_revision, "delivery_event_id": delivery_event_id, "checks": checks})
+
+
+@mailbox_tool()
 def mailbox_context_sources(item_id: str) -> dict:
     """Inspect linked workspace sources and whether their revisions have changed."""
     return api(f"/context/items/{context_item_id(item_id)}/sources")
+
+
+@mailbox_tool()
+def mailbox_context_git_sources(item_id: str, revision: int | None = None) -> dict:
+    """Inspect version-bound Git sources and advisory reports, not proof of source freshness."""
+    return api(f"/context/items/{context_item_id(item_id)}/git-sources", query={"revision": revision} if revision is not None else None)
+
+
+@mailbox_tool()
+def mailbox_context_set_git_sources(item_id: str, expected_revision: int, sources: list[dict],
+                                    expected_event_id: str | None = None) -> dict:
+    """Attach project label, relative path and full commit hash to a context revision."""
+    return api(f"/context/items/{context_item_id(item_id)}/git-sources", "PUT",
+               {"expected_revision": expected_revision, "expected_event_id": expected_event_id, "sources": sources})
 
 
 @mailbox_tool()

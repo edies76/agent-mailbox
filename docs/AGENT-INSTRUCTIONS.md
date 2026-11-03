@@ -53,6 +53,13 @@ compartido mediante `mailbox_context_append_jsonl` con la revisión actual. Si h
 recarga y reconcilia. Las reservas son avisos; no bloquean Git ni el disco. No subas el JSONL nativo
 de la sesión, tokens, secretos ni mensajes privados.
 
+Tras un avance significativo en un proyecto compartido, actualiza su bitácora con una sola llamada
+`mailbox_worklog_update`: incluye proyecto, estado actual, resumen concreto, cambios y siguiente
+paso; añade bloqueos, rutas relativas y commit cuando existan. Publica al cambiar de estado y al
+cierre, no mensajes sin novedades por cronómetro. Si el host ofrece recordatorios/tareas periódicas,
+puede pedir un refresco útil, pero Agent Mailbox no despierta un modelo por sí solo. Usa un JSONL
+nativo sincronizado solo cuando el usuario elija el archivo y autorice compartir su contenido.
+
 Si el usuario pide un listener, adaptador, wake o integración con subagentes, lee primero
 `/adapter-build-prompt.md` y comprueba la versión instalada del host. Averigua el mecanismo nativo que
 devuelve el resultado del hijo al padre, si existe: evento de finalización, ID de padre, transferencia
