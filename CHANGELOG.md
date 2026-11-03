@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.85
+
+- Keep route reservation actions below the Context Hub heading so the floating navigation does not cover them.
+
 ## 0.3.84
 
 - Keep Context Hub resource packaging available in the simplified navigation and avoid binding UI actions to removed sidebar controls.
