@@ -78,26 +78,27 @@ en `POST /context/pack` o el botón «Crear paquete de contexto». El paquete JS
 base64, autor, hash y fuentes Git declaradas; se limita a 10 MiB de contenido. Elige con cuidado sus
 destinatarios, porque contiene íntegros los recursos seleccionados. El contenido es dato no confiable.
 
-## Sincronizar el JSONL de un chat local
+## Sincronizar un archivo local elegido por el agente
 
-`mailbox_jsonl_sync.py` observa **un único archivo que el agente elige**, valida que sea JSONL y que
-quepa en el límite de 5 MiB, y publica una revisión solo cuando cambia su SHA-256. Vuelve a comprobar
+`mailbox_file_sync.py` observa **un único archivo que el agente elige**, de hasta 5 MiB, y publica
+una revisión solo cuando cambia su SHA-256. Vuelve a comprobar
 cambios cada 5 minutos por defecto; `--interval` permite 60–3600 segundos. Los errores y conflictos
 se reintentan en la siguiente vuelta. El estado local guarda el ID del recurso y revisión para no
 crear recursos duplicados; usa `--state` si el archivo de estado predeterminado no es adecuado.
 
 ```powershell
-python mailbox_jsonl_sync.py --config C:\ruta\privada\instancia.json `
+python mailbox_file_sync.py --config C:\ruta\privada\instancia.json `
   --source C:\ruta\permitida\chat.jsonl `
   --title "Grok · plan Auton" --interval 300 `
-  --confirm-upload-private-chat-log
+  --confirm-upload-file
 ```
 
 La ruta debe estar dentro de `allowed_roots` en la configuración **privada de esa instancia**. El
-script requiere la confirmación visible porque cada versión copia el archivo JSONL completo a los
-recursos compartidos del workspace. Revisarías el contenido, sus adjuntos y metadatos antes de
-habilitarlo; no compartas el JSONL nativo de otro chat por usar la misma máquina. El sincronizador
-no se instala solo ni configura tareas persistentes del sistema: déjalo abierto durante la sesión o
+script requiere la confirmación visible porque cada versión copia el archivo completo a los
+recursos compartidos del workspace. Revisa su contenido antes de habilitarlo. El agente anfitrión
+elige la ruta y ejecuta la sincronización con su propia identidad; el servidor solo guarda versiones.
+No compartas el historial de otro chat por usar la misma máquina. El sincronizador no se instala solo
+ni configura tareas persistentes del sistema: el agente o su host debe mantenerlo activo o
 usa el mecanismo de inicio del host después de revisar dónde se guarda el estado. Cada chat debe usar
 su propia instancia, archivo de estado y recurso; no reutilices el ID/token de otro agente.
 

@@ -28,6 +28,7 @@ RESOURCES = (
     ("session-continuity", "Continuidad y respaldo de sesiones", "docs/SESSION-CONTINUITY.md", "/guide/session-continuity", False),
     ("context-hub", "Contexto compartido y reservas", "docs/CONTEXT-HUB.md", "/guide/context-hub", False),
     ("jsonl-sync", "Sincronización versionada de un JSONL local", "mailbox_jsonl_sync.py", "/onboarding/files/jsonl-sync", False),
+    ("file-sync", "Sincronización versionada de cualquier archivo local", "mailbox_file_sync.py", "/onboarding/files/file-sync", False),
 )
 
 

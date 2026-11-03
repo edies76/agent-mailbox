@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.81
+
+- Generalize the local watcher to any explicitly selected file up to 5 MiB; Agent Mailbox stores a new version only when its content hash changes.
+- Keep the JSONL-specific watcher available for compatibility.
+
 ## 0.3.80
 
 - Add an opt-in local JSONL watcher that publishes a new Context Hub version only when the selected file changes.
