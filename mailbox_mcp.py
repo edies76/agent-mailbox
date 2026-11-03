@@ -331,6 +331,23 @@ def mailbox_worklog(project: str | None = None, after: int = 0, limit: int = 50)
 
 
 @mailbox_tool()
+def mailbox_worklog_live(project: str | None = None) -> dict:
+    """Read every instance's latest reported project status and activity; stale reports remain visible."""
+    return api("/context/worklog/live",query={"project":project} if project else None)
+
+
+@mailbox_tool()
+def mailbox_worklog_heartbeat(project: str, status: str, summary: str,
+                              changes: list[str] | None = None, next_step: str = "",
+                              blockers: list[str] | None = None, paths: list[str] | None = None,
+                              commit: str = "") -> dict:
+    """Refresh this instance's current project recap without adding a historical event."""
+    return api("/context/worklog/heartbeat","POST",{"project":project,"status":status,"summary":summary,
+               "changes":changes or [],"next_step":next_step,"blockers":blockers or [],
+               "paths":paths or [],"commit":commit})
+
+
+@mailbox_tool()
 def mailbox_context_search(q: str) -> dict:
     """Search titles, paths and entire current text resources in this workspace."""
     return api("/context/search", query={"q": q})

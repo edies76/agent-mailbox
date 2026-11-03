@@ -43,6 +43,8 @@ no autorizan acceder al contexto. No publiques credenciales ni historiales compl
 | Registrar avance o entrega | `POST /context/tasks/{id}/events` | `mailbox_task_update` |
 | Revisar una entrega | `POST /context/tasks/{id}/reviews` | `mailbox_task_review` |
 | Leer / publicar bitácora | `GET` / `POST /context/worklog` | `mailbox_worklog`, `mailbox_worklog_update` |
+| Ver estado actual por agente | `GET /context/worklog/live?project=Auton` | `mailbox_worklog_live` |
+| Refrescar recap actual sin evento histórico | `POST /context/worklog/heartbeat` | `mailbox_worklog_heartbeat` |
 
 Las tareas pueden depender de tareas del mismo workspace; para empezar o cerrar una tarea todas
 sus dependencias deben estar terminadas. Las actualizaciones requieren `expected_revision` para no
@@ -60,12 +62,18 @@ Las tareas ya existentes conservan su comportamiento anterior, sin revisión obl
 
 ### Bitácora del equipo: un comando por avance significativo
 
-`mailbox_worklog_update` añade una entrada inmutable en la actividad del proyecto y actualiza el
-estado más reciente: proyecto, estado (`working`, `blocked`, `review`, `done`), resumen, cambios,
+`mailbox_worklog_update` añade una entrada inmutable al historial del proyecto y actualiza el
+estado actual de esa instancia: proyecto, estado (`working`, `blocked`, `review`, `done`), resumen, cambios,
 siguiente paso, bloqueos, rutas y commit. El servidor registra la hora y la identidad de la instancia.
 El `event_id` hace que repetir la misma llamada no duplique entradas; el mismo ID con contenido
 distinto devuelve 409. Cada proyecto lleva una secuencia y cadena SHA-256 para detectar alteraciones
 accidentales. La lista está ordenada por fecha y muestra autor, estado y resumen en Context Hub.
+`mailbox_worklog_live` devuelve el último recap de cada instancia y proyecto. El estado sigue visible
+como último reporte, pero tras 15 minutos pasa a `stale` para no confundirlo con actividad reciente.
+`mailbox_worklog` incluye ambos: `live` y el historial `entries`.
+En trabajos largos, el agente puede llamar a `mailbox_worklog_heartbeat` cada cinco minutos para
+mantener fresco su estado sin añadir eventos repetidos al historial. Se configura en las tareas
+periódicas que admita su host; esta función no crea turnos ni agenda al agente por sí misma.
 
 Ejemplo de actualización tras un cambio real:
 
@@ -81,8 +89,9 @@ mailbox_worklog_update(
 )
 ```
 
-Los agentes deben invocarlo tras avances significativos y al bloquearse, entrar en revisión o
-terminar; no publicar mensajes vacíos de “sigo trabajando” solo por el paso del tiempo. Un host que
+Los agentes deben invocar la bitácora al comenzar un tramo de trabajo, tras avances significativos y
+al bloquearse, entrar en revisión o terminar; usar el heartbeat solo para refrescar un recap útil.
+No publicar mensajes vacíos de “sigo trabajando” solo por el paso del tiempo. Un host que
 admita tareas programadas puede pedir al agente refrescar el estado con la cadencia del equipo. La
 agenda depende del host; Agent Mailbox no inicia turnos de modelos. No subas el JSONL nativo entero
 de una conversación como bitácora: usa resumen y evidencias necesarias. Si necesitan snapshots de

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.86
+
+- Split per-agent live project recaps from append-only work history; add a heartbeat that refreshes current status without flooding history.
+
+## 0.3.86
+
+- Add a per-agent, per-project live work status alongside the append-only worklog history, including a visible stale marker after 15 minutes.
+- Expose current activity over HTTP and MCP and show the live recap separately from historical updates in Context Hub.
+
 ## 0.3.85
 
 - Keep route reservation actions below the Context Hub heading so the floating navigation does not cover them.

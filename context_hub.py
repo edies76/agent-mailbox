@@ -144,6 +144,18 @@ class WorklogUpdate(BaseModel):
     event_id: str = Field(min_length=1, max_length=100)
 
 
+class WorklogHeartbeat(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    project: str = Field(min_length=1, max_length=120)
+    status: Literal['working','blocked','review','done']
+    summary: str = Field(min_length=1, max_length=2000)
+    changes: list[str] = Field(default_factory=list, max_length=30)
+    next_step: str = Field(default='', max_length=1000)
+    blockers: list[str] = Field(default_factory=list, max_length=20)
+    paths: list[str] = Field(default_factory=list, max_length=30)
+    commit: str = Field(default='', max_length=100)
+
+
 def clean_path(path):
     path = path.replace('\\', '/')
     if path.startswith('/') or ':' in path or any(p in ('', '.', '..') for p in path.split('/')):
@@ -237,6 +249,12 @@ def initialize_context(store):
             entry_hash TEXT NOT NULL, created_at REAL NOT NULL,
             UNIQUE(workspace_id,project_key,event_id), UNIQUE(workspace_id,project_key,revision));
         CREATE INDEX IF NOT EXISTS context_worklog_feed ON context_worklog_entries(workspace_id,project_key,revision DESC);
+        CREATE TABLE IF NOT EXISTS context_worklog_live (
+            workspace_id TEXT NOT NULL, project_key TEXT NOT NULL, actor_id TEXT NOT NULL,
+            status TEXT NOT NULL, summary TEXT NOT NULL, changes_json TEXT NOT NULL,
+            next_step TEXT NOT NULL, blockers_json TEXT NOT NULL, paths_json TEXT NOT NULL,
+            commit_hash TEXT NOT NULL, updated_at REAL NOT NULL, history_revision INTEGER NOT NULL,
+            PRIMARY KEY(workspace_id,project_key,actor_id));
         ''')
         task_columns = {row[1] for row in db.execute('PRAGMA table_info(context_tasks)')}
         if 'review_required' not in task_columns:
@@ -297,6 +315,29 @@ def register_context_routes(app, store, authenticate, identity_workspace):
             item[field[:-5]] = json.loads(item.pop(field))
         return item
 
+    def worklog_live(db, workspace, project_key=None):
+        if project_key:
+            rows=db.execute('SELECT * FROM context_worklog_live WHERE workspace_id=? AND project_key=? ORDER BY updated_at DESC',
+                            (workspace,project_key)).fetchall()
+        else:
+            rows=db.execute('SELECT * FROM context_worklog_live WHERE workspace_id=? ORDER BY updated_at DESC LIMIT 200',
+                            (workspace,)).fetchall()
+        result=[]; now=time.time()
+        for row in rows:
+            item=dict(row)
+            for field in ('changes_json','blockers_json','paths_json'):
+                item[field[:-5]]=json.loads(item.pop(field))
+            item['freshness']='current' if now-item['updated_at'] <= 15*60 else 'stale'
+            actor=item['actor_id']
+            if actor.startswith('agent:'):
+                agent=store.get_agent(actor[6:]) or {}
+                item['author']=agent.get('instance_name') or agent.get('name') or actor
+            else:
+                account=store.account_by_id(actor[8:]) or {} if actor.startswith('account:') else {}
+                item['author']=account.get('display_name') or account.get('username') or actor
+            result.append(item)
+        return result
+
     @app.get('/context/worklog')
     def list_worklog(project: str | None = Query(default=None, max_length=120),
                      after: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200),
@@ -325,7 +366,16 @@ def register_context_routes(app, store, authenticate, identity_workspace):
                     account=store.account_by_id(actor[8:]) or {} if actor.startswith('account:') else {}
                     entry['author']=account.get('display_name') or account.get('username') or actor
                 entries.append(entry)
-            return {'projects':projects,'entries':entries,'order':'newest_first'}
+            live=worklog_live(db,workspace,project.strip().casefold() if project else None)
+            return {'projects':projects,'entries':entries,'live':live,'order':'newest_first',
+                    'current_state_ttl_seconds':900}
+
+    @app.get('/context/worklog/live')
+    def get_live_worklog(project: str | None = Query(default=None, max_length=120), identity=Depends(authenticate)):
+        workspace,_=scope(identity)
+        with store.database() as db:
+            return {'live':worklog_live(db,workspace,project.strip().casefold() if project else None),
+                    'ttl_seconds':900,'notice':'Stale state remains visible as the last reported status.'}
 
     @app.post('/context/worklog', status_code=201)
     def append_worklog(body: WorklogUpdate, identity=Depends(authenticate)):
@@ -368,7 +418,42 @@ def register_context_routes(app, store, authenticate, identity_workspace):
                        (entry_id,workspace,key,revision,body.event_id,payload_hash,actor,body.status,body.summary,
                         json.dumps(body.changes,ensure_ascii=False),body.next_step,json.dumps(body.blockers,ensure_ascii=False),
                         json.dumps(paths,ensure_ascii=False),body.commit.lower(),previous,digest,now))
+            db.execute('''INSERT INTO context_worklog_live VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(workspace_id,project_key,actor_id) DO UPDATE SET status=excluded.status,
+                summary=excluded.summary,changes_json=excluded.changes_json,next_step=excluded.next_step,
+                blockers_json=excluded.blockers_json,paths_json=excluded.paths_json,commit_hash=excluded.commit_hash,
+                updated_at=excluded.updated_at,history_revision=excluded.history_revision''',
+                (workspace,key,actor,body.status,body.summary,json.dumps(body.changes,ensure_ascii=False),
+                 body.next_step,json.dumps(body.blockers,ensure_ascii=False),json.dumps(paths,ensure_ascii=False),
+                 body.commit.lower(),now,revision))
             return {'entry':record,'revision':revision,'hash':digest,'replayed':False}
+
+    @app.post('/context/worklog/heartbeat')
+    def heartbeat_worklog(body: WorklogHeartbeat, identity=Depends(authenticate)):
+        workspace,actor=scope(identity,True)
+        project=body.project.strip(); key=project.casefold()
+        if any(ord(char)<32 or ord(char)==127 for char in project):
+            raise HTTPException(422,'Invalid project label')
+        if body.commit and not re.fullmatch(r'[0-9a-fA-F]{7,64}',body.commit):
+            raise HTTPException(422,'Commit must be a hexadecimal Git hash')
+        paths=[clean_path(path) for path in body.paths]
+        now=time.time()
+        with store.database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('INSERT OR IGNORE INTO context_worklog_projects VALUES (?,?,?,?,?,?)',
+                       (workspace,key,project,0,'0'*64,now))
+            revision=db.execute('SELECT revision FROM context_worklog_projects WHERE workspace_id=? AND project_key=?',
+                                (workspace,key)).fetchone()['revision']
+            db.execute('''INSERT INTO context_worklog_live VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(workspace_id,project_key,actor_id) DO UPDATE SET status=excluded.status,
+                summary=excluded.summary,changes_json=excluded.changes_json,next_step=excluded.next_step,
+                blockers_json=excluded.blockers_json,paths_json=excluded.paths_json,commit_hash=excluded.commit_hash,
+                updated_at=excluded.updated_at,history_revision=excluded.history_revision''',
+                (workspace,key,actor,body.status,body.summary,json.dumps(body.changes,ensure_ascii=False),
+                 body.next_step,json.dumps(body.blockers,ensure_ascii=False),json.dumps(paths,ensure_ascii=False),
+                 body.commit.lower(),now,revision))
+        return {'updated':True,'project':project,'actor_id':actor,'updated_at':now,
+                'history_written':False,'notice':'Heartbeat updates current state only; use /context/worklog for a significant historical change.'}
 
     @app.get('/context/tasks')
     def list_tasks(identity=Depends(authenticate)):
@@ -872,8 +957,12 @@ def register_context_routes(app, store, authenticate, identity_workspace):
             return list_tasks(identity)
         if path == '/context/worklog' and method == 'GET':
             return list_worklog(query.get('project'), int(query.get('after',0)), int(query.get('limit',50)), identity)
+        if path == '/context/worklog/live' and method == 'GET':
+            return get_live_worklog(query.get('project'),identity)
         if path == '/context/worklog' and method == 'POST':
             return append_worklog(WorklogUpdate(**payload), identity)
+        if path == '/context/worklog/heartbeat' and method == 'POST':
+            return heartbeat_worklog(WorklogHeartbeat(**payload),identity)
         if path == '/context/pack' and method == 'POST':
             return build_context_pack(ContextPack(**payload), identity)
         if path == '/context/search' and method == 'GET':
